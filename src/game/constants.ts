@@ -1,0 +1,11 @@
+export const GRID_COLS = 16;
+export const GRID_ROWS = 10;
+export const SPAWN_COL = 7;
+export const SPAWN_ROW = 0;
+export const PIECE_SIZE = 2;
+export const BPM = 120;
+export const BEAT_MS = 60_000 / BPM;
+export const SWEEP_BEATS = 8;
+export const SWEEP_MS = BEAT_MS * SWEEP_BEATS;
+export const MS_PER_COL = SWEEP_MS / GRID_COLS;
+export const NORMAL_GRAVITY_MS = 560;
