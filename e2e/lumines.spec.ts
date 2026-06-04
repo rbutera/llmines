@@ -85,11 +85,19 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
   let s = await getState(page);
   expect(s.grid.length).toBe(10);
   expect(s.grid[0]!.length).toBe(16);
-  // piece visible at cols 7-8, rows 0-1
+  // new block holds at the top (cols 7-8, rows 0-1)
+  expect(s.hold.active).toBe(true);
   expect(s.grid[0]![7]).toBe(0);
   expect(s.grid[0]![8]).toBe(0);
   expect(s.grid[1]![7]).toBe(0);
 
+  // first tick consumes the hold (no movement)
+  await api(page, "tick");
+  s = await getState(page);
+  expect(s.hold.active).toBe(false);
+  expect(s.grid[0]![7]).toBe(0);
+
+  // next tick advances under normal gravity
   await api(page, "tick");
   s = await getState(page);
   expect(s.grid[1]![7]).toBe(0);
@@ -218,4 +226,37 @@ test("audio source exists, loops, and points to /backing-track.mp3", async ({
   await expect(audio).toHaveJSProperty("loop", true);
   const src = await audio.getAttribute("src");
   expect(src).toContain("/backing-track.mp3");
+});
+
+test("new block holds; fresh press drops, carried-over hold does not", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+  await api(page, "spawn", MONO_A);
+
+  // Carried-over hold: without a fresh press the block stays at the top.
+  let s = await getState(page);
+  expect(s.hold.active).toBe(true);
+  expect(s.grid[0]![7]).toBe(0);
+
+  // A fresh soft-drop press cancels the hold and advances immediately.
+  await api(page, "pressSoftDrop");
+  s = await getState(page);
+  expect(s.hold.active).toBe(false);
+  expect(s.grid[0]![7]).toBe(null);
+  expect(s.grid[1]![7]).toBe(0);
+  expect(s.grid[2]![7]).toBe(0);
+});
+
+test("fresh hard-drop press on a held block lands it on the floor", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+  await api(page, "spawn", MONO_A);
+  await api(page, "pressHardDrop");
+  const s = await getState(page);
+  expect(s.grid[9]![7]).toBe(0);
+  expect(s.grid[8]![7]).toBe(0);
 });
