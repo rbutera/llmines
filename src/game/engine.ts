@@ -157,6 +157,11 @@ export class LuminesEngine {
     this.captureSweep();
     for (let c = 0; c < COLS; c++) this.processColumn(c);
     applyGravity(this.s.settled);
+    // Drop the active piece to its natural resting row so that state().grid
+    // contains no holes between the piece and the settled stack beneath it.
+    if (this.s.active) {
+      while (canFall(this.s.settled, this.s.active)) this.s.active.row++;
+    }
     this.s.sweepX = 0;
     this.s.sweepMarked = null;
     this.s.sweepSquares = 0;
