@@ -260,3 +260,24 @@ test("fresh hard-drop press on a held block lands it on the floor", async ({
   expect(s.grid[9]![7]).toBe(0);
   expect(s.grid[8]![7]).toBe(0);
 });
+
+test("scoring fires an in-view animation while score stays exact", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+
+  // Build a mono 2x2 on the floor, then sweep to score 4.
+  await api(page, "spawn", MONO_A);
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+  await api(page, "sweepNow");
+
+  // The juice element appears in the game view...
+  await expect(page.getByTestId("score-fx")).toBeVisible();
+  // ...and the authoritative score is exact and assertable.
+  await expect(page.getByTestId("score")).toHaveText("4");
+
+  // The burst is transient: the cosmetic element clears, value remains.
+  await expect(page.getByTestId("score-fx")).toHaveCount(0);
+  await expect(page.getByTestId("score")).toHaveText("4");
+});
