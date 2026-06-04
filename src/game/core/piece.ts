@@ -1,5 +1,6 @@
 import { SPAWN_COL, SPAWN_ROW } from "./constants";
 import { cloneGrid, inBounds, pieceCells, settle } from "./grid";
+import { freshHold, isHolding, releaseHold } from "./hold";
 import { nextBit } from "./rng";
 import type { ActivePiece, GameState, Grid, Piece, PiecePos } from "./types";
 
@@ -39,7 +40,7 @@ export function spawnPiece(state: GameState, cells: Piece): GameState {
   if (!canPlace(state.grid, cells, pos)) {
     return { ...state, active: null, gameOver: true };
   }
-  return { ...state, active: { cells, pos } };
+  return { ...state, active: { cells, pos }, hold: freshHold() };
 }
 
 /** Spawn the next RNG-drawn piece (used by the production loop). */
@@ -105,6 +106,7 @@ export function gravityStep(state: GameState): {
   locked: boolean;
 } {
   if (!state.active || state.gameOver) return { state, locked: false };
+  if (isHolding(state)) return { state, locked: false };
   if (canDescend(state)) {
     const pos = { row: state.active.pos.row + 1, col: state.active.pos.col };
     return {
@@ -126,6 +128,7 @@ export function softDrop(state: GameState): {
 /** Hard drop: descend to the lowest legal row, then lock immediately. */
 export function hardDrop(state: GameState): GameState {
   if (!state.active || state.gameOver) return state;
+  if (isHolding(state)) return state;
   let active = state.active;
   while (
     canPlace(state.grid, active.cells, {
@@ -144,4 +147,17 @@ export function hardDrop(state: GameState): GameState {
 /** Is the active piece currently resting (cannot descend)? */
 export function isResting(state: GameState): boolean {
   return state.active !== null && !canDescend(state);
+}
+
+/** Fresh soft-drop press: cancel any hold, then soft-drop one step. */
+export function freshSoftDrop(state: GameState): {
+  state: GameState;
+  locked: boolean;
+} {
+  return gravityStep(releaseHold(state));
+}
+
+/** Fresh hard-drop press: cancel any hold, then hard-drop to the floor. */
+export function freshHardDrop(state: GameState): GameState {
+  return hardDrop(releaseHold(state));
 }

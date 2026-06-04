@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { HOLD_MS } from "./constants";
 import { createGame } from "./grid";
 import { freshHold, isHolding, noHold, releaseHold, tickHold } from "./hold";
+import {
+  freshHardDrop,
+  freshSoftDrop,
+  gravityStep,
+  hardDrop,
+  spawnPiece,
+} from "./piece";
 import type { GameState } from "./types";
 
 const MONO_A = [
@@ -51,5 +58,35 @@ describe("hold helpers", () => {
 
   it("createGame starts with no hold", () => {
     expect(createGame(1).hold).toEqual({ active: false, remainingMs: 0 });
+  });
+
+  it("spawnPiece sets a fresh hold on the new block", () => {
+    const s = spawnPiece(createGame(1), MONO_A as never);
+    expect(s.hold).toEqual({ active: true, remainingMs: HOLD_MS });
+  });
+
+  it("gravityStep does not move a holding piece", () => {
+    const s = held();
+    const { state, locked } = gravityStep(s);
+    expect(locked).toBe(false);
+    expect(state.active!.pos).toEqual({ row: 0, col: 7 });
+  });
+
+  it("hardDrop ignores a holding piece", () => {
+    const s = held();
+    expect(hardDrop(s)).toBe(s);
+  });
+
+  it("freshSoftDrop releases the hold and steps down one row", () => {
+    const { state } = freshSoftDrop(held());
+    expect(state.hold.active).toBe(false);
+    expect(state.active!.pos).toEqual({ row: 1, col: 7 });
+  });
+
+  it("freshHardDrop releases the hold and drops to the floor", () => {
+    const s = freshHardDrop(held());
+    expect(s.active).toBe(null);
+    expect(s.grid[9]![7]).toBe(0);
+    expect(s.grid[8]![7]).toBe(0);
   });
 });

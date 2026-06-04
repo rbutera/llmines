@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { COLS, ROWS } from "./constants";
 import { computeMarked } from "./detect";
 import { createGame, emptyGrid, settle, viewGrid } from "./grid";
+import { releaseHold } from "./hold";
 import {
   gravityStep,
   hardDrop,
@@ -95,8 +96,10 @@ describe("grid model (2.x)", () => {
 });
 
 describe("piece mechanics (4.x)", () => {
+  // A freshly spawned block now holds at the top; these mechanics tests
+  // exercise gravity/hard-drop directly, so release the hold first.
   function withPiece(cells: Piece): GameState {
-    return spawnPiece(createGame(), cells);
+    return releaseHold(spawnPiece(createGame(), cells));
   }
 
   it("spawns at top-centre cols 7-8 rows 0-1", () => {
@@ -182,7 +185,7 @@ describe("piece mechanics (4.x)", () => {
     const base = createGame();
     base.grid[ROWS - 1]![7] = 1;
     base.grid[ROWS - 1]![8] = 1;
-    let s = spawnPiece(base, MONO_A);
+    let s = releaseHold(spawnPiece(base, MONO_A));
     for (let i = 0; i < ROWS + 2; i++) {
       const r = gravityStep(s);
       s = r.state;
