@@ -20,13 +20,9 @@ import {
   type Piece,
   type PublicState,
 } from "../core";
+import { computeFallProgress } from "./fall-progress";
 
-export type InputAction =
-  | "left"
-  | "right"
-  | "rotate"
-  | "softDrop"
-  | "hardDrop";
+export type InputAction = "left" | "right" | "rotate" | "softDrop" | "hardDrop";
 
 /** Rich per-frame snapshot for the renderer + React HUD. */
 export interface RenderState {
@@ -195,13 +191,15 @@ export class GameController {
   // ---- render / read access ------------------------------------------------
 
   private renderState(): RenderState {
-    const interval = GRAVITY_INTERVAL_MS;
     return {
       grid: this.state.grid,
       active: this.state.active,
-      fallProgress: this.testMode
-        ? 0
-        : Math.max(0, Math.min(1, this.gravityAccumMs / interval)),
+      fallProgress: computeFallProgress(
+        this.state,
+        this.gravityAccumMs,
+        GRAVITY_INTERVAL_MS,
+        this.testMode,
+      ),
       score: this.state.score,
       gameOver: this.state.gameOver,
       sweepX: this.state.sweepX,
