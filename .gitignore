@@ -44,3 +44,8 @@ yarn-error.log*
 
 # idea files
 .idea
+
+# test artifacts
+/test-results
+/playwright-report
+/playwright/.cache
