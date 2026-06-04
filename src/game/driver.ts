@@ -34,12 +34,16 @@ export class GameDriver {
   }
 
   start(): void {
+    // Controls are always live. Production play and the deterministic test
+    // harness both drive the piece via the keyboard (h/l/j/k/space); the test
+    // API deliberately exposes no move/rotate/drop ops, so the keyboard handler
+    // must be attached in test mode too or those acceptance checks can't run.
+    this.detachKeys = attachKeyboard(window, engineActions(this.engine));
     if (TEST_MODE) {
       installTestApi(this.engine);
     } else {
       this.engine.spawnPiece(); // first piece
       this.audio.play();
-      this.detachKeys = attachKeyboard(window, engineActions(this.engine));
     }
     this.last = performanceNow();
     this.loop();

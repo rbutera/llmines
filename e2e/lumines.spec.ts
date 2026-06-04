@@ -161,3 +161,35 @@ test("game over triggers on stack overflow and offers restart", async ({
   await page.getByTestId("restart").click();
   await expect(page.getByTestId("score")).toHaveText("0");
 });
+
+// Regression: keyboard controls must be live in test mode too (the test API
+// exposes no move/rotate/drop, so the harness drives the piece via real keys).
+test("keyboard controls move and hard-drop the piece in test mode", async ({
+  page,
+}) => {
+  await startGame(page);
+  await page.evaluate(() => {
+    const L = (window as any).__lumines;
+    L.spawn([
+      [0, 0],
+      [1, 1],
+    ]); // top row at cols 7-8
+  });
+
+  // h = move left: the piece's left column goes from 7 to 6.
+  await page.keyboard.press("h");
+  let st = await getState(page);
+  expect(st.grid[0]![6]).toBe(0);
+  expect(st.grid[0]![8]).toBeNull();
+
+  // l = move right twice: back to 7, then to 8.
+  await page.keyboard.press("l");
+  await page.keyboard.press("l");
+  st = await getState(page);
+  expect(st.grid[0]![8]).toBe(0);
+
+  // space = hard-drop: piece locks on the floor.
+  await page.keyboard.press(" ");
+  st = await getState(page);
+  expect(st.grid[9]!.filter((c) => c !== null).length).toBeGreaterThan(0);
+});
