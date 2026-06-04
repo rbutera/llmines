@@ -8,6 +8,7 @@ interface State {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  hold: { active: boolean; remainingMs: number };
 }
 
 declare global {

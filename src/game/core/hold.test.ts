@@ -48,4 +48,8 @@ describe("hold helpers", () => {
   it("releaseHold cancels an active hold", () => {
     expect(releaseHold(held()).hold).toEqual({ active: false, remainingMs: 0 });
   });
+
+  it("createGame starts with no hold", () => {
+    expect(createGame(1).hold).toEqual({ active: false, remainingMs: 0 });
+  });
 });

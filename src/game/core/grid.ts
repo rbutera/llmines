@@ -1,4 +1,5 @@
 import { COLS, ROWS } from "./constants";
+import { noHold } from "./hold";
 import { seedState } from "./rng";
 import type { ActivePiece, Cell, GameState, Grid } from "./types";
 
@@ -21,6 +22,7 @@ export function createGame(seed = 1): GameState {
     active: null,
     score: 0,
     gameOver: false,
+    hold: noHold(),
     sweepX: 0,
     rngState: seedState(seed),
   };

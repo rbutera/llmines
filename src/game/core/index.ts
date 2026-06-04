@@ -5,6 +5,7 @@ export * from "./types";
 export * from "./constants";
 export * from "./rng";
 export * from "./grid";
+export * from "./hold";
 export * from "./piece";
 export * from "./detect";
 export * from "./sweep";
@@ -15,6 +16,7 @@ export interface PublicState {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  hold: { active: boolean; remainingMs: number };
 }
 
 /** Project internal state to the public `state()` shape (composites the piece). */
@@ -24,5 +26,6 @@ export function publicState(state: GameState): PublicState {
     score: state.score,
     gameOver: state.gameOver,
     sweepX: state.sweepX,
+    hold: state.hold,
   };
 }
