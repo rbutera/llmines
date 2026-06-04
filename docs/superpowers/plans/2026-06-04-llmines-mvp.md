@@ -6,6 +6,8 @@
 
 **Architecture:** A pure, framework-free game engine (`src/game/`) holds all deterministic logic and is unit-tested with vitest. A thin React layer owns screen flow + HUD and mounts a PixiJS canvas. A "driver" runs the production loop (rAF gravity ticks, music-synced sweep, auto-spawn, audio) and is fully gated off under `NEXT_PUBLIC_TEST_MODE=1`, where the engine is instead driven through `window.__lumines`. The engine never auto-spawns; spawning is the driver's job in production and the harness's job in test mode.
 
+**Design spec:** `docs/superpowers/specs/2026-06-04-llmines-design.md` (approved). This plan implements that spec; the one explicit decision it encodes beyond the base draft is the **audio-locked sweep** (sweep advances by elapsed `audio.currentTime`, falling back to rAF `dt` when the audio clock isn't progressing — see Task 11).
+
 **Tech Stack:** Next.js 15 (App Router) · React 19 · TypeScript · Tailwind v4 · PixiJS 8 · vitest (logic) · Playwright (e2e) · pnpm.
 
 ---
@@ -1503,6 +1505,7 @@ export class GameDriver {
   private raf = 0;
   private last = 0;
   private gravityAcc = 0;
+  private lastAudioMs = 0;
   private startMs = 0;
   private lastScore = -1;
   private over = false;
@@ -1560,8 +1563,15 @@ export class GameDriver {
     const st = this.engine.state();
     if (st.gameOver) return;
 
-    // Sweep locked to tempo via audio clock when available, else dt.
-    this.engine.sweepProgress(dt);
+    // Sweep locked to the track: advance by however much the audio clock moved
+    // since last frame. If the audio clock isn't progressing (autoplay blocked,
+    // paused, or just looped to 0), fall back to rAF dt at the same tempo so the
+    // sweep never depends on audio decode. 250ms/col either way.
+    const audioMs = this.audio.time * 1000;
+    let sweepDelta = audioMs - this.lastAudioMs;
+    this.lastAudioMs = audioMs;
+    if (sweepDelta <= 0 || sweepDelta > 1000) sweepDelta = dt;
+    this.engine.sweepProgress(sweepDelta);
 
     // Gravity.
     this.gravityAcc += dt;
