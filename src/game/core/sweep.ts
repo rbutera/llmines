@@ -38,8 +38,7 @@ export function advanceSweep(state: GameState, columns: number): GameState {
   let grid = cloneGrid(state.grid);
   let score = state.score;
   let sweepX = state.sweepX;
-  let pass: SweepPass =
-    state.sweepPass ?? startPass(grid);
+  let pass: SweepPass = state.sweepPass ?? startPass(grid);
   let remaining = columns;
 
   while (remaining > 0) {

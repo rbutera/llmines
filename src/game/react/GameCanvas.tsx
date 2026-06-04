@@ -33,7 +33,7 @@ export function GameCanvas({ controller }: { controller: GameController }) {
   return (
     <div
       ref={hostRef}
-      className="w-full overflow-hidden rounded-xl ring-1 shadow-2xl ring-white/10"
+      className="w-full overflow-hidden rounded-xl shadow-2xl ring-1 ring-white/10"
       style={{ aspectRatio: "16 / 10", boxShadow: "0 0 60px -15px #37e0c980" }}
     />
   );
