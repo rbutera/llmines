@@ -13,6 +13,9 @@ export const SPAWN_ROW = 0;
 export const BPM = 120;
 export const SECONDS_PER_BEAT = 60 / BPM; // 0.5s
 
+/** New-block hold window: one beat (0.5s) before a spawned block falls. */
+export const HOLD_MS = SECONDS_PER_BEAT * 1000; // 500ms
+
 /** Sweep: full 16-column traversal = 8 beats = 4.0s -> 0.25s per column. */
 export const SWEEP_BEATS_PER_TRAVERSAL = 8;
 export const SWEEP_SECONDS_PER_TRAVERSAL =
