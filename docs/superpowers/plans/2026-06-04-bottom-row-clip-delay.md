@@ -36,7 +36,7 @@ Context for the implementer:
 - The grid is `grid[row][col]`, row 0 = TOP, `ROWS` (10) rows × 16 cols. A 2x2 piece's top-left is `pos`; its bottom cells are at `pos.row + 1`. So a piece whose bottom cells sit on the last row has `pos.row === ROWS - 2` and is resting.
 - Vitest here uses `globals: false`, so import `{ describe, expect, it }` from `"vitest"`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/game/engine/fall-progress.test.ts`:
 
@@ -124,12 +124,12 @@ describe("computeFallProgress", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run src/game/engine/fall-progress.test.ts`
 Expected: FAIL — `Cannot find module './fall-progress'` (the module does not exist yet).
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 Create `src/game/engine/fall-progress.ts`:
 
@@ -160,12 +160,12 @@ export function computeFallProgress(
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run src/game/engine/fall-progress.test.ts`
 Expected: PASS — 6 tests passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/game/engine/fall-progress.ts src/game/engine/fall-progress.test.ts
@@ -181,7 +181,7 @@ git commit -m "feat: add computeFallProgress with resting-piece guard"
 
 This task has no new test of its own — it is a behaviour-preserving substitution covered by the existing unit suite, the existing Playwright e2e suite, and `tsc`. The verification steps are the existing suites going green.
 
-- [ ] **Step 1: Add the import**
+- [x] **Step 1: Add the import**
 
 In `src/game/engine/controller.ts`, immediately after the closing `} from "../core";` of the existing core import block, add:
 
@@ -189,7 +189,7 @@ In `src/game/engine/controller.ts`, immediately after the closing `} from "../co
 import { computeFallProgress } from "./fall-progress";
 ```
 
-- [ ] **Step 2: Replace the inline `fallProgress` computation**
+- [x] **Step 2: Replace the inline `fallProgress` computation**
 
 In the private `renderState()` method, replace this:
 
@@ -233,28 +233,28 @@ with this:
 
 Note: `GRAVITY_INTERVAL_MS` is already imported in `controller.ts`; the local `interval` const is removed because it is no longer used.
 
-- [ ] **Step 3: Typecheck**
+- [x] **Step 3: Typecheck**
 
 Run: `npx tsc --noEmit`
 Expected: exit 0, no output (no unused-variable or type errors).
 
-- [ ] **Step 4: Run the full unit suite**
+- [x] **Step 4: Run the full unit suite**
 
 Run: `npx vitest run`
 Expected: PASS — all test files (core + fall-progress) green, 31 tests.
 
-- [ ] **Step 5: Format and lint**
+- [x] **Step 5: Format and lint**
 
 Run: `npx prettier --write src/game/engine/fall-progress.ts src/game/engine/fall-progress.test.ts src/game/engine/controller.ts`
 Run: `npx next lint`
 Expected: prettier reports the files; `next lint` prints "No ESLint warnings or errors".
 
-- [ ] **Step 6: Run the e2e suite (regression gate)**
+- [x] **Step 6: Run the e2e suite (regression gate)**
 
 Run: `npx playwright install chromium` (first time only), then `npx playwright test`
 Expected: PASS — 9 tests passed. (E2E runs in test mode where `fallProgress` is already 0, so this proves the substitution did not regress existing deterministic behaviour; the resting-piece invariant itself is proven by the Task 1 unit tests.)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/game/engine/controller.ts
