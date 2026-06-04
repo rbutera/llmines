@@ -18,7 +18,9 @@ describe("buildTestApi", () => {
       "sweepNow",
       "sweepProgress",
     ]) {
-      expect(typeof (api as Record<string, unknown>)[m]).toBe("function");
+      expect(typeof (api as unknown as Record<string, unknown>)[m]).toBe(
+        "function",
+      );
     }
   });
 
