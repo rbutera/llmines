@@ -49,7 +49,7 @@ Context for the implementer (existing code facts):
 - Create: `src/game/core/hold.ts`
 - Test: `src/game/core/hold.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/game/core/hold.test.ts`:
 
@@ -107,12 +107,12 @@ describe("hold helpers", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run src/game/core/hold.test.ts`
 Expected: FAIL — `Cannot find module './hold'` and `HOLD_MS` not exported.
 
-- [ ] **Step 3: Add `HoldState` to types**
+- [x] **Step 3: Add `HoldState` to types**
 
 In `src/game/core/types.ts`, add this interface (place it just above the `GameState` interface):
 
@@ -132,7 +132,7 @@ Then add a `hold` field to `GameState` (after the `active` field):
   hold: HoldState;
 ```
 
-- [ ] **Step 4: Add `HOLD_MS` constant**
+- [x] **Step 4: Add `HOLD_MS` constant**
 
 In `src/game/core/constants.ts`, after the `SECONDS_PER_BEAT` line, add:
 
@@ -141,7 +141,7 @@ In `src/game/core/constants.ts`, after the `SECONDS_PER_BEAT` line, add:
 export const HOLD_MS = SECONDS_PER_BEAT * 1000; // 500ms
 ```
 
-- [ ] **Step 5: Create the hold helpers**
+- [x] **Step 5: Create the hold helpers**
 
 Create `src/game/core/hold.ts`:
 
@@ -182,12 +182,12 @@ export function releaseHold(state: GameState): GameState {
 }
 ```
 
-- [ ] **Step 6: Run the test to verify it passes**
+- [x] **Step 6: Run the test to verify it passes**
 
 Run: `npx vitest run src/game/core/hold.test.ts`
 Expected: PASS — 6 tests. (If `createGame` doesn't yet set `hold`, the `held()` helper still supplies it explicitly, so this passes; Task 2 makes `createGame` seed it.)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/game/core/types.ts src/game/core/constants.ts src/game/core/hold.ts src/game/core/hold.test.ts
@@ -203,7 +203,7 @@ git commit -m "feat: add hold state and pure hold helpers"
 - Modify: `src/game/core/index.ts`
 - Test: `src/game/core/hold.test.ts` (extend)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/game/core/hold.test.ts` inside the `describe` block (before the closing `});`):
 
@@ -213,12 +213,12 @@ Append to `src/game/core/hold.test.ts` inside the `describe` block (before the c
   });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run src/game/core/hold.test.ts`
 Expected: FAIL — `createGame(1).hold` is `undefined` (typecheck/runtime mismatch).
 
-- [ ] **Step 3: Seed the hold in createGame**
+- [x] **Step 3: Seed the hold in createGame**
 
 In `src/game/core/grid.ts`, import `noHold` at the top:
 
@@ -234,7 +234,7 @@ In the object returned by `createGame`, add the `hold` field (after `gameOver: f
     sweepX: 0,
 ```
 
-- [ ] **Step 4: Re-export hold + add it to PublicState**
+- [x] **Step 4: Re-export hold + add it to PublicState**
 
 In `src/game/core/index.ts`, add the re-export alongside the others:
 
@@ -266,17 +266,17 @@ And include it in `publicState()`:
   };
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run src/game/core/hold.test.ts`
 Expected: PASS — 7 tests.
 
-- [ ] **Step 6: Typecheck (catches any GameState literal missing `hold`)**
+- [x] **Step 6: Typecheck (catches any GameState literal missing `hold`)**
 
 Run: `npx tsc --noEmit`
 Expected: exit 0. If it flags a `GameState` literal without `hold` (e.g. in `core.test.ts`), add `hold: noHold()` there. (At the time of writing only `createGame` constructs the full state, so none are expected.)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/game/core/grid.ts src/game/core/index.ts src/game/core/hold.test.ts
@@ -291,7 +291,7 @@ git commit -m "feat: seed hold in createGame and expose it in public state"
 - Modify: `src/game/core/piece.ts`
 - Test: `src/game/core/hold.test.ts` (extend)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/game/core/hold.test.ts` inside the `describe` block (before the closing `});`). This needs more imports — update the existing import line from `./piece` style; add at the top of the file (after the existing imports):
 
@@ -340,12 +340,12 @@ Then the tests:
   });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run src/game/core/hold.test.ts`
 Expected: FAIL — `freshSoftDrop`/`freshHardDrop` not exported, and the gravity-gate assertions fail (a holding piece currently still moves).
 
-- [ ] **Step 3: Wire the hold into piece.ts**
+- [x] **Step 3: Wire the hold into piece.ts**
 
 In `src/game/core/piece.ts`, add to the imports from `./hold`:
 
@@ -403,17 +403,17 @@ export function freshHardDrop(state: GameState): GameState {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run src/game/core/hold.test.ts`
 Expected: PASS — 12 tests.
 
-- [ ] **Step 5: Run the full core suite (no regression)**
+- [x] **Step 5: Run the full core suite (no regression)**
 
 Run: `npx vitest run src/game/core`
 Expected: PASS — `core.test.ts` + `hold.test.ts` all green. (`spawnPiece` now also sets `hold`; existing tests assert positions/grids, not the absence of `hold`, so they remain green.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/game/core/piece.ts src/game/core/hold.test.ts
@@ -428,7 +428,7 @@ git commit -m "feat: gate gravity on hold, set hold on spawn, add fresh-drop ops
 - Modify: `src/game/engine/fall-progress.ts`
 - Test: `src/game/engine/fall-progress.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `src/game/engine/fall-progress.test.ts`, add `freshHold` to the `../core` import list, then add this test inside the `describe("computeFallProgress", …)` block (before its closing `});`):
 
@@ -444,12 +444,12 @@ In `src/game/engine/fall-progress.test.ts`, add `freshHold` to the `../core` imp
   });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run src/game/engine/fall-progress.test.ts`
 Expected: FAIL — returns `0.5` (the helper does not yet account for the hold).
 
-- [ ] **Step 3: Add the hold guard**
+- [x] **Step 3: Add the hold guard**
 
 In `src/game/engine/fall-progress.ts`, update the import and the body:
 
@@ -465,12 +465,12 @@ import { isHolding, isResting, type GameState } from "../core";
   return Math.max(0, Math.min(1, gravityAccumMs / intervalMs));
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run src/game/engine/fall-progress.test.ts`
 Expected: PASS — 7 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/game/engine/fall-progress.ts src/game/engine/fall-progress.test.ts
@@ -487,7 +487,7 @@ git commit -m "feat: hold a held piece at fallProgress 0"
 
 This task adds controller behaviour and a new unit test file driving the controller in test mode (no rAF). The controller exposes `getRenderState()` and the `test*` hooks, which is all we need.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/game/engine/controller.test.ts`:
 
@@ -564,12 +564,12 @@ describe("GameController hold behaviour", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run src/game/engine/controller.test.ts`
 Expected: FAIL — `testPressSoftDrop`/`testPressHardDrop` do not exist, and `testState().hold` is undefined.
 
-- [ ] **Step 3: Update controller imports**
+- [x] **Step 3: Update controller imports**
 
 In `src/game/engine/controller.ts`, add to the `../core` import block:
 
@@ -581,7 +581,7 @@ In `src/game/engine/controller.ts`, add to the `../core` import block:
   type HoldState,
 ```
 
-- [ ] **Step 4: Add `hold` to RenderState**
+- [x] **Step 4: Add `hold` to RenderState**
 
 In the `RenderState` interface, add:
 
@@ -590,7 +590,7 @@ In the `RenderState` interface, add:
   hold: HoldState;
 ```
 
-- [ ] **Step 5: Make `advance` hold-aware**
+- [x] **Step 5: Make `advance` hold-aware**
 
 Replace the body of `advance(dtMs)` with:
 
@@ -618,7 +618,7 @@ Replace the body of `advance(dtMs)` with:
   }
 ```
 
-- [ ] **Step 6: Add fresh-press methods (production)**
+- [x] **Step 6: Add fresh-press methods (production)**
 
 After the existing `input(action)` method, add:
 
@@ -647,7 +647,7 @@ After the existing `input(action)` method, add:
   }
 ```
 
-- [ ] **Step 7: Add `hold` to `renderState()` and make `testTick` hold-aware + add test hooks**
+- [x] **Step 7: Add `hold` to `renderState()` and make `testTick` hold-aware + add test hooks**
 
 In `renderState()`, add `hold` to the returned object (after `sweepX`):
 
@@ -685,17 +685,17 @@ Add the two test-press hooks (next to `testTick`):
   }
 ```
 
-- [ ] **Step 8: Run the test to verify it passes**
+- [x] **Step 8: Run the test to verify it passes**
 
 Run: `npx vitest run src/game/engine/controller.test.ts`
 Expected: PASS — 6 tests.
 
-- [ ] **Step 9: Run the full unit suite + typecheck**
+- [x] **Step 9: Run the full unit suite + typecheck**
 
 Run: `npx vitest run` then `npx tsc --noEmit`
 Expected: all unit tests pass; `tsc` exit 0.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add src/game/engine/controller.ts src/game/engine/controller.test.ts
@@ -713,7 +713,7 @@ git commit -m "feat: hold-aware controller timing, fresh-press methods, test hoo
 
 No new unit test here — behaviour is verified by the e2e suite in Task 7 and the controller tests in Task 5. These are wiring + presentation changes.
 
-- [ ] **Step 1: Classify drop keys by freshness in GameShell**
+- [x] **Step 1: Classify drop keys by freshness in GameShell**
 
 In `src/game/react/GameShell.tsx`, replace the `onKey` handler body inside the keyboard `useEffect`:
 
@@ -734,7 +734,7 @@ In `src/game/react/GameShell.tsx`, replace the `onKey` handler body inside the k
     };
 ```
 
-- [ ] **Step 2: Expose the press hooks on the test API**
+- [x] **Step 2: Expose the press hooks on the test API**
 
 In `src/game/test-api/install.ts`, add to the `LuminesTestApi` interface:
 
@@ -750,7 +750,7 @@ And to the `api` object in `installTestApi`:
     pressHardDrop: () => controller.testPressHardDrop(),
 ```
 
-- [ ] **Step 3: Add the "ready to place" pulse in the renderer**
+- [x] **Step 3: Add the "ready to place" pulse in the renderer**
 
 In `src/game/render/renderer.ts`, the `drawPiece(rs)` method draws each active
 cell with `{ glow: 0.4 }`. Replace the glow with a hold-aware pulse. Update
@@ -779,12 +779,12 @@ cell with `{ glow: 0.4 }`. Replace the glow with a hold-aware pulse. Update
   }
 ```
 
-- [ ] **Step 4: Typecheck + lint**
+- [x] **Step 4: Typecheck + lint**
 
 Run: `npx tsc --noEmit` then `npx next lint`
 Expected: `tsc` exit 0; "No ESLint warnings or errors".
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/game/react/GameShell.tsx src/game/test-api/install.ts src/game/render/renderer.ts
@@ -798,7 +798,7 @@ git commit -m "feat: fresh-vs-held key routing, test press hooks, ready-pulse po
 **Files:**
 - Modify: `e2e/lumines.spec.ts`
 
-- [ ] **Step 1: Extend the `State` type and add the press helpers**
+- [x] **Step 1: Extend the `State` type and add the press helpers**
 
 In `e2e/lumines.spec.ts`, add `hold` to the `State` interface:
 
@@ -819,7 +819,7 @@ Add `pressSoftDrop`/`pressHardDrop` to the `window.__lumines` declared type:
       pressHardDrop(): void;
 ```
 
-- [ ] **Step 2: Update the existing "tick advances" test to release the hold first**
+- [x] **Step 2: Update the existing "tick advances" test to release the hold first**
 
 Replace the body of the test `"spawn places at top-centre; tick advances; tick never auto-spawns"` (the section from the first `tick` onward) so it accounts for the hold:
 
@@ -863,7 +863,7 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
 });
 ```
 
-- [ ] **Step 3: Add a deliberate-press test**
+- [x] **Step 3: Add a deliberate-press test**
 
 Add this test at the end of `e2e/lumines.spec.ts`:
 
@@ -902,12 +902,12 @@ test("fresh hard-drop press on a held block lands it on the floor", async ({
 });
 ```
 
-- [ ] **Step 4: Run the e2e suite**
+- [x] **Step 4: Run the e2e suite**
 
 Run: `npx playwright test`
 Expected: PASS — all tests green (the 9 originals, adjusted "tick advances", plus 2 new).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add e2e/lumines.spec.ts
@@ -918,7 +918,7 @@ git commit -m "test: e2e for new-block hold and deliberate drop press"
 
 ### Task 8: Full verification sweep
 
-- [ ] **Step 1: Run everything**
+- [x] **Step 1: Run everything**
 
 Run, in order:
 - `npx vitest run` — Expected: all unit suites green (core + hold + fall-progress + controller).
@@ -927,7 +927,7 @@ Run, in order:
 - `npx prettier --write "src/**/*.{ts,tsx}" "e2e/**/*.ts"` then `npx prettier --check "src/**/*.{ts,tsx}" "e2e/**/*.ts"` — Expected: all matched files formatted / pass.
 - `npx playwright test` — Expected: all e2e green.
 
-- [ ] **Step 2: Commit any formatting**
+- [x] **Step 2: Commit any formatting**
 
 ```bash
 git add -A
