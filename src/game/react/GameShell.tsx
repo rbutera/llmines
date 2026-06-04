@@ -8,6 +8,7 @@ import { TEST_MODE } from "../test-api/flag";
 import { installTestApi } from "../test-api/install";
 import { ControlsCheatsheet } from "./ControlsCheatsheet";
 import { GameCanvas } from "./GameCanvas";
+import { ScoreFx } from "./ScoreFx";
 
 type Phase = "start" | "playing" | "gameover";
 
@@ -161,7 +162,10 @@ function PlayingScreen({
       aria-label="Game"
       className="grid items-start gap-6 md:grid-cols-[1fr_240px]"
     >
-      <GameCanvas controller={controller} />
+      <div className="relative">
+        <GameCanvas controller={controller} />
+        <ScoreFx score={score} />
+      </div>
       <aside className="flex flex-col gap-4">
         <div className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur">
           <div className="text-xs tracking-widest text-white/50 uppercase">
