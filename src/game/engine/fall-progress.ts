@@ -1,4 +1,4 @@
-import { isResting, type GameState } from "../core";
+import { isHolding, isResting, type GameState } from "../core";
 
 /**
  * How far (0..1) the active piece should be visually interpolated toward the
@@ -19,6 +19,7 @@ export function computeFallProgress(
 ): number {
   if (testMode) return 0;
   if (!state.active) return 0;
+  if (isHolding(state)) return 0;
   if (isResting(state)) return 0;
   return Math.max(0, Math.min(1, gravityAccumMs / intervalMs));
 }

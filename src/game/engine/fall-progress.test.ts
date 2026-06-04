@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   createGame,
   emptyGrid,
+  freshHold,
   GRAVITY_INTERVAL_MS,
+  releaseHold,
   ROWS,
   spawnPiece,
   type GameState,
@@ -25,9 +27,11 @@ function restingOnFloor(): GameState {
   };
 }
 
-/** A game with the active piece mid-air with clear space below. */
+/** A game with the active piece mid-air, falling (hold already released). */
 function midAir(): GameState {
-  return spawnPiece(createGame(1), MONO_A); // spawns at top, can descend
+  // spawnPiece now starts the block held; release it so it represents a
+  // genuinely-falling piece for the interpolation cases below.
+  return releaseHold(spawnPiece(createGame(1), MONO_A));
 }
 
 describe("computeFallProgress", () => {
@@ -77,5 +81,14 @@ describe("computeFallProgress", () => {
     expect(
       computeFallProgress(createGame(1), interval / 2, interval, false),
     ).toBe(0);
+  });
+
+  it("is 0 for a held piece even mid-board with accum", () => {
+    const state: GameState = {
+      ...createGame(1),
+      active: { cells: MONO_A, pos: { row: 0, col: 7 } },
+      hold: freshHold(),
+    };
+    expect(computeFallProgress(state, interval / 2, interval, false)).toBe(0);
   });
 });
