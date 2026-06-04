@@ -2,9 +2,12 @@ import {
   advanceSweep,
   computeMarked,
   createGame,
+  freshHardDrop,
+  freshSoftDrop,
   GRAVITY_INTERVAL_MS,
   gravityStep,
   hardDrop,
+  isHolding,
   lockPiece,
   moveLeft,
   moveRight,
@@ -15,7 +18,9 @@ import {
   spawnNext,
   spawnPiece,
   SWEEP_MS_PER_COL,
+  tickHold,
   type GameState,
+  type HoldState,
   type MarkedCell,
   type Piece,
   type PublicState,
@@ -35,6 +40,8 @@ export interface RenderState {
   gameOver: boolean;
   sweepX: number;
   marked: MarkedCell[];
+  /** New-block hold window for the held piece. */
+  hold: HoldState;
 }
 
 export interface ControllerOptions {
@@ -133,8 +140,16 @@ export class GameController {
   private advance(dtMs: number): void {
     if (this.state.gameOver) return;
 
-    // Music-synced sweep: continuous, snapshot-per-pass scoring.
+    // Music-synced sweep keeps running during the hold.
     this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
+
+    if (isHolding(this.state)) {
+      // Held: count the hold down, suppress gravity, keep the accumulator clean
+      // so a just-released block falls at full normal cadence.
+      this.state = tickHold(this.state, dtMs);
+      this.gravityAccumMs = 0;
+      return;
+    }
 
     // Gravity on a fixed tick.
     this.gravityAccumMs += dtMs;
@@ -188,6 +203,29 @@ export class GameController {
     this.emit();
   }
 
+  /** Fresh, deliberate soft-drop press (cancels any new-block hold). */
+  pressSoftDrop(): void {
+    if (!this.started || this.state.gameOver || !this.state.active) return;
+    const { state, locked } = freshSoftDrop(this.state);
+    this.state = state;
+    if (locked && !this.testMode) {
+      this.gravityAccumMs = 0;
+      this.state = spawnNext(this.state);
+    }
+    this.emit();
+  }
+
+  /** Fresh, deliberate hard-drop press (cancels any new-block hold). */
+  pressHardDrop(): void {
+    if (!this.started || this.state.gameOver || !this.state.active) return;
+    this.state = freshHardDrop(this.state);
+    if (!this.testMode) {
+      this.gravityAccumMs = 0;
+      this.state = spawnNext(this.state);
+    }
+    this.emit();
+  }
+
   // ---- render / read access ------------------------------------------------
 
   private renderState(): RenderState {
@@ -204,6 +242,7 @@ export class GameController {
       gameOver: this.state.gameOver,
       sweepX: this.state.sweepX,
       marked: computeMarked(this.state.grid).marked,
+      hold: this.state.hold,
     };
   }
 
@@ -234,11 +273,25 @@ export class GameController {
     this.emit();
   }
 
-  /** One gravity step; NEVER auto-spawns. */
+  /** One gravity beat; NEVER auto-spawns. Consumes the hold first if active. */
   testTick(): void {
-    const { state } = gravityStep(this.state);
-    this.state = state;
+    if (isHolding(this.state)) {
+      this.state = tickHold(this.state, GRAVITY_INTERVAL_MS);
+    } else {
+      const { state } = gravityStep(this.state);
+      this.state = state;
+    }
     this.emit();
+  }
+
+  /** Fresh deliberate soft-drop press (test interface). */
+  testPressSoftDrop(): void {
+    this.pressSoftDrop();
+  }
+
+  /** Fresh deliberate hard-drop press (test interface). */
+  testPressHardDrop(): void {
+    this.pressHardDrop();
   }
 
   /** Run one full sweep immediately + apply scoring. */
