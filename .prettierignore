@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+coverage/
+.next/
+out/
+playwright-report/
+test-results/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
