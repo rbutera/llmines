@@ -4,3 +4,75 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
+
+/* ---- Animated score (ScoreFx overlay) ---------------------------------- */
+
+.score-fx-value {
+  animation: score-burst 650ms cubic-bezier(0.2, 1.4, 0.3, 1) both;
+}
+@keyframes score-burst {
+  0% {
+    transform: scale(0.6);
+  }
+  40% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.score-fx-chip {
+  animation: score-gain-rise 1100ms ease-out both;
+}
+@keyframes score-gain-rise {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-64px);
+    opacity: 0;
+  }
+}
+
+.score-fx-spark {
+  animation: score-spark 900ms ease-out both;
+}
+@keyframes score-spark {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--spark-x), var(--spark-y)) scale(0.3);
+    opacity: 0;
+  }
+}
+
+.score-fx-flash {
+  animation: score-flash 600ms ease-out both;
+}
+@keyframes score-flash {
+  0% {
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .score-fx-value,
+  .score-fx-chip,
+  .score-fx-spark,
+  .score-fx-flash {
+    animation-duration: 1ms;
+  }
+}
