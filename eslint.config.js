@@ -7,7 +7,17 @@ const compat = new FlatCompat({
 
 export default tseslint.config(
   {
-    ignores: [".next"],
+    ignores: [
+      ".next",
+      "node_modules",
+      "dist",
+      "build",
+      "coverage",
+      "*.min.js",
+      "playwright-report",
+      "test-results",
+      "next-env.d.ts",
+    ],
   },
   ...compat.extends("next/core-web-vitals"),
   {
