@@ -10,6 +10,8 @@ export interface LuminesTestApi {
   tick(): void;
   sweepNow(): void;
   sweepProgress(dtMs: number): void;
+  pressSoftDrop(): void;
+  pressHardDrop(): void;
 }
 
 declare global {
@@ -33,6 +35,8 @@ export function installTestApi(controller: GameController): () => void {
     tick: () => controller.testTick(),
     sweepNow: () => controller.testSweepNow(),
     sweepProgress: (dtMs) => controller.testSweepProgress(dtMs),
+    pressSoftDrop: () => controller.testPressSoftDrop(),
+    pressHardDrop: () => controller.testPressHardDrop(),
   };
   window.__lumines = api;
   return () => {

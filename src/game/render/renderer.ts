@@ -262,6 +262,10 @@ export class PixiRenderer {
     if (!rs.active) return;
     const { cells, pos } = rs.active;
     const yOff = rs.fallProgress * CELL;
+    // While the new block is holding, pulse the glow as a "ready to place" cue.
+    const glow = rs.hold.active
+      ? 0.4 + 0.35 * (0.5 + 0.5 * Math.sin(this.clock / 120))
+      : 0.4;
     const map: [number, number, Cell][] = [
       [pos.row, pos.col, cells[0][0]],
       [pos.row, pos.col + 1, cells[0][1]],
@@ -269,7 +273,7 @@ export class PixiRenderer {
       [pos.row + 1, pos.col + 1, cells[1][1]],
     ];
     for (const [row, col, color] of map) {
-      this.cellRect(g, col, row, yOff, color, { glow: 0.4 });
+      this.cellRect(g, col, row, yOff, color, { glow });
     }
   }
 

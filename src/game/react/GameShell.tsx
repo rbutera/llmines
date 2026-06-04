@@ -47,7 +47,18 @@ export function GameShell() {
       const action = keyToAction(e);
       if (!action) return;
       e.preventDefault();
-      controller.input(action);
+      // Fresh press (!e.repeat) cancels a new-block hold and drops; a held key
+      // (e.repeat, incl. one carried over a lock) routes to the normal path,
+      // which is suppressed while the block is holding.
+      if (action === "softDrop") {
+        if (e.repeat) controller.input("softDrop");
+        else controller.pressSoftDrop();
+      } else if (action === "hardDrop") {
+        if (e.repeat) controller.input("hardDrop");
+        else controller.pressHardDrop();
+      } else {
+        controller.input(action);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
