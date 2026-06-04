@@ -103,7 +103,7 @@ export function ScoreFx({ score }: { score: number }) {
           <span
             key={latest ? latest.id : "idle"}
             data-testid="score-fx"
-            className="score-fx-value font-mono text-6xl font-black tabular-nums text-white"
+            className="score-fx-value font-mono text-6xl font-black text-white tabular-nums"
             style={{ textShadow: `0 0 24px ${COLOR_A}, 0 0 48px ${COLOR_B}` }}
           >
             {display}
