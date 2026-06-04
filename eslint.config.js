@@ -36,6 +36,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["next-env.d.ts"],
+    rules: {
+      "@typescript-eslint/triple-slash-reference": "off",
+    },
+  },
+  {
     linterOptions: {
       reportUnusedDisableDirectives: true,
     },

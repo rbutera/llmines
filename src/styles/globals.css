@@ -4,3 +4,16 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
+
+html {
+  background: #0b1020;
+}
+
+body {
+  margin: 0;
+  background: #0b1020;
+}
+
+button {
+  cursor: pointer;
+}
