@@ -47,7 +47,7 @@ export function GameCanvas({ onScore, onGameOver }: Props) {
   return (
     <div
       ref={mountRef}
-      className="relative overflow-hidden rounded-xl shadow-[0_0_60px_-15px_rgba(76,194,255,0.6)] ring-1 ring-white/10"
+      className="relative overflow-hidden rounded-2xl shadow-[0_0_70px_-12px_rgba(76,194,255,0.6),0_0_70px_-30px_rgba(255,122,217,0.5)] ring-1 ring-white/10"
     />
   );
 }

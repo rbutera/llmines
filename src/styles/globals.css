@@ -4,3 +4,94 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
+
+/* Neon-on-dark accents shared with the in-canvas palette. */
+:root {
+  --accent-a: #4cc2ff; /* cyan  (colour A) */
+  --accent-b: #ff7ad9; /* magenta (colour B) */
+}
+
+/* Slow drifting radial-gradient backdrop, cohesive with the board. */
+.app-bg {
+  position: relative;
+  background-color: #05060f;
+}
+
+.app-bg::before {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      40% 50% at 25% 30%,
+      rgba(76, 194, 255, 0.16),
+      transparent 70%
+    ),
+    radial-gradient(
+      45% 55% at 78% 68%,
+      rgba(255, 122, 217, 0.14),
+      transparent 70%
+    ),
+    radial-gradient(60% 60% at 50% 50%, rgba(16, 18, 43, 0.6), transparent 75%);
+  animation: bg-drift 24s ease-in-out infinite alternate;
+}
+
+.app-bg > * {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes bg-drift {
+  0% {
+    transform: translate3d(-3%, -2%, 0) scale(1.05);
+  }
+  50% {
+    transform: translate3d(2%, 3%, 0) scale(1.1);
+  }
+  100% {
+    transform: translate3d(3%, -1%, 0) scale(1.05);
+  }
+}
+
+/* Score "bump" when the value changes. */
+@keyframes score-bump {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.score-bump {
+  animation: score-bump 280ms ease-out;
+}
+
+/* Gentle entrance for screens / panels. */
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.panel-in {
+  animation: panel-in 320ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-bg::before,
+  .score-bump,
+  .panel-in {
+    animation: none;
+  }
+}
