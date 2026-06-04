@@ -36,7 +36,7 @@ Context for the implementer (existing code facts):
 - Create: `src/game/react/score-fx.ts`
 - Test: `src/game/react/score-fx.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/game/react/score-fx.test.ts`:
 
@@ -102,12 +102,12 @@ describe("BURST_MS", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run src/game/react/score-fx.test.ts`
 Expected: FAIL — `Cannot find module './score-fx'`.
 
-- [ ] **Step 3: Write the helpers**
+- [x] **Step 3: Write the helpers**
 
 Create `src/game/react/score-fx.ts`:
 
@@ -146,12 +146,12 @@ export function tweenValue(from: number, to: number, t: number): number {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run src/game/react/score-fx.test.ts`
 Expected: PASS — all assertions green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/game/react/score-fx.ts src/game/react/score-fx.test.ts
@@ -168,7 +168,7 @@ git commit -m "feat: add pure score-fx tier/tween helpers"
 
 No unit test (visual/DOM behaviour is covered by the e2e in Task 4). Verified here by typecheck + lint.
 
-- [ ] **Step 1: Add the keyframes to globals.css**
+- [x] **Step 1: Add the keyframes to globals.css**
 
 Append to `src/styles/globals.css`:
 
@@ -246,7 +246,7 @@ Append to `src/styles/globals.css`:
 }
 ```
 
-- [ ] **Step 2: Create the overlay component**
+- [x] **Step 2: Create the overlay component**
 
 Create `src/game/react/ScoreFx.tsx`:
 
@@ -414,12 +414,12 @@ export function ScoreFx({ score }: { score: number }) {
 }
 ```
 
-- [ ] **Step 3: Typecheck + lint**
+- [x] **Step 3: Typecheck + lint**
 
 Run: `npx tsc --noEmit` then `npx next lint`
 Expected: `tsc` exit 0; "No ESLint warnings or errors". (The `as CSSProperties` cast is required because `--spark-x`/`--spark-y` are CSS custom properties.)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/game/react/ScoreFx.tsx src/styles/globals.css
@@ -433,7 +433,7 @@ git commit -m "feat: add ScoreFx overlay component and juice keyframes"
 **Files:**
 - Modify: `src/game/react/GameShell.tsx`
 
-- [ ] **Step 1: Import ScoreFx**
+- [x] **Step 1: Import ScoreFx**
 
 In `src/game/react/GameShell.tsx`, add this import next to the other local imports (after the `GameCanvas` import):
 
@@ -441,7 +441,7 @@ In `src/game/react/GameShell.tsx`, add this import next to the other local impor
 import { ScoreFx } from "./ScoreFx";
 ```
 
-- [ ] **Step 2: Wrap the canvas and overlay the juice**
+- [x] **Step 2: Wrap the canvas and overlay the juice**
 
 In `PlayingScreen`, replace the bare `<GameCanvas controller={controller} />` line with a relative wrapper containing the canvas and the overlay:
 
@@ -454,12 +454,12 @@ In `PlayingScreen`, replace the bare `<GameCanvas controller={controller} />` li
 
 The `<aside>` block with `data-testid="score"` stays exactly as it is (authoritative, exact value).
 
-- [ ] **Step 3: Typecheck + lint**
+- [x] **Step 3: Typecheck + lint**
 
 Run: `npx tsc --noEmit` then `npx next lint`
 Expected: `tsc` exit 0; "No ESLint warnings or errors".
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/game/react/GameShell.tsx
@@ -473,7 +473,7 @@ git commit -m "feat: overlay ScoreFx on the game canvas"
 **Files:**
 - Modify: `e2e/lumines.spec.ts`
 
-- [ ] **Step 1: Add the test**
+- [x] **Step 1: Add the test**
 
 Add this test at the end of `e2e/lumines.spec.ts`:
 
@@ -500,12 +500,12 @@ test("scoring fires an in-view animation while score stays exact", async ({
 });
 ```
 
-- [ ] **Step 2: Run the e2e suite**
+- [x] **Step 2: Run the e2e suite**
 
 Run: `npx playwright test`
 Expected: PASS — all tests green (the 11 existing + this new one). The existing "a built 2x2 square is cleared by the sweep" test still asserts `score` = "4" and stays green (the authoritative element is unchanged).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add e2e/lumines.spec.ts
@@ -516,7 +516,7 @@ git commit -m "test: e2e for animated score burst with exact value"
 
 ### Task 5: Full verification sweep
 
-- [ ] **Step 1: Run everything**
+- [x] **Step 1: Run everything**
 
 Run, in order:
 - `npx vitest run` — Expected: all unit suites green (core, hold, fall-progress, controller, score-fx).
@@ -525,7 +525,7 @@ Run, in order:
 - `npx prettier --write "src/**/*.{ts,tsx}" "e2e/**/*.ts"` then `npx prettier --check "src/**/*.{ts,tsx}" "e2e/**/*.ts"` — Expected: formatted / all pass.
 - `npx playwright test` — Expected: all e2e green.
 
-- [ ] **Step 2: Commit any formatting**
+- [x] **Step 2: Commit any formatting**
 
 ```bash
 git add -A
