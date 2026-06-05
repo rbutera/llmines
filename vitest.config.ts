@@ -2,9 +2,10 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // Logic core is pure; jsdom only needed where DOM is touched. Default to node.
+    // Logic core is pure; convex-test runs the real backend in-memory (node).
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "convex/**/*.test.ts"],
     globals: false,
+    server: { deps: { inline: ["convex-test"] } },
   },
 });
