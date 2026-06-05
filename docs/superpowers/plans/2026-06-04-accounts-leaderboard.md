@@ -55,12 +55,12 @@ Context facts (verified in this cell):
 - Create: `convex/tsconfig.json`, `convex/test-env.d.ts`
 - Create: `convex/_generated/api.js`, `api.d.ts`, `server.js`, `server.d.ts`, `dataModel.d.ts`
 
-- [ ] **Step 1: Confirm deps are installed**
+- [x] **Step 1: Confirm deps are installed**
 
 Run: `node -e "console.log(require('convex/package.json').version, require('convex-test/package.json').version, require('next-auth/package.json').version)"`
 Expected: `1.40.0 0.0.53 5.0.0-beta.31` (if missing: `pnpm add convex next-auth && pnpm add -D convex-test`).
 
-- [ ] **Step 2: Add optional auth/convex env vars**
+- [x] **Step 2: Add optional auth/convex env vars**
 
 In `src/env.js`, extend the `server` block (after `NODE_ENV`):
 
@@ -89,7 +89,7 @@ Extend `runtimeEnv`:
     AUTH_GOOGLE_SECRET: process.env.AUTH_GOOGLE_SECRET,
 ```
 
-- [ ] **Step 3: Hand-write `convex/_generated/`** (codegen needs a deploy key offline; these mirror convex@1.40 output)
+- [x] **Step 3: Hand-write `convex/_generated/`** (codegen needs a deploy key offline; these mirror convex@1.40 output)
 
 Create `convex/_generated/api.js`:
 
@@ -205,7 +205,7 @@ export type Id<
 > = GenericId<TableName>;
 ```
 
-- [ ] **Step 4: Convex tsconfig + glob typing**
+- [x] **Step 4: Convex tsconfig + glob typing**
 
 Create `convex/tsconfig.json`:
 
@@ -236,12 +236,12 @@ interface ImportMeta {
 }
 ```
 
-- [ ] **Step 5: Typecheck the scaffold (schema/functions not present yet → expect errors only about missing `../schema`/`../scores`)**
+- [x] **Step 5: Typecheck the scaffold (schema/functions not present yet → expect errors only about missing `../schema`/`../scores`)**
 
 Run: `npx tsc --noEmit 2>&1 | head -20`
 Expected: errors referencing `../schema.js` / `../scores.js` not found (resolved in Task 2). No syntax errors in `_generated`. (This step just sanity-checks the generated files parse; it goes green at the end of Task 2.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add package.json pnpm-lock.yaml src/env.js convex/tsconfig.json convex/test-env.d.ts convex/_generated
@@ -256,7 +256,7 @@ git commit -m "chore: add convex/next-auth deps, env, hand-written convex/_gener
 - Create: `convex/schema.ts`, `convex/scores.ts`, `convex/scores.test.ts`
 - Modify: `vitest.config.ts`
 
-- [ ] **Step 1: Wire vitest for convex-test**
+- [x] **Step 1: Wire vitest for convex-test**
 
 Replace `vitest.config.ts` with:
 
@@ -274,7 +274,7 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 2: Write the failing convex-test**
+- [x] **Step 2: Write the failing convex-test**
 
 Create `convex/scores.test.ts`:
 
@@ -323,12 +323,12 @@ describe("convex/scores", () => {
 });
 ```
 
-- [ ] **Step 3: Run it to verify it fails**
+- [x] **Step 3: Run it to verify it fails**
 
 Run: `npx vitest run convex/scores.test.ts`
 Expected: FAIL — `Cannot find module './schema'` (schema/functions not written yet).
 
-- [ ] **Step 4: Write the schema**
+- [x] **Step 4: Write the schema**
 
 Create `convex/schema.ts`:
 
@@ -349,7 +349,7 @@ export default defineSchema({
 });
 ```
 
-- [ ] **Step 5: Write the functions**
+- [x] **Step 5: Write the functions**
 
 Create `convex/scores.ts`:
 
@@ -416,17 +416,17 @@ export const topN = query({
 });
 ```
 
-- [ ] **Step 6: Run it to verify it passes**
+- [x] **Step 6: Run it to verify it passes**
 
 Run: `npx vitest run convex/scores.test.ts`
 Expected: PASS — 4 tests. (If convex-test errors about environment, the node env + `server.deps.inline:["convex-test"]` from Step 1 is required; re-confirm that edit landed.)
 
-- [ ] **Step 7: Typecheck**
+- [x] **Step 7: Typecheck**
 
 Run: `npx tsc --noEmit`
 Expected: exit 0 (the `_generated` files now resolve `../schema`/`../scores`).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add convex/schema.ts convex/scores.ts convex/scores.test.ts vitest.config.ts
@@ -440,7 +440,7 @@ git commit -m "feat: convex scores schema + submitScore/topN/personalBest (conve
 **Files:**
 - Create: `src/game/account/types.ts`, `src/game/account/mock-store.ts`, `src/game/account/mock-store.test.ts`
 
-- [ ] **Step 1: Write the types**
+- [x] **Step 1: Write the types**
 
 Create `src/game/account/types.ts`:
 
@@ -473,7 +473,7 @@ export interface ScoresApi {
 }
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Create `src/game/account/mock-store.test.ts`:
 
@@ -517,12 +517,12 @@ describe("MockStore", () => {
 });
 ```
 
-- [ ] **Step 3: Run it to verify it fails**
+- [x] **Step 3: Run it to verify it fails**
 
 Run: `npx vitest run src/game/account/mock-store.test.ts`
 Expected: FAIL — `Cannot find module './mock-store'`.
 
-- [ ] **Step 4: Write the store** (mirrors `convex/scores.ts` exactly)
+- [x] **Step 4: Write the store** (mirrors `convex/scores.ts` exactly)
 
 Create `src/game/account/mock-store.ts`:
 
@@ -573,12 +573,12 @@ export class MockStore {
 }
 ```
 
-- [ ] **Step 5: Run it to verify it passes**
+- [x] **Step 5: Run it to verify it passes**
 
 Run: `npx vitest run src/game/account/mock-store.test.ts`
 Expected: PASS — 4 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/game/account/types.ts src/game/account/mock-store.ts src/game/account/mock-store.test.ts
@@ -594,7 +594,7 @@ git commit -m "feat: account types + pure MockStore (mirrors convex/scores)"
 
 No new unit test — exercised by e2e (Task 8). Verified here by typecheck + lint.
 
-- [ ] **Step 1: Contexts + hooks**
+- [x] **Step 1: Contexts + hooks**
 
 Create `src/game/account/context.tsx`:
 
@@ -620,7 +620,7 @@ export function useScores(): ScoresApi {
 }
 ```
 
-- [ ] **Step 2: Mock provider (+ window seam)**
+- [x] **Step 2: Mock provider (+ window seam)**
 
 Create `src/game/account/MockAccountProvider.tsx`:
 
@@ -706,7 +706,7 @@ export function MockAccountProvider({ children }: { children: React.ReactNode })
 }
 ```
 
-- [ ] **Step 3: Real provider (compiles; not run in eval)**
+- [x] **Step 3: Real provider (compiles; not run in eval)**
 
 Create `src/game/account/RealAccountProvider.tsx`:
 
@@ -781,7 +781,7 @@ export function RealAccountProvider({ children }: { children: ReactNode }) {
 }
 ```
 
-- [ ] **Step 4: The swap**
+- [x] **Step 4: The swap**
 
 Create `src/game/account/AccountProvider.tsx`:
 
@@ -803,12 +803,12 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 }
 ```
 
-- [ ] **Step 5: Typecheck + lint**
+- [x] **Step 5: Typecheck + lint**
 
 Run: `npx tsc --noEmit` then `npx next lint`
 Expected: `tsc` exit 0; "No ESLint warnings or errors". (If `next-auth/react`'s `session.user` typing complains, the optional chaining above guards it; if `useQuery` generic inference needs help it is already typed via `?? []`/`?? null`.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/game/account/context.tsx src/game/account/MockAccountProvider.tsx src/game/account/RealAccountProvider.tsx src/game/account/AccountProvider.tsx
@@ -822,7 +822,7 @@ git commit -m "feat: account provider seam (mock + real) behind shared contexts"
 **Files:**
 - Create: `src/server/auth.ts`, `src/app/api/auth/[...nextauth]/route.ts`
 
-- [ ] **Step 1: NextAuth config**
+- [x] **Step 1: NextAuth config**
 
 Create `src/server/auth.ts`:
 
@@ -847,7 +847,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 });
 ```
 
-- [ ] **Step 2: Route handler**
+- [x] **Step 2: Route handler**
 
 Create `src/app/api/auth/[...nextauth]/route.ts`:
 
@@ -857,12 +857,12 @@ import { handlers } from "~/server/auth";
 export const { GET, POST } = handlers;
 ```
 
-- [ ] **Step 3: Typecheck + build smoke (route compiles)**
+- [x] **Step 3: Typecheck + build smoke (route compiles)**
 
 Run: `npx tsc --noEmit`
 Expected: exit 0.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/server/auth.ts "src/app/api/auth/[...nextauth]/route.ts"
@@ -876,7 +876,7 @@ git commit -m "feat: NextAuth (Google) config + route handler"
 **Files:**
 - Create: `src/game/react/AccountBar.tsx`, `Leaderboard.tsx`, `PersonalBest.tsx`
 
-- [ ] **Step 1: AccountBar**
+- [x] **Step 1: AccountBar**
 
 Create `src/game/react/AccountBar.tsx`:
 
@@ -922,7 +922,7 @@ export function AccountBar() {
 }
 ```
 
-- [ ] **Step 2: Leaderboard**
+- [x] **Step 2: Leaderboard**
 
 Create `src/game/react/Leaderboard.tsx`:
 
@@ -966,7 +966,7 @@ export function Leaderboard() {
 }
 ```
 
-- [ ] **Step 3: PersonalBest**
+- [x] **Step 3: PersonalBest**
 
 Create `src/game/react/PersonalBest.tsx`:
 
@@ -995,12 +995,12 @@ export function PersonalBest() {
 }
 ```
 
-- [ ] **Step 4: Typecheck + lint**
+- [x] **Step 4: Typecheck + lint**
 
 Run: `npx tsc --noEmit` then `npx next lint`
 Expected: `tsc` exit 0; "No ESLint warnings or errors".
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/game/react/AccountBar.tsx src/game/react/Leaderboard.tsx src/game/react/PersonalBest.tsx
@@ -1014,7 +1014,7 @@ git commit -m "feat: account bar, leaderboard, personal-best UI (testids)"
 **Files:**
 - Modify: `src/game/engine/controller.ts`, `src/game/test-api/install.ts`, `src/game/react/GameShell.tsx`, `e2e/lumines.spec.ts`
 
-- [ ] **Step 1: `testEndGame` on the controller**
+- [x] **Step 1: `testEndGame` on the controller**
 
 In `src/game/engine/controller.ts`, add this method next to the other `test*` hooks (after `testPressHardDrop`):
 
@@ -1027,7 +1027,7 @@ In `src/game/engine/controller.ts`, add this method next to the other `test*` ho
   }
 ```
 
-- [ ] **Step 2: `endGame` on the test API (merge, don't overwrite)**
+- [x] **Step 2: `endGame` on the test API (merge, don't overwrite)**
 
 In `src/game/test-api/install.ts`, add to the `LuminesTestApi` interface:
 
@@ -1058,7 +1058,7 @@ Change the install + cleanup to MERGE (so `MockAccountProvider`'s `auth` key sur
 
 (Replace the existing `window.__lumines = api; return () => { if (window.__lumines === api) delete window.__lumines; };`.)
 
-- [ ] **Step 3: Sync the e2e `Window.__lumines` type**
+- [x] **Step 3: Sync the e2e `Window.__lumines` type**
 
 In `e2e/lumines.spec.ts`, add to the declared `window.__lumines` object type (after `pressHardDrop`):
 
@@ -1072,7 +1072,7 @@ In `e2e/lumines.spec.ts`, add to the declared `window.__lumines` object type (af
       };
 ```
 
-- [ ] **Step 4: Wrap GameShell in AccountProvider + add account UI + submit effect**
+- [x] **Step 4: Wrap GameShell in AccountProvider + add account UI + submit effect**
 
 In `src/game/react/GameShell.tsx`:
 
@@ -1148,12 +1148,12 @@ function Header() {
 
 Note: `Header` is rendered once at the top of `GameShellInner`'s `<main>`, so `AccountBar` shows on all phases. `GameOverScreen` already receives `score`; no new prop needed (submit uses the live `score` state via `scoreRef`).
 
-- [ ] **Step 5: Typecheck + lint + existing suites**
+- [x] **Step 5: Typecheck + lint + existing suites**
 
 Run: `npx tsc --noEmit`, `npx next lint`, `npx vitest run`
 Expected: `tsc` exit 0; lint clean; all unit + convex tests green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/game/engine/controller.ts src/game/test-api/install.ts src/game/react/GameShell.tsx e2e/lumines.spec.ts
@@ -1167,7 +1167,7 @@ git commit -m "feat: wire account UI into GameShell + endGame test seam"
 **Files:**
 - Create: `e2e/leaderboard.spec.ts`
 
-- [ ] **Step 1: Write the spec**
+- [x] **Step 1: Write the spec**
 
 Create `e2e/leaderboard.spec.ts`:
 
@@ -1271,12 +1271,12 @@ test("unauthenticated game-over is not written to the leaderboard", async ({ pag
 });
 ```
 
-- [ ] **Step 2: Run the e2e suite**
+- [x] **Step 2: Run the e2e suite**
 
 Run: `npx playwright test`
 Expected: PASS — all prior tests plus the 5 new leaderboard tests. (The dev server is started by `playwright.config.ts` with `NEXT_PUBLIC_TEST_MODE=1`, so the MockAccountProvider + window seam are active.)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add e2e/leaderboard.spec.ts
@@ -1287,7 +1287,7 @@ git commit -m "test: e2e for auth + leaderboard against the mock"
 
 ### Task 9: Full verification sweep
 
-- [ ] **Step 1: Run everything**
+- [x] **Step 1: Run everything**
 
 - `npx vitest run` — Expected: all green (core, hold, fall-progress, controller, score-fx, mock-store, convex/scores).
 - `npx tsc --noEmit` — Expected: exit 0.
@@ -1296,7 +1296,7 @@ git commit -m "test: e2e for auth + leaderboard against the mock"
 - `NEXT_PUBLIC_TEST_MODE=1 SKIP_ENV_VALIDATION=1 npx next build` — Expected: build succeeds (the auth route + real provider compile).
 - `npx playwright test` — Expected: all e2e green.
 
-- [ ] **Step 2: Commit any formatting**
+- [x] **Step 2: Commit any formatting**
 
 ```bash
 git add -A
