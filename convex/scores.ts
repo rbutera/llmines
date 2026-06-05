@@ -55,6 +55,10 @@ export const topN = query({
       .withIndex("by_best")
       .order("desc")
       .take(n ?? DEFAULT_TOP_N);
-    return rows.map((r) => ({ subject: r.subject, name: r.name, best: r.best }));
+    return rows.map((r) => ({
+      subject: r.subject,
+      name: r.name,
+      best: r.best,
+    }));
   },
 });

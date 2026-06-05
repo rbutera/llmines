@@ -40,7 +40,9 @@ function AuthBridge({ children }: { children: ReactNode }) {
     }),
     [sessionUser],
   );
-  return <AuthContext.Provider value={authApi}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={authApi}>{children}</AuthContext.Provider>
+  );
 }
 
 function ScoresBridge({ children }: { children: ReactNode }) {

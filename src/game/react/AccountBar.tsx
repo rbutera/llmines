@@ -24,7 +24,10 @@ export function AccountBar() {
         // eslint-disable-next-line @next/next/no-img-element
         <img src={user.image} alt="" className="h-8 w-8 rounded-full" />
       ) : null}
-      <span data-testid="user-name" className="text-sm font-semibold text-white">
+      <span
+        data-testid="user-name"
+        className="text-sm font-semibold text-white"
+      >
         {user.name}
       </span>
       <button

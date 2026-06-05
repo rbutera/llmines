@@ -16,7 +16,9 @@ export function PersonalBest() {
   return (
     <p data-testid="personal-best" className="text-sm text-white/70">
       Personal best:{" "}
-      <span className="font-mono font-bold text-white">{personalBest ?? 0}</span>
+      <span className="font-mono font-bold text-white">
+        {personalBest ?? 0}
+      </span>
     </p>
   );
 }

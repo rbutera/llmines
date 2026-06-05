@@ -12,16 +12,25 @@ declare global {
   }
 }
 
-async function signIn(page: Page, name: string, subject: string): Promise<void> {
+async function signIn(
+  page: Page,
+  name: string,
+  subject: string,
+): Promise<void> {
   await page.waitForFunction(() => !!window.__lumines?.auth);
-  await page.evaluate((id) => window.__lumines!.auth.signIn(id), { name, subject });
+  await page.evaluate((id) => window.__lumines!.auth.signIn(id), {
+    name,
+    subject,
+  });
 }
 async function signOut(page: Page): Promise<void> {
   await page.waitForFunction(() => !!window.__lumines?.auth);
   await page.evaluate(() => window.__lumines!.auth.signOut());
 }
 async function endGame(page: Page, score: number): Promise<void> {
-  await page.waitForFunction(() => typeof window.__lumines?.endGame === "function");
+  await page.waitForFunction(
+    () => typeof window.__lumines?.endGame === "function",
+  );
   await page.evaluate((s) => window.__lumines!.endGame(s), score);
 }
 
@@ -58,7 +67,9 @@ test("signed-in score persists; personal best only rises; leaderboard reflects i
   await endGame(page, 100);
   await expect(page.getByTestId("personal-best")).toContainText("100");
   await expect(page.getByTestId("leaderboard-row")).toHaveCount(1);
-  await expect(page.getByTestId("leaderboard-row").first()).toContainText("100");
+  await expect(page.getByTestId("leaderboard-row").first()).toContainText(
+    "100",
+  );
 
   // A worse run does NOT lower the personal best.
   await page.getByTestId("restart").click();
@@ -69,7 +80,9 @@ test("signed-in score persists; personal best only rises; leaderboard reflects i
   await page.getByTestId("restart").click();
   await endGame(page, 250);
   await expect(page.getByTestId("personal-best")).toContainText("250");
-  await expect(page.getByTestId("leaderboard-row").first()).toContainText("250");
+  await expect(page.getByTestId("leaderboard-row").first()).toContainText(
+    "250",
+  );
 });
 
 test("a second user reorders the global leaderboard", async ({ page }) => {
@@ -83,7 +96,9 @@ test("a second user reorders the global leaderboard", async ({ page }) => {
 
   await expect(page.getByTestId("leaderboard-row")).toHaveCount(2);
   await expect(page.getByTestId("leaderboard-row").first()).toContainText("Bo");
-  await expect(page.getByTestId("leaderboard-row").first()).toContainText("300");
+  await expect(page.getByTestId("leaderboard-row").first()).toContainText(
+    "300",
+  );
 });
 
 test("unauthenticated game-over is not written to the leaderboard", async ({
@@ -98,5 +113,7 @@ test("unauthenticated game-over is not written to the leaderboard", async ({
   await page.getByTestId("restart").click();
   await endGame(page, 999);
   await expect(page.getByTestId("leaderboard-row")).toHaveCount(1);
-  await expect(page.getByTestId("leaderboard-row").first()).toContainText("100");
+  await expect(page.getByTestId("leaderboard-row").first()).toContainText(
+    "100",
+  );
 });

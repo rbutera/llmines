@@ -24,7 +24,9 @@ export function Leaderboard() {
               className="flex items-center justify-between gap-3 text-sm"
             >
               <span className="w-5 text-white/40 tabular-nums">{i + 1}</span>
-              <span className="flex-1 truncate text-white/90">{entry.name}</span>
+              <span className="flex-1 truncate text-white/90">
+                {entry.name}
+              </span>
               <span className="font-mono font-bold text-[#37e0c9] tabular-nums">
                 {entry.best}
               </span>
