@@ -12,6 +12,7 @@ export interface LuminesTestApi {
   sweepProgress(dtMs: number): void;
   pressSoftDrop(): void;
   pressHardDrop(): void;
+  endGame(score: number): void;
 }
 
 declare global {
@@ -37,9 +38,18 @@ export function installTestApi(controller: GameController): () => void {
     sweepProgress: (dtMs) => controller.testSweepProgress(dtMs),
     pressSoftDrop: () => controller.testPressSoftDrop(),
     pressHardDrop: () => controller.testPressHardDrop(),
+    endGame: (score) => controller.testEndGame(score),
   };
-  window.__lumines = api;
+  // Merge so the MockAccountProvider's `auth` seam (set separately) survives.
+  const w = window as unknown as { __lumines?: Record<string, unknown> };
+  w.__lumines = {
+    ...(w.__lumines ?? {}),
+    ...(api as unknown as Record<string, unknown>),
+  };
   return () => {
-    if (window.__lumines === api) delete window.__lumines;
+    const current = window.__lumines as unknown as
+      | Record<string, unknown>
+      | undefined;
+    if (current) for (const key of Object.keys(api)) delete current[key];
   };
 }

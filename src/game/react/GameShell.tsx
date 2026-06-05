@@ -6,24 +6,47 @@ import { GameController } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
 import { installTestApi } from "../test-api/install";
+import { AccountProvider } from "../account/AccountProvider";
+import { useScores } from "../account/context";
+import { AccountBar } from "./AccountBar";
 import { ControlsCheatsheet } from "./ControlsCheatsheet";
 import { GameCanvas } from "./GameCanvas";
+import { Leaderboard } from "./Leaderboard";
+import { PersonalBest } from "./PersonalBest";
 import { ScoreFx } from "./ScoreFx";
 
 type Phase = "start" | "playing" | "gameover";
+
+/** Wraps the game in the account seam (mock in TEST_MODE, real otherwise). */
+export function GameShell() {
+  return (
+    <AccountProvider>
+      <GameShellInner />
+    </AccountProvider>
+  );
+}
 
 /**
  * Top-level client component: owns the single GameController, the phase
  * machine (start / playing / gameover), the HUD, audio, keyboard, and (only in
  * test mode) the window.__lumines interface. Renders the single <main> landmark.
  */
-export function GameShell() {
+function GameShellInner() {
   const [phase, setPhase] = useState<Phase>("start");
   const [score, setScore] = useState(0);
   const [controller, setController] = useState<GameController | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const phaseRef = useRef<Phase>("start");
   phaseRef.current = phase;
+
+  // On game over, submit the final score (the mock/real provider no-ops when
+  // signed out). `scoreRef` avoids a stale closure without re-firing on score.
+  const { submitScore } = useScores();
+  const scoreRef = useRef(score);
+  scoreRef.current = score;
+  useEffect(() => {
+    if (phase === "gameover") submitScore(scoreRef.current);
+  }, [phase, submitScore]);
 
   // Create the controller on the client; wire subscription + test interface.
   useEffect(() => {
@@ -114,9 +137,7 @@ function Header() {
       <h1 className="bg-gradient-to-r from-[#37e0c9] to-[#ff5fb0] bg-clip-text text-3xl font-black tracking-tight text-transparent sm:text-4xl">
         LLMines
       </h1>
-      <span className="text-xs tracking-widest text-white/40 uppercase">
-        a lumines-like
-      </span>
+      <AccountBar />
     </div>
   );
 }
@@ -145,7 +166,10 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           Start game
         </button>
       </div>
-      <ControlsCheatsheet />
+      <div className="flex flex-col gap-6">
+        <ControlsCheatsheet />
+        <Leaderboard />
+      </div>
     </section>
   );
 }
@@ -212,6 +236,12 @@ function GameOverScreen({
       >
         Play again
       </button>
+      <div className="mt-6">
+        <PersonalBest />
+      </div>
+      <div className="mt-4 text-left">
+        <Leaderboard />
+      </div>
     </section>
   );
 }

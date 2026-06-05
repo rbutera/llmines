@@ -305,4 +305,11 @@ export class GameController {
     this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
     this.emit();
   }
+
+  /** Deterministically end the current game with an exact final score. */
+  testEndGame(score: number): void {
+    this.started = true;
+    this.state = { ...this.state, score, gameOver: true, active: null };
+    this.emit();
+  }
 }
