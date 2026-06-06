@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createGame } from "./grid";
 import { generateNext, nextPiece } from "./piece";
-import type { Piece } from "./types";
 
 /**
  * Determinism + single-RNG-stream guards for the V2 depth features. The eval's
@@ -22,7 +21,7 @@ describe("single RNG stream, canonical draw order", () => {
     for (let i = 0; i < 200; i++) {
       const [, piece] = nextPiece(rng);
       const [next, gp] = generateNext(rng);
-      expect(gp.cells).toEqual(piece as Piece);
+      expect(gp.cells).toEqual(piece);
       rng = next;
     }
   });
