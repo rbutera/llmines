@@ -11,6 +11,22 @@ function startPass(grid: Grid): SweepPass {
   return { markedByCol, distinctSquares, deletedCount: 0, processedCols: 0 };
 }
 
+/**
+ * Deep-clone a pass so `advanceSweep` can mutate it without writing through to
+ * the caller's `GameState.sweepPass`. The inner `markedByCol` arrays are the
+ * live read surface for deletion, so they are copied too — a shallow copy would
+ * still share them and leak mutations (`processedCols`/`deletedCount` aside).
+ * Keeps the core a pure function of (state, columns): same input -> same output.
+ */
+function clonePass(pass: SweepPass): SweepPass {
+  return {
+    markedByCol: pass.markedByCol.map((rows) => rows.slice()),
+    distinctSquares: pass.distinctSquares,
+    deletedCount: pass.deletedCount,
+    processedCols: pass.processedCols,
+  };
+}
+
 /** Delete this pass's snapshot-marked cells in a single column (mutates grid). */
 function deleteColumn(grid: Grid, pass: SweepPass, col: number): void {
   for (const row of pass.markedByCol[col]!) {
@@ -61,7 +77,11 @@ export function advanceSweep(state: GameState, columns: number): GameState {
   const grid = cloneGrid(state.grid);
   let score = state.score;
   let sweepX = state.sweepX;
-  let pass: SweepPass = state.sweepPass ?? startPass(grid);
+  // Clone an in-progress pass before mutating it; a fresh startPass is already
+  // unaliased. Either way the input `state.sweepPass` is never written through.
+  let pass: SweepPass = state.sweepPass
+    ? clonePass(state.sweepPass)
+    : startPass(grid);
   let remaining = columns;
 
   while (remaining > 0) {

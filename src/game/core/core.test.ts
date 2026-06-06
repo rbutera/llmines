@@ -451,6 +451,63 @@ describe("incremental per-column settle (the deferred-gravity bug fix, 1.x)", ()
   });
 });
 
+describe("advanceSweep purity: input state immutable + idempotent (5.x)", () => {
+  /**
+   * Board with a clearable mono-A 2x2 on the floor plus a tall B stack above it,
+   * so a PARTIAL pass actually deletes cells and mutates the pass (deletedCount,
+   * processedCols, markedByCol read surface) — exercising the by-reference leak.
+   */
+  function buildStackOverSquare(): GameState {
+    const base = createGame();
+    base.grid[ROWS - 1]![0] = 0;
+    base.grid[ROWS - 1]![1] = 0;
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    for (let row = 0; row <= ROWS - 3; row++) base.grid[row]![0] = 1;
+    return base;
+  }
+
+  /**
+   * Drive a PARTIAL pass first so the resulting state carries a live, mid-flight
+   * `sweepPass` (processedCols > 0, deletedCount > 0). This `mid` state is the
+   * exact object the production frame re-invokes `advanceSweep` on each frame, so
+   * it is the input whose immutability matters.
+   */
+  function midPartialPass(): GameState {
+    return advanceSweep(buildStackOverSquare(), 2.5);
+  }
+
+  it("does not mutate the caller's GameState during a partial pass", () => {
+    const input = midPartialPass();
+    expect(input.sweepPass).not.toBeNull();
+    const snapshot = structuredClone(input);
+
+    // A further partial advance on the SAME object must not write through.
+    advanceSweep(input, 2.5);
+
+    // Whole-state byte-identity (grid, score, sweepX, and the nested sweepPass:
+    // processedCols / deletedCount / markedByCol inner arrays) is unchanged.
+    expect(input).toEqual(snapshot);
+    expect(input.sweepPass!.processedCols).toBe(
+      snapshot.sweepPass!.processedCols,
+    );
+    expect(input.sweepPass!.deletedCount).toBe(snapshot.sweepPass!.deletedCount);
+    expect(input.sweepPass!.markedByCol).toEqual(
+      snapshot.sweepPass!.markedByCol,
+    );
+  });
+
+  it("is idempotent: advanceSweep(sameInput, n) twice yields identical results", () => {
+    const input = midPartialPass();
+    const a = advanceSweep(input, 2.5);
+    const b = advanceSweep(input, 2.5);
+    expect(b.grid).toEqual(a.grid);
+    expect(b.score).toBe(a.score);
+    expect(b.sweepX).toBeCloseTo(a.sweepX, 6);
+    expect(b.sweepPass).toEqual(a.sweepPass);
+  });
+});
+
 describe("snapshot/settle race + cascade correctness (2.x)", () => {
   it("a cell that falls into a snapshot coordinate after the snapshot is NOT deleted", () => {
     // col 0: mono A 2x2 at the floor (snapshot-marked at pass start), and a lone
