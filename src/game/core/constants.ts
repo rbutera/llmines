@@ -5,6 +5,14 @@ export const COLS = 16;
 /** Grid height in rows. */
 export const ROWS = 10;
 
+/**
+ * Logical board aspect ratio, derived from the grid dimensions (NOT hard-coded).
+ * Single source of truth for any layer that needs the playfield's shape (the
+ * canvas CSS box, the React host container) so no renderer/layout inlines a
+ * literal like "16 / 10". A CSS `aspect-ratio` value.
+ */
+export const BOARD_ASPECT = `${COLS} / ${ROWS}`;
+
 /** Spawn position of the piece's top-left cell (columns 7-8, rows 0-1). */
 export const SPAWN_COL = 7;
 export const SPAWN_ROW = 0;

@@ -1,5 +1,5 @@
 import { Application, Container, Graphics } from "pixi.js";
-import { COLS, ROWS, type Cell, type Grid } from "../core";
+import { BOARD_ASPECT, COLS, ROWS, type Cell, type Grid } from "../core";
 import type { GameController, RenderState } from "../engine/controller";
 
 const CELL = 40;
@@ -38,8 +38,10 @@ function columnStack(grid: Grid, col: number): { row: number; cell: Cell }[] {
 }
 
 /**
- * Pure collapse diff: match each column's new stack to its old stack (by
- * bottom-up index) and, for any cell that ended LOWER than it started, return a
+ * Pure collapse diff: match each column's new stack to its old stack (top-down,
+ * pairing each surviving cell to the next old cell of the SAME colour — the new
+ * stack is a colour-ordered subsequence of the old one) and, for any cell that
+ * ended LOWER than it started, return a
  * starting pixel offset (negative = above its rest position) so the renderer can
  * ease it down. This is what animates an incremental per-column settle: the bar
  * clearing a column emits a new RenderState whose column lost cells, so the
@@ -129,7 +131,7 @@ export class PixiRenderer {
     // the board feel small on wider containers; scaling to 100% fixes that.
     app.canvas.style.width = "100%";
     app.canvas.style.height = "auto";
-    app.canvas.style.aspectRatio = `${BOARD_W} / ${BOARD_H}`;
+    app.canvas.style.aspectRatio = BOARD_ASPECT;
     app.canvas.setAttribute("aria-hidden", "true");
 
     const stage = new Container();
