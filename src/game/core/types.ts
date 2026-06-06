@@ -34,6 +34,16 @@ export interface MarkedCell {
   col: number;
 }
 
+/**
+ * New-block hold descriptor for the spawned-but-held block. `active` is true
+ * while the block is holding at the top; `remainingMs` counts down to 0. When
+ * no block is held the hold is inactive (`{ active: false, remainingMs: 0 }`).
+ */
+export interface HoldState {
+  active: boolean;
+  remainingMs: number;
+}
+
 /** Result of square detection over the settled grid. */
 export interface MarkResult {
   marked: MarkedCell[];

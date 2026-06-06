@@ -8,6 +8,7 @@ interface State {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  hold: { active: boolean; remainingMs: number };
 }
 
 declare global {
@@ -20,6 +21,17 @@ declare global {
       tick(): void;
       sweepNow(): void;
       sweepProgress(dtMs: number): void;
+      pressSoftDrop(): void;
+      pressHardDrop(): void;
+      auth?: {
+        signIn(identity: {
+          name: string;
+          subject: string;
+          avatar?: string;
+        }): void;
+        signOut(): void;
+      };
+      endGame?(score: number): void;
     };
   }
 }
@@ -66,10 +78,11 @@ test("loads to start screen with controls cheatsheet, starts on input", async ({
 });
 
 test("exposes window.__lumines in test mode", async ({ page }) => {
-  const hasApi = await page.evaluate(
-    () => typeof window.__lumines === "object",
-  );
-  expect(hasApi).toBe(true);
+  // Poll for hydration: the interface is installed in a mount effect, so wait
+  // for it rather than reading once immediately after navigation.
+  await expect
+    .poll(() => page.evaluate(() => typeof window.__lumines))
+    .toBe("object");
 });
 
 test("spawn places at top-centre; tick advances; tick never auto-spawns", async ({
@@ -82,11 +95,20 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
   let s = await getState(page);
   expect(s.grid.length).toBe(10);
   expect(s.grid[0]!.length).toBe(16);
-  // piece visible at cols 7-8, rows 0-1
+  // piece visible at cols 7-8, rows 0-1, HOLDING at the top
   expect(s.grid[0]![7]).toBe(0);
   expect(s.grid[0]![8]).toBe(0);
   expect(s.grid[1]![7]).toBe(0);
+  expect(s.hold.active).toBe(true);
 
+  // first tick lapses the hold (no descent — still at the top)
+  await api(page, "tick");
+  s = await getState(page);
+  expect(s.hold.active).toBe(false);
+  expect(s.grid[0]![7]).toBe(0);
+  expect(s.grid[1]![7]).toBe(0);
+
+  // the next tick advances one row (normal gravity after the hold)
   await api(page, "tick");
   s = await getState(page);
   expect(s.grid[1]![7]).toBe(0);
@@ -101,6 +123,205 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
   expect(s.grid[8]![7]).toBe(0);
   expect(s.grid[0]![7]).toBe(null);
   expect(s.grid[0]![8]).toBe(null);
+});
+
+test("new block holds on spawn; a carried-over key (no fresh press) does not drop it [US1]", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+
+  await api(page, "spawn", MONO_A);
+  let s = await getState(page);
+  expect(s.hold.active).toBe(true);
+  expect(s.hold.remainingMs).toBeGreaterThan(0);
+  // held at the top
+  expect(s.grid[0]![7]).toBe(0);
+  expect(s.grid[1]![7]).toBe(0);
+
+  // Carried-over held key is simulated by NOT calling a press hook. A single
+  // tick only lapses the hold — it must NOT fast-drop the block.
+  await api(page, "tick");
+  s = await getState(page);
+  expect(s.hold.active).toBe(false);
+  expect(s.grid[0]![7]).toBe(0); // still at the top: no auto-drop
+  expect(s.grid[1]![7]).toBe(0);
+
+  // Holding across multiple spawns skips no holds: spawning again (locks the
+  // previous block) re-arms the hold for the new block.
+  await api(page, "spawn", MONO_A);
+  s = await getState(page);
+  expect(s.hold.active).toBe(true);
+});
+
+test("a fresh deliberate press drops the held block immediately [US2]", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+
+  // fresh soft-drop ends the hold and descends right away
+  await api(page, "spawn", MONO_A);
+  expect((await getState(page)).hold.active).toBe(true);
+  await api(page, "pressSoftDrop");
+  let s = await getState(page);
+  expect(s.hold.active).toBe(false);
+  expect(s.grid[1]![7]).toBe(0); // descended one row
+  expect(s.grid[2]![7]).toBe(0);
+  expect(s.grid[0]![7]).toBe(null);
+
+  // fresh hard-drop lands on the floor immediately (no hold delay)
+  await api(page, "sweepNow"); // clear the board
+  await api(page, "spawn", MONO_A);
+  await api(page, "pressHardDrop");
+  s = await getState(page);
+  expect(s.grid[9]![7]).toBe(0);
+  expect(s.grid[8]![7]).toBe(0);
+});
+
+test("with no fresh press the hold lapses into normal gravity [US3]", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+
+  await api(page, "spawn", MONO_A);
+  expect((await getState(page)).hold.active).toBe(true);
+
+  // one tick lapses the hold (no descent)
+  await api(page, "tick");
+  let s = await getState(page);
+  expect(s.hold.active).toBe(false);
+  expect(s.grid[0]![7]).toBe(0);
+
+  // subsequent ticks descend one row each — normal gravity
+  await api(page, "tick");
+  s = await getState(page);
+  expect(s.grid[1]![7]).toBe(0);
+  expect(s.grid[0]![7]).toBe(null);
+});
+
+test("scoring fires an in-view animation while the score value stays exact [US1]", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+
+  const fx = page.getByTestId("score-fx");
+  // idle before any score: no celebration
+  await expect(fx).toHaveAttribute("data-fx-tier", "none");
+
+  // build + clear a single square -> score 4
+  await api(page, "spawn", MONO_A);
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+  await api(page, "sweepNow");
+
+  // a visible effect fires in the game view...
+  await expect(fx).toHaveAttribute("data-fx-tier", /modest|big/);
+  // ...while the AUTHORITATIVE score stays the exact integer
+  await expect(page.getByTestId("score")).toHaveText("4");
+  expect((await getState(page)).score).toBe(4);
+});
+
+test("bigger clears produce a bigger effect tier [US2]", async ({ page }) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+  const fx = page.getByTestId("score-fx");
+
+  // small clear: a single 2x2 square scores 4 -> modest
+  await api(page, "spawn", MONO_A);
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+  await api(page, "sweepNow");
+  await expect(fx).toHaveAttribute("data-fx-tier", "modest");
+  await expect(fx).toHaveAttribute("data-fx-tier", "none"); // transient
+
+  // big clear: stack B-over-A so a sweep clears two squares (scores 12) -> big
+  await api(page, "spawn", MONO_A);
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+  await api(page, "spawn", [
+    [1, 1],
+    [0, 0],
+  ] as Piece);
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+  await api(page, "sweepNow");
+  await expect(fx).toHaveAttribute("data-fx-tier", "big");
+  expect((await getState(page)).score).toBe(16); // 4 + 12
+});
+
+test("score effect is transient and non-blocking; restart clears it [US3]", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+  const fx = page.getByTestId("score-fx");
+
+  // cosmetic overlay never blocks input
+  await expect(fx).toHaveCSS("pointer-events", "none");
+
+  // score -> effect fires, then auto-clears (transient)
+  await api(page, "spawn", MONO_A);
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+  await api(page, "sweepNow");
+  await expect(fx).toHaveAttribute("data-fx-tier", /modest|big/);
+  await expect(fx).toHaveAttribute("data-fx-tier", "none");
+
+  // drive to game over, restart -> score resets to 0 with no stale effect
+  for (let i = 0; i < 8; i++)
+    await api(page, "spawn", MONO_A).catch(() => undefined);
+  await page.getByTestId("restart").click();
+  await expect(page.getByTestId("score")).toHaveText("0");
+  await expect(page.getByTestId("score-fx")).toHaveAttribute(
+    "data-fx-tier",
+    "none",
+  );
+});
+
+test("piece settling onto the bottom row lands in-bounds on the correct rows (no out-of-bounds cells)", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+
+  // --- gravity-settle path: tick a piece all the way to the floor ---
+  await api(page, "spawn", MONO_A);
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+  let s = await getState(page);
+
+  // grid is exactly 10x16 — there is no representation of a row below the floor
+  expect(s.grid.length).toBe(10);
+  expect(s.grid.every((row) => row.length === 16)).toBe(true);
+  // the 2x2 landed on the bottom two rows at its columns
+  expect(s.grid[9]![7]).toBe(0);
+  expect(s.grid[9]![8]).toBe(0);
+  expect(s.grid[8]![7]).toBe(0);
+  expect(s.grid[8]![8]).toBe(0);
+  // and ONLY those four cells are filled — no stray/out-of-bounds cell anywhere
+  const filled = s.grid.flatMap((row, r) =>
+    row.flatMap((c, col) => (c !== null ? [[r, col] as const] : [])),
+  );
+  expect(filled.length).toBe(4);
+  for (const [r, col] of filled) {
+    expect(r).toBeGreaterThanOrEqual(0);
+    expect(r).toBeLessThan(10);
+    expect(col).toBeGreaterThanOrEqual(0);
+    expect(col).toBeLessThan(16);
+  }
+  // the block reaches the literal bottom row
+  expect(filled.some(([r]) => r === 9)).toBe(true);
+
+  // --- hard-drop path: a hard drop must also lock on the bottom row in-bounds ---
+  await api(page, "sweepNow"); // clear the mono square to reset the floor
+  s = await getState(page);
+  expect(s.grid.flat().every((c) => c === null)).toBe(true);
+
+  await api(page, "spawn", MONO_A);
+  await page.keyboard.press(" "); // hard drop
+  s = await getState(page);
+  expect(s.grid[9]![7]).toBe(0);
+  expect(s.grid[9]![8]).toBe(0);
+  expect(s.grid[8]![7]).toBe(0);
+  expect(s.grid[8]![8]).toBe(0);
+  expect(s.grid.flat().filter((c) => c !== null).length).toBe(4);
 });
 
 test("keyboard moves and rotates the active piece", async ({ page }) => {

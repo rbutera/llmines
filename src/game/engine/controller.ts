@@ -5,6 +5,8 @@ import {
   GRAVITY_INTERVAL_MS,
   gravityStep,
   hardDrop,
+  HOLD_MS,
+  isResting,
   lockPiece,
   moveLeft,
   moveRight,
@@ -16,6 +18,7 @@ import {
   spawnPiece,
   SWEEP_MS_PER_COL,
   type GameState,
+  type HoldState,
   type MarkedCell,
   type Piece,
   type PublicState,
@@ -39,11 +42,19 @@ export interface RenderState {
   gameOver: boolean;
   sweepX: number;
   marked: MarkedCell[];
+  /** New-block hold descriptor for the spawned-but-held block. */
+  hold: HoldState;
 }
 
 export interface ControllerOptions {
   testMode?: boolean;
   seed?: number;
+}
+
+/** Per-input options. `fresh` marks a deliberate key *press* (vs a held-key repeat). */
+export interface InputOptions {
+  /** True for a fresh deliberate press (`!KeyboardEvent.repeat`); defaults to true. */
+  fresh?: boolean;
 }
 
 type Subscriber = (s: RenderState) => void;
@@ -64,6 +75,12 @@ export class GameController {
   private gravityAccumMs = 0;
   private started = false;
 
+  // New-block hold: a freshly spawned block holds at the top for HOLD_MS before
+  // gravity takes it (see beginHold). Owned here, like gravityAccumMs, so the
+  // pure core stays time-free.
+  private holdActive = false;
+  private holdRemainingMs = 0;
+
   constructor(opts: ControllerOptions = {}) {
     this.testMode = opts.testMode ?? false;
     this.state = createGame(opts.seed ?? 1);
@@ -81,6 +98,7 @@ export class GameController {
     this.started = true;
     if (!this.testMode) {
       this.state = spawnNext(this.state);
+      this.beginHold();
       this.startLoop();
     }
     this.emit();
@@ -99,6 +117,8 @@ export class GameController {
     this.stop();
     this.state = createGame(seed ?? 1);
     this.gravityAccumMs = 0;
+    this.holdActive = false;
+    this.holdRemainingMs = 0;
     this.start();
   }
 
@@ -113,6 +133,31 @@ export class GameController {
   private emit(): void {
     const rs = this.renderState();
     for (const fn of this.subscribers) fn(rs);
+  }
+
+  // ---- new-block hold ------------------------------------------------------
+
+  /** Arm the hold for the just-spawned block (no-op if the spawn produced no piece). */
+  private beginHold(): void {
+    if (this.state.active) {
+      this.holdActive = true;
+      this.holdRemainingMs = HOLD_MS;
+    } else {
+      this.holdActive = false;
+      this.holdRemainingMs = 0;
+    }
+  }
+
+  /** End the hold now (timer lapse or a fresh press). Resets gravity so the
+   *  first post-hold descent is a full normal interval later (not instant). */
+  private endHold(): void {
+    this.holdActive = false;
+    this.holdRemainingMs = 0;
+    this.gravityAccumMs = 0;
+  }
+
+  private holdSnapshot(): HoldState {
+    return { active: this.holdActive, remainingMs: this.holdRemainingMs };
   }
 
   // ---- production loop -----------------------------------------------------
@@ -137,8 +182,17 @@ export class GameController {
   private advance(dtMs: number): void {
     if (this.state.gameOver) return;
 
-    // Music-synced sweep: continuous, snapshot-per-pass scoring.
+    // Music-synced sweep: continuous, snapshot-per-pass scoring (runs even while
+    // the new block is holding — only piece descent is gated).
     this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
+
+    // New-block hold: the block stays at the top until the hold lapses; gravity
+    // does not accumulate or descend while holding.
+    if (this.holdActive) {
+      this.holdRemainingMs -= dtMs;
+      if (this.holdRemainingMs <= 0) this.endHold(); // lapse -> normal gravity
+      return;
+    }
 
     // Gravity on a fixed tick.
     this.gravityAccumMs += dtMs;
@@ -155,37 +209,53 @@ export class GameController {
     if (locked) {
       this.gravityAccumMs = 0;
       this.state = spawnNext(this.state); // production auto-spawns
+      this.beginHold(); // the new block holds before it falls
     }
   }
 
   // ---- player input (active only while playing) ----------------------------
 
-  input(action: InputAction): void {
+  input(action: InputAction, opts: InputOptions = {}): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
+    // A fresh deliberate press (!KeyboardEvent.repeat) defaults true; a held-key
+    // repeat passes fresh=false.
+    const fresh = opts.fresh ?? true;
     switch (action) {
       case "left":
-        this.state = moveLeft(this.state);
+        this.state = moveLeft(this.state); // allowed during hold
         break;
       case "right":
-        this.state = moveRight(this.state);
+        this.state = moveRight(this.state); // allowed during hold
         break;
       case "rotate":
-        this.state = rotateCW(this.state);
+        this.state = rotateCW(this.state); // allowed during hold
         break;
       case "softDrop": {
+        // While holding, only a FRESH press drops (and ends the hold); a
+        // carried-over held key is ignored so it cannot skip the hold.
+        if (this.holdActive) {
+          if (!fresh) break;
+          this.endHold();
+        }
         const { state, locked } = gravityStep(this.state);
         this.state = state;
         if (locked && !this.testMode) {
           this.gravityAccumMs = 0;
           this.state = spawnNext(this.state);
+          this.beginHold();
         }
         break;
       }
       case "hardDrop":
+        if (this.holdActive) {
+          if (!fresh) break;
+          this.endHold();
+        }
         this.state = hardDrop(this.state);
         if (!this.testMode) {
           this.gravityAccumMs = 0;
           this.state = spawnNext(this.state);
+          this.beginHold();
         }
         break;
     }
@@ -199,13 +269,18 @@ export class GameController {
     return {
       grid: this.state.grid,
       active: this.state.active,
-      fallProgress: this.testMode
-        ? 0
-        : Math.max(0, Math.min(1, this.gravityAccumMs / interval)),
+      // A resting piece (cannot descend) must not interpolate past its row, or it
+      // would render below its logical cell — and below the canvas on the bottom
+      // row — until the next gravity tick locks it (the clip/snap artifact).
+      fallProgress:
+        this.testMode || isResting(this.state)
+          ? 0
+          : Math.max(0, Math.min(1, this.gravityAccumMs / interval)),
       score: this.state.score,
       gameOver: this.state.gameOver,
       sweepX: this.state.sweepX,
       marked: computeMarked(this.state.grid).marked,
+      hold: this.holdSnapshot(),
     };
   }
 
@@ -221,26 +296,46 @@ export class GameController {
   }
 
   testState(): PublicState {
-    return publicState(this.state);
+    return { ...publicState(this.state), hold: this.holdSnapshot() };
   }
 
   testMarked(): MarkedCell[] {
     return computeMarked(this.state.grid).marked;
   }
 
-  /** Lock any mid-fall piece first, then place `piece` at top-centre. */
+  /** Lock any mid-fall piece first, then place `piece` at top-centre (which holds). */
   testSpawn(piece: Piece): void {
     if (this.state.active) this.state = lockPiece(this.state);
     this.started = true;
     this.state = spawnPiece(this.state, piece);
+    this.beginHold();
     this.emit();
   }
 
-  /** One gravity step; NEVER auto-spawns. */
+  /**
+   * Deterministic gravity step. While the block is holding, a tick lapses the
+   * hold (no descent) instead of moving the piece — so carry-over (no fresh
+   * press) is simulated by simply ticking. NEVER auto-spawns.
+   */
   testTick(): void {
+    if (this.holdActive) {
+      this.endHold();
+      this.emit();
+      return;
+    }
     const { state } = gravityStep(this.state);
     this.state = state;
     this.emit();
+  }
+
+  /** A FRESH deliberate soft-drop: ends any hold, then descends one row. */
+  testPressSoftDrop(): void {
+    this.input("softDrop", { fresh: true });
+  }
+
+  /** A FRESH deliberate hard-drop: ends any hold, then settles to the floor. */
+  testPressHardDrop(): void {
+    this.input("hardDrop", { fresh: true });
   }
 
   /** Run one full sweep immediately + apply scoring. */

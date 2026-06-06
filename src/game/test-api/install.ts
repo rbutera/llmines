@@ -10,6 +10,20 @@ export interface LuminesTestApi {
   tick(): void;
   sweepNow(): void;
   sweepProgress(dtMs: number): void;
+  /** A FRESH deliberate soft-drop press (vs a carried-over held key). */
+  pressSoftDrop(): void;
+  /** A FRESH deliberate hard-drop press (vs a carried-over held key). */
+  pressHardDrop(): void;
+  /**
+   * Auth + leaderboard test hooks (attached by GameShell in TEST_MODE). Drive
+   * the MOCK auth + the real game-over/submit path deterministically.
+   */
+  auth?: {
+    signIn(identity: { name: string; subject: string; avatar?: string }): void;
+    signOut(): void;
+  };
+  /** End the current game with this exact final score (runs the real game-over path). */
+  endGame?(score: number): void;
 }
 
 declare global {
@@ -33,6 +47,8 @@ export function installTestApi(controller: GameController): () => void {
     tick: () => controller.testTick(),
     sweepNow: () => controller.testSweepNow(),
     sweepProgress: (dtMs) => controller.testSweepProgress(dtMs),
+    pressSoftDrop: () => controller.testPressSoftDrop(),
+    pressHardDrop: () => controller.testPressHardDrop(),
   };
   window.__lumines = api;
   return () => {
