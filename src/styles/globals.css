@@ -1,6 +1,231 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
+  --font-sans:
+    var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+@keyframes llmines-score-badge-hit {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  38% {
+    transform: scale(1.14);
+    filter: brightness(1.65);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes llmines-score-pop {
+  0% {
+    transform: translate(-50%, -50%) scale(0.45);
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  46% {
+    transform: translate(-50%, -50%) scale(1.24);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -62%) scale(0.92);
+    opacity: 0;
+  }
+}
+
+@keyframes llmines-score-count {
+  0% {
+    transform: translate(-50%, -50%) scale(0.86);
+    opacity: 0;
+  }
+  28% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -88%) scale(1);
+    opacity: 0;
+  }
+}
+
+@keyframes llmines-score-flash {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+
+@keyframes llmines-score-ring {
+  0% {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(0.35);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.65);
+  }
+}
+
+@keyframes llmines-score-particle {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  16% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy)))
+      scale(0);
+  }
+}
+
+.llmines-score-badge {
+  position: absolute;
+  z-index: 20;
+  top: 0.75rem;
+  left: 0.75rem;
+  display: grid;
+  min-width: 8.25rem;
+  grid-template-columns: 1fr;
+  gap: 0.1rem;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  border-radius: 0.5rem;
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.16), rgb(255 255 255 / 0.04)),
+    rgb(7 9 18 / 0.72);
+  padding: 0.5rem 0.7rem;
+  pointer-events: none;
+  box-shadow:
+    0 0 22px rgb(55 224 201 / 0.22),
+    inset 0 0 20px rgb(255 255 255 / 0.05);
+  transform-origin: left top;
+}
+
+.llmines-score-badge-hit {
+  animation: llmines-score-badge-hit 620ms cubic-bezier(0.2, 1.7, 0.35, 1);
+}
+
+.llmines-score-badge-label {
+  color: rgb(255 255 255 / 0.58);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.llmines-score-badge-value {
+  color: white;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: clamp(1.55rem, 4vw, 2.45rem);
+  font-weight: 950;
+  line-height: 1;
+  text-shadow:
+    0 0 10px rgb(255 242 168 / 0.7),
+    0 0 24px rgb(255 95 176 / 0.45);
+}
+
+.llmines-score-burst {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.llmines-score-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 50% 45%,
+    rgb(255 255 255 / 0.7),
+    rgb(255 242 168 / 0.34) 18%,
+    rgb(255 95 176 / 0.14) 34%,
+    transparent 62%
+  );
+  animation: llmines-score-flash 760ms ease-out forwards;
+}
+
+.llmines-score-ring {
+  position: absolute;
+  top: 45%;
+  left: 50%;
+  width: min(38vw, 18rem);
+  aspect-ratio: 1;
+  border: 0.22rem solid rgb(255 242 168 / 0.95);
+  border-radius: 999px;
+  box-shadow:
+    0 0 24px rgb(255 242 168 / 0.9),
+    0 0 46px rgb(55 224 201 / 0.52);
+  animation: llmines-score-ring 780ms cubic-bezier(0.12, 0.7, 0.3, 1) forwards;
+}
+
+.llmines-score-pop,
+.llmines-score-count {
+  position: absolute;
+  top: 45%;
+  left: 50%;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-weight: 950;
+  line-height: 0.9;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.llmines-score-pop {
+  color: #fff2a8;
+  font-size: clamp(3rem, 13vw, 7.5rem);
+  text-shadow:
+    0 0 8px white,
+    0 0 22px rgb(255 242 168 / 0.95),
+    0 0 48px rgb(255 95 176 / 0.8);
+  animation: llmines-score-pop 940ms cubic-bezier(0.15, 1.8, 0.25, 1) forwards;
+}
+
+.llmines-score-pop-big {
+  color: white;
+  font-size: clamp(3.6rem, 15vw, 8.75rem);
+}
+
+.llmines-score-count {
+  color: rgb(255 255 255 / 0.9);
+  font-size: clamp(1.35rem, 5vw, 3.1rem);
+  text-shadow:
+    0 0 16px rgb(55 224 201 / 0.8),
+    0 0 28px rgb(255 255 255 / 0.5);
+  animation: llmines-score-count 900ms ease-out forwards;
+}
+
+.llmines-score-particle {
+  --dx: 0px;
+  --dy: 0px;
+  --particle-color: #fff2a8;
+  position: absolute;
+  top: 45%;
+  left: 50%;
+  border-radius: 999px;
+  background: var(--particle-color);
+  box-shadow:
+    0 0 10px var(--particle-color),
+    0 0 22px var(--particle-color);
+  animation: llmines-score-particle 900ms cubic-bezier(0.05, 0.75, 0.2, 1)
+    forwards;
 }

@@ -8,8 +8,15 @@ export interface LuminesTestApi {
   marked(): { row: number; col: number }[];
   spawn(piece: Piece): void;
   tick(): void;
+  pressSoftDrop(): void;
+  pressHardDrop(): void;
   sweepNow(): void;
   sweepProgress(dtMs: number): void;
+  endGame?: (score: number) => Promise<void> | void;
+  auth?: {
+    signIn: (args: { name: string; subject: string; image?: string }) => void;
+    signOut: () => void;
+  };
 }
 
 declare global {
@@ -31,6 +38,8 @@ export function installTestApi(controller: GameController): () => void {
     marked: () => controller.testMarked(),
     spawn: (piece) => controller.testSpawn(piece),
     tick: () => controller.testTick(),
+    pressSoftDrop: () => controller.testPressSoftDrop(),
+    pressHardDrop: () => controller.testPressHardDrop(),
     sweepNow: () => controller.testSweepNow(),
     sweepProgress: (dtMs) => controller.testSweepProgress(dtMs),
   };

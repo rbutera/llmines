@@ -29,6 +29,10 @@ export default defineConfig({
     url: `http://localhost:${PORT}`,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
-    env: { NEXT_PUBLIC_TEST_MODE: "1" },
+    env: {
+      NEXT_PUBLIC_TEST_MODE: "1",
+      NEXTAUTH_SECRET: "llmines-test-nextauth-secret",
+      NEXTAUTH_URL: `http://localhost:${PORT}`,
+    },
   },
 });

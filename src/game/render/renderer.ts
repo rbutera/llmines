@@ -1,5 +1,5 @@
 import { Application, Container, Graphics } from "pixi.js";
-import { COLS, ROWS, type Cell, type Grid } from "../core";
+import { canPlace, COLS, ROWS, type Cell, type Grid } from "../core";
 import type { GameController, RenderState } from "../engine/controller";
 
 const CELL = 40;
@@ -261,7 +261,11 @@ export class PixiRenderer {
     g.clear();
     if (!rs.active) return;
     const { cells, pos } = rs.active;
-    const yOff = rs.fallProgress * CELL;
+    const canDescend = canPlace(rs.grid, cells, {
+      row: pos.row + 1,
+      col: pos.col,
+    });
+    const yOff = (canDescend ? rs.fallProgress : 0) * CELL;
     const map: [number, number, Cell][] = [
       [pos.row, pos.col, cells[0][0]],
       [pos.row, pos.col + 1, cells[0][1]],

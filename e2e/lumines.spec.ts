@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { LuminesTestApi } from "../src/game/test-api/install";
 
 type Color = 0 | 1;
 type Cell = Color | null;
@@ -8,19 +9,15 @@ interface State {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  hold: {
+    active: boolean;
+    remainingMs: number;
+  };
 }
 
 declare global {
   interface Window {
-    __lumines?: {
-      seed(n: number): void;
-      state(): State;
-      marked(): { row: number; col: number }[];
-      spawn(piece: Piece): void;
-      tick(): void;
-      sweepNow(): void;
-      sweepProgress(dtMs: number): void;
-    };
+    __lumines?: LuminesTestApi;
   }
 }
 
@@ -72,6 +69,65 @@ test("exposes window.__lumines in test mode", async ({ page }) => {
   expect(hasApi).toBe(true);
 });
 
+test("auth test hooks reflect signed-in UI and sign-out UI", async ({
+  page,
+}) => {
+  await expect(page.getByTestId("signin")).toBeVisible();
+
+  await page.evaluate(() =>
+    window.__lumines!.auth!.signIn({
+      name: "Ada Lovelace",
+      subject: "google-oauth2|ada",
+    }),
+  );
+
+  await expect(page.getByTestId("user-name")).toHaveText("Ada Lovelace");
+  await expect(page.getByTestId("signout")).toBeVisible();
+
+  await page.evaluate(() => window.__lumines!.auth!.signOut());
+  await expect(page.getByTestId("signin")).toBeVisible();
+  await expect(page.getByTestId("user-name")).toHaveCount(0);
+});
+
+test("unauthenticated endGame does not write leaderboard", async ({ page }) => {
+  await page.getByTestId("start-button").click();
+  await page.evaluate(() => window.__lumines!.endGame!(999));
+
+  await expect(page.getByTestId("game-over")).toBeVisible();
+  await expect(page.getByTestId("personal-best")).toHaveText("--");
+  await expect(page.getByTestId("leaderboard-row")).toHaveCount(0);
+});
+
+test("signed-in endGame saves only improved personal best and updates leaderboard", async ({
+  page,
+}) => {
+  await page.evaluate(() =>
+    window.__lumines!.auth!.signIn({
+      name: "Grace Hopper",
+      subject: "google-oauth2|grace",
+    }),
+  );
+  await page.getByTestId("start-button").click();
+
+  await page.evaluate(() => window.__lumines!.endGame!(80));
+  await expect(page.getByTestId("personal-best")).toHaveText("80");
+  await expect(page.getByTestId("leaderboard-row")).toHaveCount(1);
+  await expect(page.getByTestId("leaderboard-row").first()).toContainText(
+    "Grace Hopper",
+  );
+  await expect(page.getByTestId("leaderboard-row").first()).toContainText("80");
+
+  await page.evaluate(() => window.__lumines!.endGame!(60));
+  await expect(page.getByTestId("personal-best")).toHaveText("80");
+  await expect(page.getByTestId("leaderboard-row").first()).toContainText("80");
+
+  await page.evaluate(() => window.__lumines!.endGame!(120));
+  await expect(page.getByTestId("personal-best")).toHaveText("120");
+  await expect(page.getByTestId("leaderboard-row").first()).toContainText(
+    "120",
+  );
+});
+
 test("spawn places at top-centre; tick advances; tick never auto-spawns", async ({
   page,
 }) => {
@@ -82,16 +138,30 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
   let s = await getState(page);
   expect(s.grid.length).toBe(10);
   expect(s.grid[0]!.length).toBe(16);
+  expect(s.hold.active).toBe(true);
+  expect(s.hold.remainingMs).toBeGreaterThan(0);
   // piece visible at cols 7-8, rows 0-1
   expect(s.grid[0]![7]).toBe(0);
   expect(s.grid[0]![8]).toBe(0);
   expect(s.grid[1]![7]).toBe(0);
 
-  await api(page, "tick");
+  await api(page, "pressSoftDrop");
   s = await getState(page);
+  expect(s.hold.active).toBe(false);
   expect(s.grid[1]![7]).toBe(0);
   expect(s.grid[2]![7]).toBe(0);
   expect(s.grid[0]![7]).toBe(null);
+
+  await api(page, "spawn", MONO_A);
+  s = await getState(page);
+  expect(s.hold.active).toBe(true);
+
+  await api(page, "tick");
+  s = await getState(page);
+  expect(s.hold.active).toBe(false);
+  expect(s.grid[0]![7]).toBe(0);
+  expect(s.grid[1]![7]).toBe(0);
+  expect(s.grid[2]![7]).toBe(null);
 
   // tick to the floor and beyond — must NOT auto-spawn a new piece
   for (let i = 0; i < 20; i++) await api(page, "tick");
@@ -101,6 +171,45 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
   expect(s.grid[8]![7]).toBe(0);
   expect(s.grid[0]![7]).toBe(null);
   expect(s.grid[0]![8]).toBe(null);
+});
+
+test("new block hold requires a fresh drop press", async ({ page }) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "spawn", MONO_A);
+
+  let s = await getState(page);
+  expect(s.hold.active).toBe(true);
+  expect(s.grid[0]![7]).toBe(0);
+  expect(s.grid[1]![7]).toBe(0);
+
+  // Simulates holding a drop key through spawn: no fresh press hook is called.
+  await api(page, "tick");
+  s = await getState(page);
+  expect(s.hold.active).toBe(false);
+  expect(s.grid[0]![7]).toBe(0);
+  expect(s.grid[1]![7]).toBe(0);
+  expect(s.grid[2]![7]).toBe(null);
+
+  await api(page, "pressSoftDrop");
+  s = await getState(page);
+  expect(s.grid[0]![7]).toBe(null);
+  expect(s.grid[1]![7]).toBe(0);
+  expect(s.grid[2]![7]).toBe(0);
+});
+
+test("fresh hard drop during hold engages immediately", async ({ page }) => {
+  await page.getByTestId("start-button").click();
+  await api(page, "spawn", MONO_A);
+
+  let s = await getState(page);
+  expect(s.hold.active).toBe(true);
+
+  await api(page, "pressHardDrop");
+  s = await getState(page);
+  expect(s.hold.active).toBe(false);
+  expect(s.grid[9]![7]).toBe(0);
+  expect(s.grid[8]![7]).toBe(0);
+  expect(s.grid[0]![7]).toBe(null);
 });
 
 test("keyboard moves and rotates the active piece", async ({ page }) => {
@@ -143,6 +252,7 @@ test("a built 2x2 square is cleared by the sweep and scores per the rule", async
   await api(page, "sweepNow");
   const s = await getState(page);
   expect(s.score).toBe(4); // 4 cells x 1 distinct square
+  await expect(page.getByTestId("score-burst")).toBeVisible();
   // all cleared
   expect(s.grid.flat().every((c) => c === null)).toBe(true);
   await expect(page.getByTestId("score")).toHaveText("4");

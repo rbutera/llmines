@@ -8,6 +8,7 @@ import {
   lockPiece,
   moveLeft,
   moveRight,
+  NEW_BLOCK_HOLD_MS,
   publicState,
   rotateCW,
   runFullSweep,
@@ -21,12 +22,12 @@ import {
   type PublicState,
 } from "../core";
 
-export type InputAction =
-  | "left"
-  | "right"
-  | "rotate"
-  | "softDrop"
-  | "hardDrop";
+export type InputAction = "left" | "right" | "rotate" | "softDrop" | "hardDrop";
+
+export interface InputOptions {
+  /** True only for a new key/button press, not browser key-repeat carry-over. */
+  fresh?: boolean;
+}
 
 /** Rich per-frame snapshot for the renderer + React HUD. */
 export interface RenderState {
@@ -39,6 +40,10 @@ export interface RenderState {
   gameOver: boolean;
   sweepX: number;
   marked: MarkedCell[];
+  hold: {
+    active: boolean;
+    remainingMs: number;
+  };
 }
 
 export interface ControllerOptions {
@@ -62,6 +67,7 @@ export class GameController {
   private rafId: number | null = null;
   private lastTs = 0;
   private gravityAccumMs = 0;
+  private holdRemainingMs = 0;
   private started = false;
 
   constructor(opts: ControllerOptions = {}) {
@@ -81,6 +87,7 @@ export class GameController {
     this.started = true;
     if (!this.testMode) {
       this.state = spawnNext(this.state);
+      this.startSpawnHold();
       this.startLoop();
     }
     this.emit();
@@ -99,6 +106,7 @@ export class GameController {
     this.stop();
     this.state = createGame(seed ?? 1);
     this.gravityAccumMs = 0;
+    this.holdRemainingMs = 0;
     this.start();
   }
 
@@ -140,6 +148,14 @@ export class GameController {
     // Music-synced sweep: continuous, snapshot-per-pass scoring.
     this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
 
+    if (this.state.active && this.holdRemainingMs > 0) {
+      this.holdRemainingMs -= dtMs;
+      if (this.holdRemainingMs > 0) return;
+      this.holdRemainingMs = 0;
+      this.gravityAccumMs = 0;
+      return;
+    }
+
     // Gravity on a fixed tick.
     this.gravityAccumMs += dtMs;
     while (this.gravityAccumMs >= GRAVITY_INTERVAL_MS) {
@@ -155,13 +171,21 @@ export class GameController {
     if (locked) {
       this.gravityAccumMs = 0;
       this.state = spawnNext(this.state); // production auto-spawns
+      this.startSpawnHold();
     }
   }
 
   // ---- player input (active only while playing) ----------------------------
 
-  input(action: InputAction): void {
+  input(action: InputAction, opts: InputOptions = {}): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
+    if (this.isDropAction(action) && this.isHolding() && !opts.fresh) {
+      this.emit();
+      return;
+    }
+    if (this.isDropAction(action) && this.isHolding() && opts.fresh) {
+      this.releaseSpawnHold();
+    }
     switch (action) {
       case "left":
         this.state = moveLeft(this.state);
@@ -178,6 +202,7 @@ export class GameController {
         if (locked && !this.testMode) {
           this.gravityAccumMs = 0;
           this.state = spawnNext(this.state);
+          this.startSpawnHold();
         }
         break;
       }
@@ -186,6 +211,7 @@ export class GameController {
         if (!this.testMode) {
           this.gravityAccumMs = 0;
           this.state = spawnNext(this.state);
+          this.startSpawnHold();
         }
         break;
     }
@@ -206,6 +232,7 @@ export class GameController {
       gameOver: this.state.gameOver,
       sweepX: this.state.sweepX,
       marked: computeMarked(this.state.grid).marked,
+      hold: this.holdState(),
     };
   }
 
@@ -221,7 +248,7 @@ export class GameController {
   }
 
   testState(): PublicState {
-    return publicState(this.state);
+    return publicState(this.state, this.holdState());
   }
 
   testMarked(): MarkedCell[] {
@@ -233,14 +260,39 @@ export class GameController {
     if (this.state.active) this.state = lockPiece(this.state);
     this.started = true;
     this.state = spawnPiece(this.state, piece);
+    this.startSpawnHold();
     this.emit();
   }
 
   /** One gravity step; NEVER auto-spawns. */
   testTick(): void {
+    if (this.isHolding()) {
+      this.releaseSpawnHold();
+      this.emit();
+      return;
+    }
     const { state } = gravityStep(this.state);
     this.state = state;
     this.emit();
+  }
+
+  testEndGame(score: number): void {
+    this.state = {
+      ...this.state,
+      active: null,
+      score,
+      gameOver: true,
+    };
+    this.releaseSpawnHold();
+    this.emit();
+  }
+
+  testPressSoftDrop(): void {
+    this.input("softDrop", { fresh: true });
+  }
+
+  testPressHardDrop(): void {
+    this.input("hardDrop", { fresh: true });
   }
 
   /** Run one full sweep immediately + apply scoring. */
@@ -253,5 +305,30 @@ export class GameController {
   testSweepProgress(dtMs: number): void {
     this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
     this.emit();
+  }
+
+  private startSpawnHold(): void {
+    this.holdRemainingMs = this.state.active ? NEW_BLOCK_HOLD_MS : 0;
+    this.gravityAccumMs = 0;
+  }
+
+  private releaseSpawnHold(): void {
+    this.holdRemainingMs = 0;
+    this.gravityAccumMs = 0;
+  }
+
+  private isHolding(): boolean {
+    return this.state.active !== null && this.holdRemainingMs > 0;
+  }
+
+  private holdState(): { active: boolean; remainingMs: number } {
+    return {
+      active: this.isHolding(),
+      remainingMs: Math.max(0, Math.ceil(this.holdRemainingMs)),
+    };
+  }
+
+  private isDropAction(action: InputAction): boolean {
+    return action === "softDrop" || action === "hardDrop";
   }
 }

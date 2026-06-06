@@ -55,8 +55,10 @@ describe("rng / piece generation (3.3)", () => {
     const first = nextPiece(createGame(1).rngState)[1];
     let differs = false;
     for (let seed = 2; seed < 40; seed++) {
-      if (JSON.stringify(nextPiece(createGame(seed).rngState)[1]) !==
-        JSON.stringify(first)) {
+      if (
+        JSON.stringify(nextPiece(createGame(seed).rngState)[1]) !==
+        JSON.stringify(first)
+      ) {
         differs = true;
         break;
       }
@@ -150,10 +152,12 @@ describe("piece mechanics (4.x)", () => {
     }
     // Place piece resting on the wall of filled row to force overlap on rotate is
     // tricky; instead assert rotateCW returns a valid 2x2 footprint in free space.
-    const s = rotateCW(spawnPiece(base, [
-      [0, 1],
-      [1, 0],
-    ]));
+    const s = rotateCW(
+      spawnPiece(base, [
+        [0, 1],
+        [1, 0],
+      ]),
+    );
     expect(s.active?.cells).toEqual([
       [1, 0],
       [0, 1],
@@ -176,6 +180,23 @@ describe("piece mechanics (4.x)", () => {
     expect(s.grid[ROWS - 1]![8]).toBe(0);
     expect(s.grid[ROWS - 2]![7]).toBe(0);
     expect(s.grid[ROWS - 2]![8]).toBe(0);
+  });
+
+  it("locks immediately on the gravity step that reaches the floor", () => {
+    let s = withPiece(MONO_A);
+    for (let i = 0; i < ROWS - 3; i++) {
+      const r = gravityStep(s);
+      expect(r.locked).toBe(false);
+      s = r.state;
+    }
+
+    expect(s.active?.pos.row).toBe(ROWS - 3);
+
+    const r = gravityStep(s);
+    expect(r.locked).toBe(true);
+    expect(r.state.active).toBe(null);
+    expect(r.state.grid[ROWS - 1]![7]).toBe(0);
+    expect(r.state.grid[ROWS - 2]![8]).toBe(0);
   });
 
   it("locks onto the stack, not the floor", () => {
