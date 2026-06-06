@@ -29,6 +29,9 @@ const MONO_A: Piece = [
   [0, 0],
 ];
 
+const ROWS = 10;
+const COLS = 16;
+
 async function getState(page: Page): Promise<State> {
   return page.evaluate(() => window.__lumines!.state());
 }
@@ -44,6 +47,58 @@ async function api(page: Page, fn: string, ...args: unknown[]): Promise<void> {
     },
     [fn, args] as const,
   );
+}
+
+async function spawnMonoA(page: Page): Promise<void> {
+  await api(page, "spawn", MONO_A);
+}
+
+async function tickToFloor(page: Page): Promise<void> {
+  for (let i = 0; i < ROWS - 2; i++) await api(page, "tick");
+}
+
+function expectGridCellsInBounds(state: State): void {
+  expect(state.grid).toHaveLength(ROWS);
+  for (const row of state.grid) expect(row).toHaveLength(COLS);
+}
+
+function expectMonoAOnFloor(state: State): void {
+  expectGridCellsInBounds(state);
+  expect(state.grid[ROWS - 1]![7]).toBe(0);
+  expect(state.grid[ROWS - 1]![8]).toBe(0);
+  expect(state.grid[ROWS - 2]![7]).toBe(0);
+  expect(state.grid[ROWS - 2]![8]).toBe(0);
+  expect(state.grid[0]![7]).toBe(null);
+  expect(state.grid[0]![8]).toBe(null);
+}
+
+async function expectMarkedSquare(page: Page): Promise<void> {
+  const marked = await page.evaluate(() => window.__lumines!.marked());
+  expect(marked).toEqual(
+    expect.arrayContaining([
+      { row: ROWS - 2, col: 7 },
+      { row: ROWS - 2, col: 8 },
+      { row: ROWS - 1, col: 7 },
+      { row: ROWS - 1, col: 8 },
+    ]),
+  );
+  expect(marked.length).toBeGreaterThanOrEqual(4);
+}
+
+async function expectNoCanvasOverflowBelowPlayfield(page: Page): Promise<void> {
+  const bounds = await page.locator("canvas").evaluate((canvas) => {
+    const canvasRect = canvas.getBoundingClientRect();
+    const parentRect = canvas.parentElement!.getBoundingClientRect();
+    return {
+      canvasBottom: canvasRect.bottom,
+      parentBottom: parentRect.bottom,
+      canvasHeight: canvasRect.height,
+      parentHeight: parentRect.height,
+    };
+  });
+  expect(bounds.canvasHeight).toBeGreaterThan(0);
+  expect(bounds.parentHeight).toBeGreaterThan(0);
+  expect(bounds.canvasBottom).toBeLessThanOrEqual(bounds.parentBottom + 0.5);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -77,7 +132,7 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
 }) => {
   await page.getByTestId("start-button").click();
   await api(page, "seed", 1);
-  await api(page, "spawn", MONO_A);
+  await spawnMonoA(page);
 
   let s = await getState(page);
   expect(s.grid.length).toBe(10);
@@ -101,6 +156,34 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
   expect(s.grid[8]![7]).toBe(0);
   expect(s.grid[0]![7]).toBe(null);
   expect(s.grid[0]![8]).toBe(null);
+});
+
+test("hard drop lands on bottom rows with no out-of-bounds visual overflow", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await spawnMonoA(page);
+
+  await page.keyboard.press(" ");
+
+  const s = await getState(page);
+  expectMonoAOnFloor(s);
+  await expectMarkedSquare(page);
+  await expectNoCanvasOverflowBelowPlayfield(page);
+});
+
+test("natural gravity locks immediately on bottom rows without visual overflow", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+  await spawnMonoA(page);
+
+  await tickToFloor(page);
+
+  const s = await getState(page);
+  expectMonoAOnFloor(s);
+  await expectMarkedSquare(page);
+  await expectNoCanvasOverflowBelowPlayfield(page);
 });
 
 test("keyboard moves and rotates the active piece", async ({ page }) => {
@@ -133,7 +216,7 @@ test("a built 2x2 square is cleared by the sweep and scores per the rule", async
   page,
 }) => {
   await page.getByTestId("start-button").click();
-  await api(page, "spawn", MONO_A);
+  await spawnMonoA(page);
   for (let i = 0; i < 20; i++) await api(page, "tick"); // land the mono-A square
 
   // square detected
@@ -151,7 +234,7 @@ test("a built 2x2 square is cleared by the sweep and scores per the rule", async
 test("cells settle by gravity after deletions", async ({ page }) => {
   await page.getByTestId("start-button").click();
   // floor square of A
-  await api(page, "spawn", MONO_A);
+  await spawnMonoA(page);
   for (let i = 0; i < 20; i++) await api(page, "tick");
   // drop B-over-A piece on top: top row B, bottom row A
   await api(page, "spawn", [
@@ -168,6 +251,32 @@ test("cells settle by gravity after deletions", async ({ page }) => {
   expect(s.grid[9]![7]).toBe(1);
   expect(s.grid[9]![8]).toBe(1);
   expect(s.grid[8]![7]).toBe(null);
+});
+
+test("near-bottom uneven overhang settle stays valid and visually contained", async ({
+  page,
+}) => {
+  await page.getByTestId("start-button").click();
+
+  await spawnMonoA(page);
+  await tickToFloor(page);
+  await api(page, "spawn", [
+    [1, 1],
+    [1, 1],
+  ] as Piece);
+  await page.keyboard.press("ArrowRight");
+  await tickToFloor(page);
+
+  const s = await getState(page);
+  expectGridCellsInBounds(s);
+  expect(s.grid.flat().filter((c) => c !== null)).toHaveLength(8);
+  expect(s.grid[6]![8]).toBe(1);
+  expect(s.grid[7]![8]).toBe(1);
+  expect(s.grid[8]![8]).toBe(0);
+  expect(s.grid[9]![8]).toBe(0);
+  expect(s.grid[8]![9]).toBe(1);
+  expect(s.grid[9]![9]).toBe(1);
+  await expectNoCanvasOverflowBelowPlayfield(page);
 });
 
 test("sweep timing: 0.25s per column, 4.0s full traversal", async ({

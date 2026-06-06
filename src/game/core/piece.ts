@@ -107,10 +107,11 @@ export function gravityStep(state: GameState): {
   if (!state.active || state.gameOver) return { state, locked: false };
   if (canDescend(state)) {
     const pos = { row: state.active.pos.row + 1, col: state.active.pos.col };
-    return {
-      state: { ...state, active: { cells: state.active.cells, pos } },
-      locked: false,
-    };
+    const moved = { ...state, active: { cells: state.active.cells, pos } };
+    if (!canDescend(moved)) {
+      return { state: lockPiece(moved), locked: true };
+    }
+    return { state: moved, locked: false };
   }
   return { state: lockPiece(state), locked: true };
 }

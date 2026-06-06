@@ -163,7 +163,7 @@ describe("piece mechanics (4.x)", () => {
   it("gravity steps down then locks on the floor", () => {
     let s = withPiece(MONO_A);
     let locked = false;
-    for (let i = 0; i < ROWS + 2; i++) {
+    for (let i = 0; i < ROWS - 2; i++) {
       const r = gravityStep(s);
       s = r.state;
       locked = r.locked;
@@ -178,20 +178,64 @@ describe("piece mechanics (4.x)", () => {
     expect(s.grid[ROWS - 2]![8]).toBe(0);
   });
 
+  it("locks immediately when a gravity step reaches the floor", () => {
+    let s = withPiece(MONO_A);
+    for (let i = 0; i < ROWS - 3; i++) {
+      const r = gravityStep(s);
+      s = r.state;
+      expect(r.locked).toBe(false);
+      expect(s.active).not.toBe(null);
+    }
+
+    const r = gravityStep(s);
+    expect(r.locked).toBe(true);
+    expect(r.state.active).toBe(null);
+    expect(r.state.grid[ROWS - 1]![7]).toBe(0);
+    expect(r.state.grid[ROWS - 2]![8]).toBe(0);
+  });
+
   it("locks onto the stack, not the floor", () => {
     const base = createGame();
     base.grid[ROWS - 1]![7] = 1;
     base.grid[ROWS - 1]![8] = 1;
     let s = spawnPiece(base, MONO_A);
+    let locked = false;
+    for (let i = 0; i < ROWS + 2; i++) {
+      const r = gravityStep(s);
+      s = r.state;
+      locked = r.locked;
+      if (locked) break;
+    }
+    expect(locked).toBe(true);
+    // piece rests on top of the pre-filled bottom row
+    expect(s.grid[ROWS - 1]![7]).toBe(1);
+    expect(s.grid[ROWS - 2]![7]).toBe(0);
+    expect(s.grid[ROWS - 3]![7]).toBe(0);
+  });
+
+  it("near-bottom overhang locking preserves per-column settle", () => {
+    const base = createGame();
+    base.grid[ROWS - 1]![7] = 1;
+    base.grid[ROWS - 1]![8] = 1;
+    base.grid[ROWS - 2]![8] = 1;
+
+    let s = moveRight(spawnPiece(base, MONO_A));
     for (let i = 0; i < ROWS + 2; i++) {
       const r = gravityStep(s);
       s = r.state;
       if (r.locked) break;
     }
-    // piece rests on top of the pre-filled bottom row
-    expect(s.grid[ROWS - 1]![7]).toBe(1);
-    expect(s.grid[ROWS - 2]![7]).toBe(0);
-    expect(s.grid[ROWS - 3]![7]).toBe(0);
+
+    expect(s.active).toBe(null);
+    expect(s.grid).toHaveLength(ROWS);
+    for (const row of s.grid) expect(row).toHaveLength(COLS);
+    expect(s.grid.flat().filter((c) => c !== null)).toHaveLength(7);
+    expect(s.grid[ROWS - 4]![8]).toBe(0);
+    expect(s.grid[ROWS - 3]![8]).toBe(0);
+    expect(s.grid[ROWS - 2]![8]).toBe(1);
+    expect(s.grid[ROWS - 1]![8]).toBe(1);
+    expect(s.grid[ROWS - 2]![9]).toBe(0);
+    expect(s.grid[ROWS - 1]![9]).toBe(0);
   });
 
   it("hard drop lands at the floor and locks immediately", () => {

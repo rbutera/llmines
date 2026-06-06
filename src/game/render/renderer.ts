@@ -231,7 +231,8 @@ export class PixiRenderer {
       for (let col = 0; col < COLS; col++) {
         const cell = rs.grid[row]![col] ?? null;
         if (cell === null) continue;
-        const yOff = this.fallOffsets.get(row * COLS + col) ?? 0;
+        const rawYOff = this.fallOffsets.get(row * COLS + col) ?? 0;
+        const yOff = Math.min(rawYOff, BOARD_H - (row + 1) * CELL);
         this.cellRect(g, col, row, yOff, cell);
       }
     }
@@ -243,7 +244,9 @@ export class PixiRenderer {
     const pulse = 0.35 + 0.35 * (0.5 + 0.5 * Math.sin(this.clock / 160));
     for (const { row, col } of rs.marked) {
       const x = col * CELL;
-      const y = row * CELL + (this.fallOffsets.get(row * COLS + col) ?? 0);
+      const rawYOff = this.fallOffsets.get(row * COLS + col) ?? 0;
+      const yOff = Math.min(rawYOff, BOARD_H - (row + 1) * CELL);
+      const y = row * CELL + yOff;
       g.roundRect(x + 1, y + 1, CELL - 2, CELL - 2, 7).stroke({
         width: 2.5,
         color: 0xffffff,
@@ -261,13 +264,15 @@ export class PixiRenderer {
     g.clear();
     if (!rs.active) return;
     const { cells, pos } = rs.active;
-    const yOff = rs.fallProgress * CELL;
     const map: [number, number, Cell][] = [
       [pos.row, pos.col, cells[0][0]],
       [pos.row, pos.col + 1, cells[0][1]],
       [pos.row + 1, pos.col, cells[1][0]],
       [pos.row + 1, pos.col + 1, cells[1][1]],
     ];
+    const lowestRow = Math.max(...map.map(([row]) => row));
+    const maxYOff = Math.max(0, BOARD_H - (lowestRow + 1) * CELL);
+    const yOff = Math.min(rs.fallProgress * CELL, maxYOff);
     for (const [row, col, color] of map) {
       this.cellRect(g, col, row, yOff, color, { glow: 0.4 });
     }

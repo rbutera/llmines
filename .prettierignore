@@ -1,0 +1,9 @@
+node_modules/
+dist/
+build/
+coverage/
+.next/
+out/
+test-results/
+playwright-report/
+pnpm-lock.yaml
