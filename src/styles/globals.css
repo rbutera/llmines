@@ -4,3 +4,34 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
+
+/* Authoritative score "pop": a pure transform/glow on the testid element. The
+   element is re-keyed by its value, replaying this each time the score changes.
+   Only the transform/filter animate — the text content stays the exact integer,
+   so value assertions are unaffected. */
+@keyframes score-pop {
+  0% {
+    transform: scale(1);
+    text-shadow: none;
+  }
+  35% {
+    transform: scale(1.45);
+    text-shadow: 0 0 18px #37e0c9cc, 0 0 36px #ff5fb088;
+  }
+  100% {
+    transform: scale(1);
+    text-shadow: none;
+  }
+}
+
+.score-pop {
+  animation: score-pop 380ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: left center;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .score-pop {
+    animation: none;
+  }
+}

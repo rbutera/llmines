@@ -1,6 +1,7 @@
 import { Application, Container, Graphics } from "pixi.js";
 import { COLS, ROWS, type Cell, type Grid } from "../core";
 import type { GameController, RenderState } from "../engine/controller";
+import { burstParticleCount, scoreIntensity } from "../fx/scoreFx";
 
 const CELL = 40;
 const BOARD_W = COLS * CELL; // 640
@@ -25,6 +26,13 @@ interface Flash {
   y: number;
   color: number;
   life: number; // 0..1, 1 = fresh
+  /** Velocity (px/ms) for score-burst sparks; absent => static cell flash. */
+  vx?: number;
+  vy?: number;
+  /** Draw as a small drifting spark (score burst) rather than a cell flash. */
+  spark?: boolean;
+  /** Per-particle fade rate (1/ms); sparks live a little longer than flashes. */
+  decay?: number;
 }
 
 /** Per-column occupied rows, bottom-to-top, with colours. */
@@ -58,6 +66,8 @@ export class PixiRenderer {
   private prevMarked = new Set<number>();
   private fallOffsets = new Map<number, number>(); // key row*COLS+col -> px offset
   private flashes: Flash[] = [];
+  private prevScore = 0; // last score seen; a rise fires a burst
+  private scoreFlash = 0; // 0..1 full-field flash alpha on a score gain
   private clock = 0;
   private unsub: (() => void) | null = null;
   private destroyed = false;
@@ -119,9 +129,44 @@ export class PixiRenderer {
       this.seedCollapse(this.prevGrid, rs.grid);
       this.seedClearFlashes(this.prevGrid, rs.grid);
     }
+    // A score increase fires an in-view burst scaled by the gain. prevScore
+    // starts at 0, so the initial state (score 0) and any reset never burst.
+    if (rs.score > this.prevScore) {
+      this.seedScoreBurst(rs.score - this.prevScore);
+    }
+    this.prevScore = rs.score;
     this.prevGrid = rs.grid.map((r) => r.slice());
     this.prevMarked = markedSet;
     this.last = rs;
+  }
+
+  /**
+   * Spawn a score-gain burst in the play area: a brief full-field flash plus a
+   * radial spray of sparks from the centre, both scaled by the score delta. The
+   * spark count is capped (see burstParticleCount) so a huge clear can't tank
+   * the frame; sparks reuse the existing flash list + draw loop.
+   */
+  private seedScoreBurst(delta: number): void {
+    const intensity = scoreIntensity(delta);
+    this.scoreFlash = Math.min(1, this.scoreFlash + 0.2 + intensity * 0.55);
+    const n = burstParticleCount(delta);
+    const cx = BOARD_W / 2;
+    const cy = BOARD_H / 2;
+    for (let i = 0; i < n; i++) {
+      // Deterministic-ish radial spread (no Math.random dependency on order):
+      const angle = (i / n) * Math.PI * 2 + i * 0.618;
+      const speed = 0.06 + intensity * 0.18 + (i % 5) * 0.01;
+      this.flashes.push({
+        x: cx,
+        y: cy,
+        color: i % 3 === 0 ? 0xffffff : SWEEP,
+        life: 1,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        spark: true,
+        decay: 1 / (520 + intensity * 380),
+      });
+    }
   }
 
   /** Match each column's new stack to its old stack to animate fallen cells. */
@@ -172,11 +217,19 @@ export class PixiRenderer {
       if (Math.abs(next) < 0.5) this.fallOffsets.delete(key);
       else this.fallOffsets.set(key, next);
     }
-    // age flashes
+    // age flashes; drift score-burst sparks along their velocity
     this.flashes = this.flashes.filter((f) => {
-      f.life -= dtMs / 260;
+      f.life -= dtMs * (f.decay ?? 1 / 260);
+      if (f.spark) {
+        f.x += (f.vx ?? 0) * dtMs;
+        f.y += (f.vy ?? 0) * dtMs;
+      }
       return f.life > 0;
     });
+    // decay the full-field score flash
+    if (this.scoreFlash > 0) {
+      this.scoreFlash = Math.max(0, this.scoreFlash - dtMs / 220);
+    }
 
     this.drawCells(this.last);
     this.drawMarked(this.last);
@@ -261,7 +314,17 @@ export class PixiRenderer {
     g.clear();
     if (!rs.active) return;
     const { cells, pos } = rs.active;
-    const yOff = rs.fallProgress * CELL;
+    // Defensive clamp: the active piece's lowest cells sit at `pos.row + 1`, so
+    // the smooth-fall offset must never exceed the empty rows beneath them.
+    // This guarantees no cell is ever drawn below the bottom row / canvas even
+    // if fallProgress is stale (belt-and-suspenders for the controller gate).
+    const roomBelow = Math.max(0, ROWS - 1 - (pos.row + 1));
+    const yOff = Math.min(rs.fallProgress, roomBelow) * CELL;
+    // "Ready to place" cue: while the new block is held it pulses a brighter
+    // glow (and an outline ring) so the hold reads as an intentional beat. The
+    // piece does not move (fallProgress is 0 while held), so it never drifts.
+    const held = rs.hold.active;
+    const glow = held ? 0.5 + 0.35 * (0.5 + 0.5 * Math.sin(this.clock / 130)) : 0.4;
     const map: [number, number, Cell][] = [
       [pos.row, pos.col, cells[0][0]],
       [pos.row, pos.col + 1, cells[0][1]],
@@ -269,14 +332,38 @@ export class PixiRenderer {
       [pos.row + 1, pos.col + 1, cells[1][1]],
     ];
     for (const [row, col, color] of map) {
-      this.cellRect(g, col, row, yOff, color, { glow: 0.4 });
+      this.cellRect(g, col, row, yOff, color, { glow });
+    }
+    if (held) {
+      const x = pos.col * CELL;
+      const y = pos.row * CELL + yOff;
+      const ring = 0.35 + 0.35 * (0.5 + 0.5 * Math.sin(this.clock / 130));
+      g.roundRect(x + 1, y + 1, CELL * 2 - 2, CELL * 2 - 2, 10).stroke({
+        width: 2,
+        color: 0xffffff,
+        alpha: ring,
+      });
     }
   }
 
   private drawFlashes(): void {
     const g = this.fxG;
     g.clear();
+    // Full-field flash on a score gain (drawn under the sparks).
+    if (this.scoreFlash > 0) {
+      g.rect(0, 0, BOARD_W, BOARD_H).fill({
+        color: SWEEP,
+        alpha: this.scoreFlash * 0.22,
+      });
+    }
     for (const f of this.flashes) {
+      if (f.spark) {
+        // Score-burst spark: a small bright dot with a soft halo, shrinking out.
+        const r = 2 + f.life * 4;
+        g.circle(f.x, f.y, r * 2).fill({ color: f.color, alpha: f.life * 0.25 });
+        g.circle(f.x, f.y, r).fill({ color: f.color, alpha: f.life * 0.9 });
+        continue;
+      }
       const grow = (1 - f.life) * 10;
       g.roundRect(
         f.x - grow,

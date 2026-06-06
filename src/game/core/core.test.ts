@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { COLS, ROWS } from "./constants";
+import { COLS, HOLD_MS, ROWS } from "./constants";
 import { computeMarked } from "./detect";
 import { createGame, emptyGrid, settle, viewGrid } from "./grid";
 import {
   gravityStep,
   hardDrop,
+  isHeld,
+  isResting,
   moveLeft,
   moveRight,
   nextPiece,
-  rotateCells,
+  releaseHold,
   rotateCW,
+  rotateCells,
   spawnPiece,
+  tickHold,
 } from "./piece";
 import { advanceSweep, runFullSweep } from "./sweep";
 import type { GameState, Grid, Piece } from "./types";
@@ -202,6 +206,67 @@ describe("piece mechanics (4.x)", () => {
   });
 });
 
+// Predicate that drives the renderer's fall-interpolation gate: a resting piece
+// (cannot descend) must report no in-progress descent, so the renderer draws it
+// with zero downward offset and never below the grid.
+describe("isResting (bottom-row settle)", () => {
+  it("false while the piece can still descend", () => {
+    expect(isResting(spawnPiece(createGame(), MONO_A))).toBe(false);
+  });
+
+  it("true once the piece reaches the bottom row", () => {
+    let s = spawnPiece(createGame(), MONO_A);
+    for (let i = 0; i < ROWS; i++) {
+      if (isResting(s)) break;
+      s = gravityStep(s).state;
+    }
+    expect(s.active?.pos.row).toBe(ROWS - 2); // bottom cells on the last row
+    expect(isResting(s)).toBe(true);
+  });
+
+  it("true when resting on top of the settled stack (not the floor)", () => {
+    const base = createGame();
+    base.grid[ROWS - 1]![7] = 1;
+    base.grid[ROWS - 1]![8] = 1;
+    let s = spawnPiece(base, MONO_A);
+    for (let i = 0; i < ROWS; i++) {
+      if (isResting(s)) break;
+      s = gravityStep(s).state;
+    }
+    // rests one row above the pre-filled bottom row
+    expect(s.active?.pos.row).toBe(ROWS - 3);
+    expect(isResting(s)).toBe(true);
+  });
+});
+
+// The per-column overhang collapse (the polish that must not regress) is driven
+// by core `settle()`: each column falls independently after a piece locks.
+describe("per-column overhang collapse (settle)", () => {
+  it("an overhanging column falls to the floor while the supported column stays", () => {
+    const base = createGame();
+    // A 2-high stack only under column 7.
+    base.grid[ROWS - 1]![7] = 1;
+    base.grid[ROWS - 2]![7] = 1;
+    // Distinct colours per column so the per-column movement is unambiguous.
+    const piece: Piece = [
+      [0, 1],
+      [0, 1],
+    ];
+    const s = hardDrop(spawnPiece(base, piece));
+    const g = s.grid;
+    // Column 7 rests on its stack at rows 6,7 — it does NOT fall further.
+    expect(g[ROWS - 4]![7]).toBe(0); // row 6
+    expect(g[ROWS - 3]![7]).toBe(0); // row 7
+    expect(g[ROWS - 2]![7]).toBe(1); // original stack row 8
+    expect(g[ROWS - 1]![7]).toBe(1); // original stack row 9
+    // Column 8 had nothing beneath it: its cells collapse to the floor.
+    expect(g[ROWS - 1]![8]).toBe(1); // row 9
+    expect(g[ROWS - 2]![8]).toBe(1); // row 8
+    expect(g[ROWS - 4]![8]).toBe(null); // no longer overhanging at row 6
+    expect(g[ROWS - 3]![8]).toBe(null); // no longer overhanging at row 7
+  });
+});
+
 describe("square detection (5.x)", () => {
   it("mono 2x2 -> 4 marked / 1 square", () => {
     const g = gridFrom(["00", "00"]);
@@ -309,5 +374,48 @@ describe("game over (7.x)", () => {
     const s = spawnPiece(createGame(), MONO_B);
     expect(s.gameOver).toBe(false);
     expect(s.active).not.toBe(null);
+  });
+});
+
+describe("new-block hold (core)", () => {
+  it("a fresh game starts with no hold", () => {
+    expect(createGame().hold).toEqual({ active: false, remainingMs: 0 });
+  });
+
+  it("spawnPiece starts the hold at the full window", () => {
+    const s = spawnPiece(createGame(), MONO_A);
+    expect(s.hold).toEqual({ active: true, remainingMs: HOLD_MS });
+    expect(isHeld(s)).toBe(true);
+  });
+
+  it("a game-over spawn carries no hold", () => {
+    const base = createGame();
+    base.grid[0]![7] = 1;
+    const s = spawnPiece(base, MONO_A);
+    expect(s.gameOver).toBe(true);
+    expect(s.hold).toEqual({ active: false, remainingMs: 0 });
+    expect(isHeld(s)).toBe(false);
+  });
+
+  it("releaseHold ends the hold immediately", () => {
+    const s = releaseHold(spawnPiece(createGame(), MONO_A));
+    expect(s.hold).toEqual({ active: false, remainingMs: 0 });
+    expect(isHeld(s)).toBe(false);
+  });
+
+  it("tickHold counts down then lapses at zero", () => {
+    let s = spawnPiece(createGame(), MONO_A);
+    s = tickHold(s, HOLD_MS / 2);
+    expect(s.hold.active).toBe(true);
+    expect(s.hold.remainingMs).toBeCloseTo(HOLD_MS / 2, 6);
+    s = tickHold(s, HOLD_MS); // overshoot -> release
+    expect(s.hold).toEqual({ active: false, remainingMs: 0 });
+  });
+
+  it("the hold does not move the piece; gravityStep is not hold-aware", () => {
+    const s = spawnPiece(createGame(), MONO_A);
+    // gravityStep stays a pure-movement primitive (hold suspension lives in the
+    // controller / test tick), so it still descends a held piece by one row.
+    expect(gravityStep(s).state.active?.pos.row).toBe(1);
   });
 });

@@ -1,5 +1,14 @@
 import type { Piece, PublicState } from "../core";
+import { mockStore } from "../account/mock-store";
 import type { GameController } from "../engine/controller";
+
+/** Deterministic auth hooks (TEST_MODE only) — drive the mock identity. */
+export interface LuminesAuthApi {
+  /** Mock-authenticate as this identity. `subject` is the server-derived id. */
+  signIn(identity: { name: string; subject: string }): void;
+  /** Return to the unauthenticated state. */
+  signOut(): void;
+}
 
 /** The deterministic interface exposed at `window.__lumines` in test mode. */
 export interface LuminesTestApi {
@@ -10,6 +19,15 @@ export interface LuminesTestApi {
   tick(): void;
   sweepNow(): void;
   sweepProgress(dtMs: number): void;
+  /** Simulate a FRESH, deliberate soft-drop press (ends a spawn-hold). */
+  pressSoftDrop(): void;
+  /** Simulate a FRESH, deliberate hard-drop press (ends a spawn-hold). */
+  pressHardDrop(): void;
+  /** Deterministic auth control against the mock backend. */
+  auth: LuminesAuthApi;
+  /** End the current game with an exact final score via the REAL game-over
+   * path (submits to the mock when signed in; writes nothing when signed out). */
+  endGame(score: number): void;
 }
 
 declare global {
@@ -33,6 +51,13 @@ export function installTestApi(controller: GameController): () => void {
     tick: () => controller.testTick(),
     sweepNow: () => controller.testSweepNow(),
     sweepProgress: (dtMs) => controller.testSweepProgress(dtMs),
+    pressSoftDrop: () => controller.testPressSoftDrop(),
+    pressHardDrop: () => controller.testPressHardDrop(),
+    auth: {
+      signIn: (identity) => mockStore.signIn(identity),
+      signOut: () => mockStore.signOut(),
+    },
+    endGame: (score) => controller.testEndGame(score),
   };
   window.__lumines = api;
   return () => {

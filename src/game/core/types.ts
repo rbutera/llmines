@@ -28,6 +28,16 @@ export interface ActivePiece {
   pos: PiecePos;
 }
 
+/**
+ * Spawn-hold state for the active piece. While `active`, gravity is suspended
+ * (the piece "holds" at the top); `remainingMs` is the wall-clock time left in
+ * the hold window, decremented by the controller (core stays time-free).
+ */
+export interface HoldState {
+  active: boolean;
+  remainingMs: number;
+}
+
 /** A marked cell coordinate. */
 export interface MarkedCell {
   row: number;
@@ -71,6 +81,8 @@ export interface GameState {
   sweepX: number;
   /** Mulberry32 RNG state (uint32). */
   rngState: number;
+  /** Spawn-hold for the active piece (gravity suspended while `active`). */
+  hold: HoldState;
   /** Active sweep pass, or null when none is in progress. Internal. */
   sweepPass?: SweepPass | null;
 }

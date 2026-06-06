@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AccountBar, Leaderboard, PersonalBest } from "../account/AccountUI";
+import { useAuth, useScores } from "../account/context";
 import { BACKING_TRACK_URL } from "../core";
 import { GameController } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
@@ -8,6 +10,7 @@ import { TEST_MODE } from "../test-api/flag";
 import { installTestApi } from "../test-api/install";
 import { ControlsCheatsheet } from "./ControlsCheatsheet";
 import { GameCanvas } from "./GameCanvas";
+import { ScoreFx } from "./ScoreFx";
 
 type Phase = "start" | "playing" | "gameover";
 
@@ -24,13 +27,32 @@ export function GameShell() {
   const phaseRef = useRef<Phase>("start");
   phaseRef.current = phase;
 
+  // Account seam: submit the final score on game over (signed-in only). Held in
+  // refs so the mount-once subscription always sees the current values.
+  const { user } = useAuth();
+  const { submitScore } = useScores();
+  const submitRef = useRef(submitScore);
+  submitRef.current = submitScore;
+  const userRef = useRef(user);
+  userRef.current = user;
+  const gameOverSubmittedRef = useRef(false);
+
   // Create the controller on the client; wire subscription + test interface.
   useEffect(() => {
     const c = new GameController({ testMode: TEST_MODE, seed: 1 });
     setController(c);
     const unsubscribe = c.subscribe((rs) => {
       setScore(rs.score);
-      if (rs.gameOver && phaseRef.current === "playing") setPhase("gameover");
+      if (rs.gameOver) {
+        // Run the score-submit path exactly once per game over. Unauthenticated
+        // runs submit nothing (the signed-out rule); the mutation/mock also
+        // enforce it server-side.
+        if (!gameOverSubmittedRef.current) {
+          gameOverSubmittedRef.current = true;
+          if (userRef.current) void submitRef.current(rs.score);
+        }
+        if (phaseRef.current === "playing") setPhase("gameover");
+      }
     });
     const uninstall = TEST_MODE ? installTestApi(c) : undefined;
     return () => {
@@ -47,6 +69,20 @@ export function GameShell() {
       const action = keyToAction(e);
       if (!action) return;
       e.preventDefault();
+      // A FRESH keydown (not an OS key-repeat) is a deliberate press: it ends
+      // the spawn-hold and engages the drop. A carried-over key-repeat routes
+      // to input(), which is a no-op while the new block is held — so a key
+      // still down from the previous piece cannot cascade into this one.
+      if (action === "softDrop" || action === "hardDrop") {
+        if (e.repeat) {
+          controller.input(action);
+        } else if (action === "softDrop") {
+          controller.pressSoftDrop();
+        } else {
+          controller.pressHardDrop();
+        }
+        return;
+      }
       controller.input(action);
     };
     window.addEventListener("keydown", onKey);
@@ -56,6 +92,7 @@ export function GameShell() {
   const handleStart = useCallback(() => {
     if (!controller) return;
     setScore(0);
+    gameOverSubmittedRef.current = false;
     controller.start();
     audioRef.current?.play().catch(() => undefined);
     setPhase("playing");
@@ -65,6 +102,7 @@ export function GameShell() {
     if (!controller) return;
     controller.restart(1);
     setScore(0);
+    gameOverSubmittedRef.current = false;
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch(() => undefined);
@@ -98,13 +136,16 @@ export function GameShell() {
 
 function Header() {
   return (
-    <div className="mb-6 flex items-end justify-between">
-      <h1 className="bg-gradient-to-r from-[#37e0c9] to-[#ff5fb0] bg-clip-text text-3xl font-black tracking-tight text-transparent sm:text-4xl">
-        LLMines
-      </h1>
-      <span className="text-xs tracking-widest text-white/40 uppercase">
-        a lumines-like
-      </span>
+    <div className="mb-6 flex items-center justify-between gap-4">
+      <div className="flex items-baseline gap-3">
+        <h1 className="bg-gradient-to-r from-[#37e0c9] to-[#ff5fb0] bg-clip-text text-3xl font-black tracking-tight text-transparent sm:text-4xl">
+          LLMines
+        </h1>
+        <span className="hidden text-xs tracking-widest text-white/40 uppercase sm:inline">
+          a lumines-like
+        </span>
+      </div>
+      <AccountBar />
     </div>
   );
 }
@@ -133,7 +174,11 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           Start game
         </button>
       </div>
-      <ControlsCheatsheet />
+      <div className="flex flex-col gap-6">
+        <ControlsCheatsheet />
+        <PersonalBest />
+        <Leaderboard />
+      </div>
     </section>
   );
 }
@@ -150,15 +195,22 @@ function PlayingScreen({
       aria-label="Game"
       className="grid items-start gap-6 md:grid-cols-[1fr_240px]"
     >
-      <GameCanvas controller={controller} />
+      {/* Relative wrapper so the cosmetic ScoreFx overlay sits over the field. */}
+      <div className="relative">
+        <GameCanvas controller={controller} />
+        <ScoreFx score={score} />
+      </div>
       <aside className="flex flex-col gap-4">
         <div className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur">
           <div className="text-xs tracking-widest text-white/50 uppercase">
             Score
           </div>
+          {/* Authoritative value: exact integer, instant. The pop is a pure
+              CSS transform (text never changes), so assertions stay stable. */}
           <div
+            key={score}
             data-testid="score"
-            className="mt-1 font-mono text-4xl font-black tabular-nums"
+            className="score-pop mt-1 font-mono text-4xl font-black tabular-nums"
           >
             {score}
           </div>
@@ -180,23 +232,29 @@ function GameOverScreen({
     <section
       data-testid="game-over"
       aria-label="Game over"
-      className="mx-auto max-w-md rounded-2xl border border-white/10 bg-white/5 p-10 text-center backdrop-blur"
+      className="mx-auto grid max-w-3xl items-start gap-6 md:grid-cols-[1fr_280px]"
     >
-      <h2 className="text-3xl font-black tracking-tight text-[#ff5fb0]">
-        Game over
-      </h2>
-      <div className="mt-6 text-xs tracking-widest text-white/50 uppercase">
-        Final score
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-10 text-center backdrop-blur">
+        <h2 className="text-3xl font-black tracking-tight text-[#ff5fb0]">
+          Game over
+        </h2>
+        <div className="mt-6 text-xs tracking-widest text-white/50 uppercase">
+          Final score
+        </div>
+        <div className="font-mono text-6xl font-black tabular-nums">{score}</div>
+        <button
+          data-testid="restart"
+          onClick={onRestart}
+          autoFocus
+          className="mt-8 rounded-xl bg-gradient-to-r from-[#ff5fb0] to-[#c93f87] px-8 py-3 text-lg font-bold text-white shadow-lg transition hover:brightness-110 focus:ring-4 focus:ring-[#ff5fb0]/40 focus:outline-none"
+        >
+          Play again
+        </button>
       </div>
-      <div className="font-mono text-6xl font-black tabular-nums">{score}</div>
-      <button
-        data-testid="restart"
-        onClick={onRestart}
-        autoFocus
-        className="mt-8 rounded-xl bg-gradient-to-r from-[#ff5fb0] to-[#c93f87] px-8 py-3 text-lg font-bold text-white shadow-lg transition hover:brightness-110 focus:ring-4 focus:ring-[#ff5fb0]/40 focus:outline-none"
-      >
-        Play again
-      </button>
+      <div className="flex flex-col gap-6">
+        <PersonalBest />
+        <Leaderboard />
+      </div>
     </section>
   );
 }

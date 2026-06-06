@@ -8,6 +8,7 @@ interface State {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  hold: { active: boolean; remainingMs: number };
 }
 
 declare global {
@@ -20,6 +21,8 @@ declare global {
       tick(): void;
       sweepNow(): void;
       sweepProgress(dtMs: number): void;
+      pressSoftDrop(): void;
+      pressHardDrop(): void;
     };
   }
 }
@@ -86,7 +89,17 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
   expect(s.grid[0]![7]).toBe(0);
   expect(s.grid[0]![8]).toBe(0);
   expect(s.grid[1]![7]).toBe(0);
+  // freshly spawned: held at the top (new-block hold)
+  expect(s.hold.active).toBe(true);
 
+  // first tick lapses the hold in place — no descent yet
+  await api(page, "tick");
+  s = await getState(page);
+  expect(s.hold.active).toBe(false);
+  expect(s.grid[0]![7]).toBe(0);
+  expect(s.grid[2]![7]).toBe(null);
+
+  // subsequent ticks descend at normal gravity
   await api(page, "tick");
   s = await getState(page);
   expect(s.grid[1]![7]).toBe(0);

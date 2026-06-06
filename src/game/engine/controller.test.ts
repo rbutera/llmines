@@ -1,0 +1,281 @@
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  COLS,
+  GRAVITY_INTERVAL_MS,
+  HOLD_MS,
+  ROWS,
+  type Piece,
+} from "../core";
+import { GameController, type RenderState } from "./controller";
+
+/** Frames (at 100ms each) needed to lapse the spawn-hold. */
+const HOLD_FRAMES = HOLD_MS / 100;
+
+/**
+ * Start a production controller and lapse the new-block hold, leaving the piece
+ * at the top with a clean gravity accumulator. The first step only seeds the
+ * controller clock (dt=0); the next HOLD_FRAMES steps run out the hold without
+ * any gravity, so gravity begins on the following step.
+ */
+function startAndRelease(
+  c: GameController,
+  step: (dtMs: number) => void,
+): void {
+  c.start();
+  step(100); // seed the clock (dt = 0, hold untouched)
+  for (let i = 0; i < HOLD_FRAMES; i++) step(100); // run out the hold (no gravity)
+}
+
+/**
+ * Drives the production rAF loop deterministically: requestAnimationFrame is
+ * stubbed to merely capture the frame callback so the test can "step" frames
+ * with an internal clock. The controller clamps dt to 100ms and ignores the
+ * very first frame (it only seeds its clock), so `step(dt)` advances a non-zero
+ * internal clock to avoid colliding with the controller's `lastTs === 0`
+ * sentinel.
+ */
+function withFakeRaf(): { step: (dtMs: number) => void } {
+  let cb: ((ts: number) => void) | null = null;
+  let clock = 0;
+  (globalThis as unknown as { requestAnimationFrame: unknown }).requestAnimationFrame =
+    (fn: (ts: number) => void) => {
+      cb = fn;
+      return 1;
+    };
+  (globalThis as unknown as { cancelAnimationFrame: unknown }).cancelAnimationFrame =
+    () => undefined;
+  return {
+    step: (dtMs: number) => {
+      clock += dtMs;
+      cb?.(clock);
+    },
+  };
+}
+
+afterEach(() => {
+  delete (globalThis as unknown as { requestAnimationFrame?: unknown })
+    .requestAnimationFrame;
+  delete (globalThis as unknown as { cancelAnimationFrame?: unknown })
+    .cancelAnimationFrame;
+});
+
+const CHECKER: Piece = [
+  [0, 1],
+  [1, 0],
+];
+
+describe("fallProgress gating (bottom-row settle)", () => {
+  it("interpolates while the piece can still descend", () => {
+    const { step } = withFakeRaf();
+    const c = new GameController({ testMode: false, seed: 1 });
+    startAndRelease(c, step); // spawn + lapse the hold; gravity accumulator at 0
+    step(100); // 100ms accumulated toward the 700ms gravity tick
+
+    const rs = c.getRenderState();
+    expect(rs.active).not.toBeNull();
+    expect(rs.active!.pos.row).toBe(0); // still mid-air at the top
+    expect(rs.hold.active).toBe(false);
+    // Smooth descent: a fractional offset toward the next row.
+    expect(rs.fallProgress).toBeGreaterThan(0);
+    expect(rs.fallProgress).toBeLessThanOrEqual(1);
+    expect(rs.fallProgress).toBeCloseTo(100 / GRAVITY_INTERVAL_MS, 5);
+    c.stop();
+  });
+
+  it("reports zero fall offset once the piece rests on the bottom row", () => {
+    const { step } = withFakeRaf();
+    const c = new GameController({ testMode: false, seed: 1 });
+    startAndRelease(c, step);
+    // 58 post-hold frames -> 5800ms -> 8 gravity ticks (piece reaches the
+    // bottom row at pos.row = ROWS-2) with 200ms left over accumulating toward
+    // the next tick. Without the resting gate this leftover would push
+    // fallProgress and draw the piece below the canvas.
+    for (let i = 0; i < 58; i++) step(100);
+
+    const rs = c.getRenderState();
+    expect(rs.active).not.toBeNull();
+    expect(rs.active!.pos.row).toBe(ROWS - 2); // bottom cells on the last row
+    expect(rs.fallProgress).toBe(0); // resting -> no downward overshoot
+    c.stop();
+  });
+});
+
+describe("bottom-row landing via the deterministic test API", () => {
+  it("state().grid places the landed block on the bottom rows with no out-of-bounds cells", () => {
+    const c = new GameController({ testMode: true });
+    c.testSpawn(CHECKER);
+    // Tick gravity until the piece can no longer descend (rests on the floor).
+    for (let i = 0; i < ROWS + 2; i++) {
+      const before = c.testState().grid.flat().filter(Boolean).length;
+      c.testTick();
+      const view = c.testState();
+      const blockBottom = view.grid[ROWS - 1]!.some((x) => x !== null);
+      if (blockBottom && before === view.grid.flat().filter(Boolean).length) {
+        break; // landed and stable
+      }
+    }
+
+    const { grid } = c.testState();
+    // Grid shape is exactly ROWS x COLS — no out-of-bounds rows/cols possible.
+    expect(grid.length).toBe(ROWS);
+    expect(grid.every((row) => row.length === COLS)).toBe(true);
+    // The 2x2 block occupies the bottom two rows of the spawn columns (7-8).
+    expect(grid[ROWS - 1]![7]).not.toBeNull();
+    expect(grid[ROWS - 1]![8]).not.toBeNull();
+    expect(grid[ROWS - 2]![7]).not.toBeNull();
+    expect(grid[ROWS - 2]![8]).not.toBeNull();
+    // Exactly the 4 cells of the block are present — nothing leaked elsewhere.
+    expect(grid.flat().filter((c2) => c2 !== null).length).toBe(4);
+  });
+});
+
+describe("new-block hold (production timing)", () => {
+  it("suspends gravity while held, then resumes at normal gravity", () => {
+    const { step } = withFakeRaf();
+    const c = new GameController({ testMode: false, seed: 1 });
+    c.start();
+    step(100); // seed the clock (dt = 0)
+
+    // Within the hold window the piece neither descends nor interpolates.
+    for (let i = 0; i < HOLD_FRAMES - 1; i++) step(100); // 400ms < 500ms hold
+    let rs = c.getRenderState();
+    expect(rs.hold.active).toBe(true);
+    expect(rs.active!.pos.row).toBe(0);
+    expect(rs.fallProgress).toBe(0);
+
+    // The hold lapses; the piece is still at the top (no carried-over fast-fall).
+    step(100);
+    rs = c.getRenderState();
+    expect(rs.hold.active).toBe(false);
+    expect(rs.active!.pos.row).toBe(0);
+
+    // After one gravity interval it descends exactly one row (normal gravity).
+    for (let i = 0; i < GRAVITY_INTERVAL_MS / 100; i++) step(100);
+    expect(c.getRenderState().active!.pos.row).toBe(1);
+    c.stop();
+  });
+});
+
+describe("new-block hold (deterministic test API)", () => {
+  it("a freshly spawned block is held; a carried-over hold does not fast-fall", () => {
+    const c = new GameController({ testMode: true });
+    c.testSpawn(CHECKER);
+    let s = c.testState();
+    expect(s.hold).toEqual({ active: true, remainingMs: HOLD_MS });
+    // No press hook called (simulating a held key carrying over): stays at top.
+    expect(s.grid[0]![7]).not.toBeNull();
+    expect(s.grid[2]![7]).toBeNull();
+
+    // The first tick lapses the hold IN PLACE (no descent).
+    c.testTick();
+    s = c.testState();
+    expect(s.hold.active).toBe(false);
+    expect(s.grid[0]![7]).not.toBeNull();
+    expect(s.grid[1]![7]).not.toBeNull();
+    expect(s.grid[2]![7]).toBeNull();
+
+    // A following tick descends at normal gravity.
+    c.testTick();
+    s = c.testState();
+    expect(s.grid[0]![7]).toBeNull();
+    expect(s.grid[2]![7]).not.toBeNull();
+  });
+
+  it("a fresh soft-drop press ends the hold and descends immediately", () => {
+    const c = new GameController({ testMode: true });
+    c.testSpawn(CHECKER);
+    expect(c.testState().hold.active).toBe(true);
+
+    c.testPressSoftDrop();
+    const s = c.testState();
+    expect(s.hold.active).toBe(false);
+    // Engaged immediately: dropped from rows 0-1 to rows 1-2.
+    expect(s.grid[0]![7]).toBeNull();
+    expect(s.grid[1]![7]).not.toBeNull();
+    expect(s.grid[2]![7]).not.toBeNull();
+  });
+
+  it("a fresh hard-drop press ends the hold and locks at the bottom", () => {
+    const c = new GameController({ testMode: true });
+    c.testSpawn(CHECKER);
+
+    c.testPressHardDrop();
+    const s = c.testState();
+    expect(s.hold.active).toBe(false);
+    expect(s.grid[ROWS - 1]![7]).not.toBeNull();
+    expect(s.grid[ROWS - 2]![7]).not.toBeNull();
+    expect(s.grid.flat().filter((x) => x !== null).length).toBe(4);
+  });
+
+  it("after the hold ends, a normal soft-drop input descends", () => {
+    const c = new GameController({ testMode: true });
+    c.testSpawn(CHECKER);
+    c.testTick(); // lapse the hold in place
+    expect(c.testState().hold.active).toBe(false);
+
+    c.input("softDrop"); // a normal (post-hold) soft drop now moves the piece
+    expect(c.testState().grid[0]![7]).toBeNull();
+  });
+
+  it("drop input is a no-op while held; move/rotate still apply during the hold", () => {
+    const c = new GameController({ testMode: true });
+    c.testSpawn(CHECKER);
+
+    // Carried-over (key-repeat) drop while held: ignored, piece unmoved.
+    c.input("softDrop");
+    c.input("hardDrop");
+    let s = c.testState();
+    expect(s.hold.active).toBe(true);
+    expect(s.grid[0]![7]).not.toBeNull();
+    expect(s.grid[2]![7]).toBeNull();
+
+    // Move right applies during the hold and does not break it.
+    c.input("right");
+    s = c.testState();
+    expect(s.grid[0]![8]).not.toBeNull();
+    expect(s.grid[0]![9]).not.toBeNull();
+    expect(s.hold.active).toBe(true);
+
+    // Rotate applies during the hold and does not break it.
+    c.input("rotate");
+    expect(c.testState().hold.active).toBe(true);
+  });
+});
+
+describe("score value path (authoritative, independent of the animated FX)", () => {
+  it("a cleared 2x2 square yields the exact score via state()", () => {
+    const c = new GameController({ testMode: true });
+    const MONO: Piece = [
+      [0, 0],
+      [0, 0],
+    ];
+    c.testSpawn(MONO);
+    for (let i = 0; i < ROWS + 2; i++) c.testTick(); // land on the floor
+    // The block is settled but not yet swept, so the score is still 0.
+    expect(c.testState().score).toBe(0);
+
+    c.testSweepNow();
+    // 4 cells x 1 distinct square. This is the exact value the `score` testid
+    // renders — the cosmetic ScoreFx never participates in this number.
+    expect(c.testState().score).toBe(4);
+  });
+});
+
+describe("testEndGame (deterministic game-over for the account submit path)", () => {
+  it("sets the exact final score + gameOver and emits", () => {
+    const c = new GameController({ testMode: true });
+    let last: RenderState | undefined;
+    c.subscribe((rs) => {
+      last = rs;
+    });
+
+    c.testEndGame(4242);
+
+    expect(c.testState().score).toBe(4242);
+    expect(c.testState().gameOver).toBe(true);
+    expect(c.testState().grid.flat().every((x) => x === null)).toBe(true); // active cleared
+    // Subscribers (e.g. GameShell's submit effect) see the game-over snapshot.
+    expect(last?.gameOver).toBe(true);
+    expect(last?.score).toBe(4242);
+  });
+});

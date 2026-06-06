@@ -1,4 +1,4 @@
-import { SPAWN_COL, SPAWN_ROW } from "./constants";
+import { HOLD_MS, SPAWN_COL, SPAWN_ROW } from "./constants";
 import { cloneGrid, inBounds, pieceCells, settle } from "./grid";
 import { nextBit } from "./rng";
 import type { ActivePiece, GameState, Grid, Piece, PiecePos } from "./types";
@@ -37,9 +37,43 @@ export function canPlace(grid: Grid, cells: Piece, pos: PiecePos): boolean {
 export function spawnPiece(state: GameState, cells: Piece): GameState {
   const pos: PiecePos = { row: SPAWN_ROW, col: SPAWN_COL };
   if (!canPlace(state.grid, cells, pos)) {
-    return { ...state, active: null, gameOver: true };
+    return {
+      ...state,
+      active: null,
+      gameOver: true,
+      hold: { active: false, remainingMs: 0 },
+    };
   }
-  return { ...state, active: { cells, pos } };
+  // A freshly spawned piece holds at the top for one beat before gravity
+  // resumes (see HOLD_MS). The controller drives the timer / release.
+  return {
+    ...state,
+    active: { cells, pos },
+    hold: { active: true, remainingMs: HOLD_MS },
+  };
+}
+
+/** Is the active piece currently held at the top (gravity suspended)? */
+export function isHeld(state: GameState): boolean {
+  return state.active !== null && state.hold.active;
+}
+
+/** End the spawn-hold immediately (piece may begin falling). No-op if not held. */
+export function releaseHold(state: GameState): GameState {
+  if (!state.hold.active) return state;
+  return { ...state, hold: { active: false, remainingMs: 0 } };
+}
+
+/**
+ * Advance the hold timer by `dtMs`. When the remaining time reaches zero the
+ * hold lapses (released). No-op when no hold is active. Core stays time-free —
+ * the controller supplies `dtMs`.
+ */
+export function tickHold(state: GameState, dtMs: number): GameState {
+  if (!state.hold.active) return state;
+  const remainingMs = state.hold.remainingMs - dtMs;
+  if (remainingMs <= 0) return { ...state, hold: { active: false, remainingMs: 0 } };
+  return { ...state, hold: { active: true, remainingMs } };
 }
 
 /** Spawn the next RNG-drawn piece (used by the production loop). */
