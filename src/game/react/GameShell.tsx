@@ -6,8 +6,11 @@ import { GameController } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
 import { installTestApi } from "../test-api/install";
+import { useLeaderboard } from "../leaderboard/LeaderboardProvider";
 import { ControlsCheatsheet } from "./ControlsCheatsheet";
 import { GameCanvas } from "./GameCanvas";
+import { LeaderboardPanel } from "./LeaderboardPanel";
+import { ScoreFeedback } from "./ScoreFeedback";
 
 type Phase = "start" | "playing" | "gameover";
 
@@ -22,7 +25,17 @@ export function GameShell() {
   const [controller, setController] = useState<GameController | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const phaseRef = useRef<Phase>("start");
+  const submittedGameOverRef = useRef(false);
+  const leaderboard = useLeaderboard();
+  const submitScoreRef = useRef((nextScore: number) =>
+    leaderboard.submitScore(nextScore),
+  );
+  const mockSignInRef = useRef(leaderboard.mockSignIn);
+  const mockSignOutRef = useRef(leaderboard.mockSignOut);
   phaseRef.current = phase;
+  submitScoreRef.current = (nextScore) => leaderboard.submitScore(nextScore);
+  mockSignInRef.current = (user) => leaderboard.mockSignIn(user);
+  mockSignOutRef.current = () => leaderboard.mockSignOut();
 
   // Create the controller on the client; wire subscription + test interface.
   useEffect(() => {
@@ -30,9 +43,20 @@ export function GameShell() {
     setController(c);
     const unsubscribe = c.subscribe((rs) => {
       setScore(rs.score);
+      if (rs.gameOver && !submittedGameOverRef.current) {
+        submittedGameOverRef.current = true;
+        void submitScoreRef.current(rs.score);
+      }
       if (rs.gameOver && phaseRef.current === "playing") setPhase("gameover");
     });
-    const uninstall = TEST_MODE ? installTestApi(c) : undefined;
+    const uninstall = TEST_MODE
+      ? installTestApi(c, {
+          auth: {
+            signIn: (user) => mockSignInRef.current(user),
+            signOut: () => mockSignOutRef.current(),
+          },
+        })
+      : undefined;
     return () => {
       unsubscribe();
       uninstall?.();
@@ -47,7 +71,7 @@ export function GameShell() {
       const action = keyToAction(e);
       if (!action) return;
       e.preventDefault();
-      controller.input(action);
+      controller.input(action, { fresh: !e.repeat });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -56,6 +80,7 @@ export function GameShell() {
   const handleStart = useCallback(() => {
     if (!controller) return;
     setScore(0);
+    submittedGameOverRef.current = false;
     controller.start();
     audioRef.current?.play().catch(() => undefined);
     setPhase("playing");
@@ -65,6 +90,7 @@ export function GameShell() {
     if (!controller) return;
     controller.restart(1);
     setScore(0);
+    submittedGameOverRef.current = false;
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch(() => undefined);
@@ -133,7 +159,10 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           Start game
         </button>
       </div>
-      <ControlsCheatsheet />
+      <aside className="flex flex-col gap-4">
+        <LeaderboardPanel />
+        <ControlsCheatsheet />
+      </aside>
     </section>
   );
 }
@@ -150,7 +179,17 @@ function PlayingScreen({
       aria-label="Game"
       className="grid items-start gap-6 md:grid-cols-[1fr_240px]"
     >
-      <GameCanvas controller={controller} />
+      <div
+        data-testid="game-view"
+        className="relative w-full overflow-hidden rounded-xl shadow-2xl ring-1 ring-white/10"
+        style={{
+          aspectRatio: "16 / 10",
+          boxShadow: "0 0 60px -15px #37e0c980",
+        }}
+      >
+        <GameCanvas controller={controller} />
+        <ScoreFeedback score={score} />
+      </div>
       <aside className="flex flex-col gap-4">
         <div className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur">
           <div className="text-xs tracking-widest text-white/50 uppercase">
@@ -188,7 +227,15 @@ function GameOverScreen({
       <div className="mt-6 text-xs tracking-widest text-white/50 uppercase">
         Final score
       </div>
-      <div className="font-mono text-6xl font-black tabular-nums">{score}</div>
+      <div
+        data-testid="score"
+        className="font-mono text-6xl font-black tabular-nums"
+      >
+        {score}
+      </div>
+      <div className="mt-6 text-left">
+        <LeaderboardPanel framed={false} />
+      </div>
       <button
         data-testid="restart"
         onClick={onRestart}

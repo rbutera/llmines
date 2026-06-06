@@ -55,8 +55,10 @@ describe("rng / piece generation (3.3)", () => {
     const first = nextPiece(createGame(1).rngState)[1];
     let differs = false;
     for (let seed = 2; seed < 40; seed++) {
-      if (JSON.stringify(nextPiece(createGame(seed).rngState)[1]) !==
-        JSON.stringify(first)) {
+      if (
+        JSON.stringify(nextPiece(createGame(seed).rngState)[1]) !==
+        JSON.stringify(first)
+      ) {
         differs = true;
         break;
       }
@@ -150,10 +152,12 @@ describe("piece mechanics (4.x)", () => {
     }
     // Place piece resting on the wall of filled row to force overlap on rotate is
     // tricky; instead assert rotateCW returns a valid 2x2 footprint in free space.
-    const s = rotateCW(spawnPiece(base, [
-      [0, 1],
-      [1, 0],
-    ]));
+    const s = rotateCW(
+      spawnPiece(base, [
+        [0, 1],
+        [1, 0],
+      ]),
+    );
     expect(s.active?.cells).toEqual([
       [1, 0],
       [0, 1],

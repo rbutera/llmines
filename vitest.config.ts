@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     // Logic core is pure; jsdom only needed where DOM is touched. Default to node.
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "convex/**/*.test.ts"],
     globals: false,
   },
 });

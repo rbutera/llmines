@@ -5,6 +5,7 @@ import {
   GRAVITY_INTERVAL_MS,
   gravityStep,
   hardDrop,
+  SPAWN_HOLD_MS,
   lockPiece,
   moveLeft,
   moveRight,
@@ -16,17 +17,17 @@ import {
   spawnPiece,
   SWEEP_MS_PER_COL,
   type GameState,
+  type HoldState,
   type MarkedCell,
   type Piece,
   type PublicState,
 } from "../core";
 
-export type InputAction =
-  | "left"
-  | "right"
-  | "rotate"
-  | "softDrop"
-  | "hardDrop";
+export type InputAction = "left" | "right" | "rotate" | "softDrop" | "hardDrop";
+
+export interface InputOptions {
+  fresh?: boolean;
+}
 
 /** Rich per-frame snapshot for the renderer + React HUD. */
 export interface RenderState {
@@ -62,6 +63,7 @@ export class GameController {
   private rafId: number | null = null;
   private lastTs = 0;
   private gravityAccumMs = 0;
+  private holdRemainingMs = 0;
   private started = false;
 
   constructor(opts: ControllerOptions = {}) {
@@ -81,6 +83,7 @@ export class GameController {
     this.started = true;
     if (!this.testMode) {
       this.state = spawnNext(this.state);
+      this.startSpawnHold();
       this.startLoop();
     }
     this.emit();
@@ -99,6 +102,7 @@ export class GameController {
     this.stop();
     this.state = createGame(seed ?? 1);
     this.gravityAccumMs = 0;
+    this.holdRemainingMs = 0;
     this.start();
   }
 
@@ -140,8 +144,11 @@ export class GameController {
     // Music-synced sweep: continuous, snapshot-per-pass scoring.
     this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
 
+    const gravityDt = this.advanceHold(dtMs);
+    if (gravityDt <= 0) return;
+
     // Gravity on a fixed tick.
-    this.gravityAccumMs += dtMs;
+    this.gravityAccumMs += gravityDt;
     while (this.gravityAccumMs >= GRAVITY_INTERVAL_MS) {
       this.gravityAccumMs -= GRAVITY_INTERVAL_MS;
       this.gravityTickAndSpawn();
@@ -155,13 +162,19 @@ export class GameController {
     if (locked) {
       this.gravityAccumMs = 0;
       this.state = spawnNext(this.state); // production auto-spawns
+      this.startSpawnHold();
     }
   }
 
   // ---- player input (active only while playing) ----------------------------
 
-  input(action: InputAction): void {
+  input(action: InputAction, opts: InputOptions = {}): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
+    const fresh = opts.fresh ?? true;
+    if (this.isDropAction(action) && this.holdActive()) {
+      if (!fresh) return;
+      this.clearHold();
+    }
     switch (action) {
       case "left":
         this.state = moveLeft(this.state);
@@ -178,6 +191,7 @@ export class GameController {
         if (locked && !this.testMode) {
           this.gravityAccumMs = 0;
           this.state = spawnNext(this.state);
+          this.startSpawnHold();
         }
         break;
       }
@@ -186,6 +200,7 @@ export class GameController {
         if (!this.testMode) {
           this.gravityAccumMs = 0;
           this.state = spawnNext(this.state);
+          this.startSpawnHold();
         }
         break;
     }
@@ -213,6 +228,53 @@ export class GameController {
     return this.renderState();
   }
 
+  private isDropAction(action: InputAction): boolean {
+    return action === "softDrop" || action === "hardDrop";
+  }
+
+  private holdActive(): boolean {
+    return this.state.active !== null && this.holdRemainingMs > 0;
+  }
+
+  private holdState(): HoldState {
+    const active = this.holdActive();
+    return {
+      active,
+      remainingMs: active ? Math.ceil(this.holdRemainingMs) : 0,
+    };
+  }
+
+  private startSpawnHold(): void {
+    this.gravityAccumMs = 0;
+    this.holdRemainingMs = this.state.active ? SPAWN_HOLD_MS : 0;
+  }
+
+  private clearHold(): void {
+    this.holdRemainingMs = 0;
+    this.gravityAccumMs = 0;
+  }
+
+  /**
+   * Consume hold time before gravity can accumulate. Returns only the portion
+   * of dt that occurs after the hold has naturally lapsed.
+   */
+  private advanceHold(dtMs: number): number {
+    if (!this.holdActive()) {
+      if (!this.state.active) this.holdRemainingMs = 0;
+      return dtMs;
+    }
+
+    if (dtMs < this.holdRemainingMs) {
+      this.holdRemainingMs -= dtMs;
+      this.gravityAccumMs = 0;
+      return 0;
+    }
+
+    const leftoverMs = dtMs - this.holdRemainingMs;
+    this.clearHold();
+    return leftoverMs;
+  }
+
   // ---- deterministic test interface ---------------------------------------
   // These map directly to core ops and never run the production loop.
 
@@ -221,7 +283,7 @@ export class GameController {
   }
 
   testState(): PublicState {
-    return publicState(this.state);
+    return publicState(this.state, this.holdState());
   }
 
   testMarked(): MarkedCell[] {
@@ -233,13 +295,39 @@ export class GameController {
     if (this.state.active) this.state = lockPiece(this.state);
     this.started = true;
     this.state = spawnPiece(this.state, piece);
+    this.startSpawnHold();
     this.emit();
   }
 
-  /** One gravity step; NEVER auto-spawns. */
+  /** One deterministic gravity interval; NEVER auto-spawns. */
   testTick(): void {
-    const { state } = gravityStep(this.state);
-    this.state = state;
+    const gravityDt = this.advanceHold(GRAVITY_INTERVAL_MS);
+    this.gravityAccumMs += gravityDt;
+    if (this.gravityAccumMs >= GRAVITY_INTERVAL_MS) {
+      this.gravityAccumMs -= GRAVITY_INTERVAL_MS;
+      const { state } = gravityStep(this.state);
+      this.state = state;
+      if (!this.state.active) this.clearHold();
+    }
+    this.emit();
+  }
+
+  testPressSoftDrop(): void {
+    this.input("softDrop", { fresh: true });
+  }
+
+  testPressHardDrop(): void {
+    this.input("hardDrop", { fresh: true });
+  }
+
+  testEndGame(score: number): void {
+    this.clearHold();
+    this.state = {
+      ...this.state,
+      active: null,
+      score: Math.max(0, Math.floor(score)),
+      gameOver: true,
+    };
     this.emit();
   }
 

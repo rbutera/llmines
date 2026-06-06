@@ -1,6 +1,7 @@
 import { Application, Container, Graphics } from "pixi.js";
 import { COLS, ROWS, type Cell, type Grid } from "../core";
 import type { GameController, RenderState } from "../engine/controller";
+import { boundedActivePieceYOffset } from "./landing";
 
 const CELL = 40;
 const BOARD_W = COLS * CELL; // 640
@@ -261,7 +262,12 @@ export class PixiRenderer {
     g.clear();
     if (!rs.active) return;
     const { cells, pos } = rs.active;
-    const yOff = rs.fallProgress * CELL;
+    const yOff = boundedActivePieceYOffset(
+      rs.grid,
+      rs.active,
+      rs.fallProgress * CELL,
+      CELL,
+    );
     const map: [number, number, Cell][] = [
       [pos.row, pos.col, cells[0][0]],
       [pos.row, pos.col + 1, cells[0][1]],

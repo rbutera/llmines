@@ -21,6 +21,9 @@ export const SWEEP_SECONDS_PER_COL = SWEEP_SECONDS_PER_TRAVERSAL / COLS; // 0.25
 export const SWEEP_MS_PER_COL = SWEEP_SECONDS_PER_COL * 1000; // 250ms
 export const SWEEP_COLS_PER_SECOND = COLS / SWEEP_SECONDS_PER_TRAVERSAL; // 4 cols/s
 
+/** New pieces hold for one beat before normal gravity begins. */
+export const SPAWN_HOLD_MS = SECONDS_PER_BEAT * 1000; // 500ms
+
 /** Production gravity tick interval (ms). Not used in test mode. */
 export const GRAVITY_INTERVAL_MS = 700;
 /** Soft-drop gravity interval (ms) while soft-drop is engaged. */

@@ -1,6 +1,180 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
+  --font-sans:
+    var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+.score-feedback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  isolation: isolate;
+}
+
+.score-feedback-readout {
+  position: absolute;
+  top: 13%;
+  left: 50%;
+  min-width: 8rem;
+  transform: translateX(-50%);
+  text-align: center;
+  animation: score-pop 780ms cubic-bezier(0.18, 1.35, 0.24, 1) both;
+  filter: drop-shadow(0 0 16px rgb(255 242 168 / 0.65));
+  z-index: 3;
+}
+
+.score-feedback-value {
+  font-family:
+    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: clamp(2.5rem, 8vw, 5.75rem);
+  font-weight: 1000;
+  line-height: 0.9;
+  color: #fff7c8;
+  text-shadow:
+    0 0 10px rgb(255 242 168 / 0.95),
+    0 0 26px rgb(255 95 176 / 0.75),
+    0 3px 0 rgb(55 224 201 / 0.42);
+}
+
+.score-feedback-delta {
+  margin-top: 0.15rem;
+  font-family:
+    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: clamp(1rem, 3vw, 2rem);
+  font-weight: 900;
+  line-height: 1;
+  color: #37e0c9;
+  text-shadow:
+    0 0 8px rgb(55 224 201 / 0.95),
+    0 0 18px rgb(255 255 255 / 0.45);
+  animation: score-delta-float 920ms ease-out both;
+}
+
+.score-feedback-flash {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 28%, rgb(255 242 168 / 0.5), transparent 26%),
+    radial-gradient(circle at 50% 44%, rgb(255 95 176 / 0.22), transparent 36%),
+    linear-gradient(90deg, transparent, rgb(55 224 201 / 0.18), transparent);
+  mix-blend-mode: screen;
+  animation: score-flash 680ms ease-out both;
+  z-index: 1;
+}
+
+.score-feedback-burst {
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  z-index: 2;
+}
+
+.score-feedback-particle {
+  position: absolute;
+  width: var(--size);
+  height: var(--size);
+  border-radius: 999px;
+  background: #fff2a8;
+  box-shadow:
+    0 0 10px rgb(255 242 168 / 0.95),
+    0 0 18px rgb(55 224 201 / 0.6);
+  transform: translate(var(--x), var(--y));
+  animation: score-particle 860ms cubic-bezier(0.12, 0.84, 0.22, 1) both;
+}
+
+.score-feedback-particle:nth-child(3n) {
+  background: #37e0c9;
+}
+
+.score-feedback-particle:nth-child(3n + 2) {
+  background: #ff5fb0;
+}
+
+.score-feedback-intensity-2 .score-feedback-readout {
+  animation-duration: 900ms;
+  filter: drop-shadow(0 0 24px rgb(255 242 168 / 0.85));
+}
+
+.score-feedback-intensity-2 .score-feedback-flash {
+  animation-duration: 760ms;
+}
+
+.score-feedback-intensity-3 .score-feedback-readout {
+  animation-duration: 1050ms;
+  filter: drop-shadow(0 0 30px rgb(255 242 168 / 0.95));
+}
+
+.score-feedback-intensity-3 .score-feedback-flash {
+  animation-duration: 860ms;
+}
+
+@keyframes score-pop {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(12px) scale(0.55);
+  }
+  36% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-5px) scale(1.22);
+  }
+  64% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(0.96);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-22px) scale(1.06);
+  }
+}
+
+@keyframes score-delta-float {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.75);
+  }
+  22% {
+    opacity: 1;
+    transform: translateY(0) scale(1.14);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-36px) scale(1);
+  }
+}
+
+@keyframes score-flash {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  24% {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes score-particle {
+  0% {
+    opacity: 0;
+    transform: translate(var(--x), var(--y)) scale(0.25);
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(var(--x) + var(--dx)), calc(var(--y) + var(--dy)))
+      scale(1.2);
+  }
 }
