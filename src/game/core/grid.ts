@@ -118,3 +118,38 @@ export function settleColumn(grid: Grid, col: number): void {
   }
   for (; row >= 0; row--) grid[row]![col] = null;
 }
+
+/**
+ * Per-column gravity for a SINGLE column that ALSO carries a parallel boolean
+ * `marks` grid in lockstep, mutating both in place. A marked cell keeps its mark
+ * wherever gravity drops it; empty cells get a cleared mark. This is what makes
+ * sweep deletion identity-based: when a chain flood empties cells below other
+ * marked cells, those marks fall with their cells, so the bar later deletes the
+ * originally-marked cell at its NEW row, never an innocent cell that settled onto
+ * a stale snapshot row.
+ */
+export function settleColumnWithMarks(
+  grid: Grid,
+  marks: boolean[][],
+  col: number,
+): void {
+  const cells: Cell[] = [];
+  const cellMarks: boolean[] = [];
+  for (let row = 0; row < ROWS; row++) {
+    const cell = grid[row]![col] ?? null;
+    if (cell !== null) {
+      cells.push(cell);
+      cellMarks.push(marks[row]![col] ?? false);
+    }
+  }
+  let row = ROWS - 1;
+  for (let i = cells.length - 1; i >= 0; i--) {
+    grid[row]![col] = cells[i]!;
+    marks[row]![col] = cellMarks[i]!;
+    row--;
+  }
+  for (; row >= 0; row--) {
+    grid[row]![col] = null;
+    marks[row]![col] = false;
+  }
+}

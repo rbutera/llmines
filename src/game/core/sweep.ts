@@ -1,29 +1,42 @@
 import { chainFlood } from "./chain-clear";
-import { COLS, SKIN_ADVANCE_THRESHOLD } from "./constants";
+import { COLS, ROWS, SKIN_ADVANCE_THRESHOLD } from "./constants";
 import { computeMarked } from "./detect";
-import { cloneGrid, settle, settleColumn } from "./grid";
+import { cloneGrid, settle, settleColumnWithMarks } from "./grid";
 import { boardStateBonus, nextCombo, passScore } from "./scoring";
 import { SKINS } from "./skins";
 import type { GameState, Grid, SweepPass } from "./types";
 
-/** Snapshot the currently-marked cells (grouped by column) for a new pass. */
+/** A fresh ROWS x COLS boolean grid of `false`. */
+function emptyMarks(): boolean[][] {
+  return Array.from({ length: ROWS }, () =>
+    Array.from({ length: COLS }, () => false),
+  );
+}
+
+/**
+ * Snapshot the currently-marked cells as a ROWS x COLS boolean grid for a new
+ * pass. Marks are identity-based: the snapshot is taken once, but `marks` then
+ * travels with its cells through every per-column settle (`settleColumnWithMarks`)
+ * and is cleared for any cell a chain flood consumes. So deletion always targets
+ * the originally-marked cell at its CURRENT row, never a stale (row,col) that a
+ * later settle has refilled with an innocent cell.
+ */
 function startPass(grid: Grid): SweepPass {
   const { marked, distinctSquares } = computeMarked(grid);
-  const markedByCol: number[][] = Array.from({ length: COLS }, () => []);
-  for (const { row, col } of marked) markedByCol[col]!.push(row);
-  return { markedByCol, distinctSquares, deletedCount: 0, processedCols: 0 };
+  const marks = emptyMarks();
+  for (const { row, col } of marked) marks[row]![col] = true;
+  return { marks, distinctSquares, deletedCount: 0, processedCols: 0 };
 }
 
 /**
  * Deep-clone a pass so `advanceSweep` can mutate it without writing through to
- * the caller's `GameState.sweepPass`. The inner `markedByCol` arrays are the
- * live read surface for deletion, so they are copied too — a shallow copy would
- * still share them and leak mutations (`processedCols`/`deletedCount` aside).
- * Keeps the core a pure function of (state, columns): same input -> same output.
+ * the caller's `GameState.sweepPass`. The `marks` grid is the live read surface
+ * for deletion, so it is copied row-by-row — a shallow copy would share the rows
+ * and leak mutations. Keeps the core a pure function of (state, columns).
  */
 function clonePass(pass: SweepPass): SweepPass {
   return {
-    markedByCol: pass.markedByCol.map((rows) => rows.slice()),
+    marks: pass.marks.map((row) => row.slice()),
     distinctSquares: pass.distinctSquares,
     deletedCount: pass.deletedCount,
     processedCols: pass.processedCols,
@@ -31,13 +44,14 @@ function clonePass(pass: SweepPass): SweepPass {
 }
 
 /**
- * Delete this pass's snapshot-marked cells in a single column (mutates grid).
- * When a deleted cell carries a chain special, the SAME delete step also floods
- * every same-colour orthogonally-connected cell (one deterministic delete step
- * shared with the overlapping-2x2 square clears). Snapshot squares are already
- * counted via `pass.distinctSquares`; flooded-in extras clear but contribute
- * NOTHING to the score. The `specials` set is kept aligned: any consumed chain
- * cell is dropped.
+ * Delete this pass's marked cells in a single column (mutates grid + marks).
+ * Deletion reads the `marks` grid, NOT a fixed snapshot coordinate list, so a
+ * cell only dies if its mark is still set at its current row — flood-consumed
+ * cells have already had their marks cleared, and innocent cells never carried a
+ * mark. When a deleted cell carries a chain special, the SAME delete step floods
+ * every same-colour orthogonally-connected cell (clearing their marks too).
+ * Snapshot squares are counted via `pass.distinctSquares`; flooded-in extras
+ * clear but score NOTHING. The `specials` set is kept aligned.
  */
 function deleteColumn(
   grid: Grid,
@@ -46,8 +60,10 @@ function deleteColumn(
   specials: Set<number>,
 ): boolean {
   let flooded = false;
-  for (const row of pass.markedByCol[col]!) {
+  for (let row = 0; row < ROWS; row++) {
+    if (!pass.marks[row]![col]) continue;
     const colour = grid[row]![col] ?? null;
+    pass.marks[row]![col] = false;
     if (colour === null) continue;
     const coord = row * COLS + col;
     const isChain = specials.has(coord);
@@ -55,11 +71,11 @@ function deleteColumn(
     pass.deletedCount += 1;
     specials.delete(coord);
     // Chain activation (PSP-faithful): a chain cell is part of a cleared square
-    // (it was snapshot-marked), so it activates. Flood its connected same-colour
-    // region in this same step; extras score nothing. Only chain cells flood;
-    // ordinary square cells just clear.
+    // (it was marked), so it activates. Flood its connected same-colour region
+    // in this same step; extras score nothing. Only chain cells flood; ordinary
+    // square cells just clear.
     if (isChain) {
-      chainFlood(grid, coord, colour, specials);
+      chainFlood(grid, coord, colour, specials, pass.marks);
       flooded = true;
     }
   }
@@ -68,11 +84,13 @@ function deleteColumn(
 
 /**
  * Process a single column as the bar's leading edge crosses it: delete this
- * pass's snapshot-marked cells in that column (plus any chain floods they
- * trigger), then settle so cells above removed cells fall IMMEDIATELY (the
- * deferred-gravity fix). A chain flood can empty cells in other columns
- * (including ahead of the bar), so every column is settled here; per-column
- * gravity is independent, so this equals settling only the affected columns.
+ * pass's marked cells in that column (plus any chain floods), then settle so
+ * cells above removed cells fall IMMEDIATELY (the deferred-gravity fix). The
+ * settle moves the `marks` grid in lockstep with the cells, so marks for
+ * not-yet-processed columns follow their cells down. A chain flood can empty
+ * cells in other columns (including ahead of the bar), so every column is
+ * settled here; per-column gravity is independent, so this equals settling only
+ * the affected columns.
  */
 function processColumn(
   grid: Grid,
@@ -85,11 +103,11 @@ function processColumn(
     // A chain flood can empty cells in any column (including ahead of the bar),
     // so settle the whole grid. Per-column gravity is independent, so this is
     // equivalent to settling only the touched columns, just simpler.
-    for (let c = 0; c < COLS; c++) settleColumn(grid, c);
+    for (let c = 0; c < COLS; c++) settleColumnWithMarks(grid, pass.marks, c);
   } else {
     // No flood: only this column's stack changed; settle it alone (the original
     // deferred-gravity fix), keeping behaviour identical for non-chain passes.
-    settleColumn(grid, col);
+    settleColumnWithMarks(grid, pass.marks, col);
   }
 }
 

@@ -117,6 +117,85 @@ describe("chain flood-fill clear (shares the sweep delete step)", () => {
     expect(s.specials.size).toBe(0);
   });
 
+  /**
+   * REGRESSION (Codex review gate): chain flood + mid-pass settle must NOT delete
+   * innocent cells in not-yet-processed columns.
+   *
+   * Mechanism of the original bug: the pass snapshotted raw (row,col) marks. When
+   * the bar processed the chain column, the flood cleared a same-colour strip
+   * AHEAD of the bar and the grid settled, dropping innocent cells into the snapshot
+   * rows of a later column; when the bar reached that column it deleted those stale
+   * rows — destroying innocent cells. Fixed by making marks identity-based: marks
+   * fall with their cells through every per-column settle and are cleared for any
+   * cell a flood consumes, so deletion only ever removes an originally-marked cell.
+   */
+  it("flood+settle does not delete innocent cells in a later column (Codex repro)", () => {
+    const base = createGame();
+    // colour-0 strip cols 0-3, rows 8-9 -> 3 distinct squares (cols 0-1,1-2,2-3).
+    for (let c = 0; c <= 3; c++) {
+      base.grid[8]![c] = 0;
+      base.grid[9]![c] = 0;
+    }
+    // chain special on the strip's bottom-left square.
+    base.specials = new Set([8 * COLS + 0]);
+    // innocent colour-1 cells stacked above col 3 (rows 5,6,7) — never part of any
+    // square, must survive untouched.
+    base.grid[5]![3] = 1;
+    base.grid[6]![3] = 1;
+    base.grid[7]![3] = 1;
+
+    const s = advanceSweep(base, COLS); // full traversal
+
+    // All 3 innocent colour-1 cells survive (settled to the floor of col 3).
+    let ones = 0;
+    for (let r = 0; r < ROWS; r++) if (s.grid[r]![3] === 1) ones++;
+    expect(ones).toBe(3);
+    // All colour-0 is gone (flood consumed the whole connected strip).
+    let zeros = 0;
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++) if (s.grid[r]![c] === 0) zeros++;
+    expect(zeros).toBe(0);
+    // Score = 3 squares x 40 = 120, PLUS the single-colour bonus (1,000): clearing
+    // all colour-0 legitimately leaves a single-colour (colour-1) board, so the
+    // bonus is correct and is NOT a corruption artifact — the same board WITHOUT a
+    // chain special clears the same 3 squares and ends single-colour too. The bug
+    // never inflated the *score*; it corrupted the *board* (and deleting innocents
+    // happened to keep it single-colour for a different reason). See the
+    // multi-colour variant below for the clean 120-only assertion.
+    expect(s.score).toBe(120 + SINGLE_COLOUR_BONUS);
+  });
+
+  it("flood+settle leaves a multi-colour board: pure 3x40=120, no bonus (Codex repro, isolated)", () => {
+    const base = createGame();
+    // Same flooding colour-0 strip (3 squares), same chain special.
+    for (let c = 0; c <= 3; c++) {
+      base.grid[8]![c] = 0;
+      base.grid[9]![c] = 0;
+    }
+    base.specials = new Set([8 * COLS + 0]);
+    // Innocent colour-1 cells above col 3 (will be deleted by the bug).
+    base.grid[5]![3] = 1;
+    base.grid[6]![3] = 1;
+    base.grid[7]![3] = 1;
+    // A second, different innocent colour far away so the FINAL board is
+    // multi-colour -> no single-colour bonus -> the score isolates the square
+    // score alone. This survivor is what the corruption-free path must preserve.
+    base.grid[9]![10] = 0; // lone colour-0, NOT connected to the strip
+    base.grid[9]![11] = 1; // lone colour-1 neighbour keeps it multi-colour
+
+    const s = advanceSweep(base, COLS);
+
+    // Innocent col-3 ones survive.
+    let ones = 0;
+    for (let r = 0; r < ROWS; r++) if (s.grid[r]![3] === 1) ones++;
+    expect(ones).toBe(3);
+    // The far lone cells survive (not part of any square, not flood-connected).
+    expect(s.grid[9]![10]).toBe(0);
+    expect(s.grid[9]![11]).toBe(1);
+    // Multi-colour board -> no bonus. Pure square score: 3 x 40 = 120.
+    expect(s.score).toBe(120);
+  });
+
   it("leaves an unrelated other-colour region untouched (and scores its bonus)", () => {
     const base = chainBoard(4); // 0-region cols 0..4
     // a separate single 1 cell far away survives the flood.

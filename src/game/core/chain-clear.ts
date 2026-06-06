@@ -15,14 +15,18 @@ import type { Color, Grid } from "./types";
  * re-trigger). Flooded-in extras contribute nothing to the score — the caller
  * never counts them toward `distinctSquares`.
  *
- * Mutates `grid` and `specials` in place. Order-independent in result (the
- * connected component is a set).
+ * Mutates `grid`, `specials`, and (when supplied) the parallel `marks` grid in
+ * place. Clearing flooded cells' marks is what keeps sweep deletion identity-
+ * based: a snapshot square whose cells a flood pre-consumes loses its marks, so
+ * when the bar later reaches that square's column there is nothing stale left to
+ * delete. Order-independent in result (the connected component is a set).
  */
 export function chainFlood(
   grid: Grid,
   coord: number,
   colour: Color,
   specials: Set<number>,
+  marks?: boolean[][],
 ): void {
   // Seed the flood from the chain cell's orthogonal neighbours, since the chain
   // cell itself is already null. Any neighbour of the chain colour anchors the
@@ -48,5 +52,6 @@ export function chainFlood(
     const cc = c % COLS;
     grid[r]![cc] = null;
     specials.delete(c);
+    if (marks) marks[r]![cc] = false;
   }
 }

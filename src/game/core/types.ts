@@ -62,8 +62,15 @@ export interface MarkResult {
  * exposed by the test `state()`.
  */
 export interface SweepPass {
-  /** Snapshot: rows marked for deletion, grouped by column. */
-  markedByCol: number[][];
+  /**
+   * Snapshot of which cells are marked for deletion, as a ROWS x COLS boolean
+   * grid (`marks[row][col]`). Identity-based, NOT a fixed (row,col) list: when a
+   * chain flood empties cells and the column settles, the marks fall with their
+   * cells (mark-aware settle), so the bar always deletes the originally-marked
+   * cell wherever gravity has since moved it — never an innocent cell that
+   * happened to land on a stale snapshot row.
+   */
+  marks: boolean[][];
   /** Snapshot: distinct completed 2x2 squares present at pass start. */
   distinctSquares: number;
   /** Cells actually deleted so far this pass. */
