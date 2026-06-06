@@ -3,6 +3,14 @@ import { expect, test, type Page } from "@playwright/test";
 type Color = 0 | 1;
 type Cell = Color | null;
 type Piece = [[Color, Color], [Color, Color]];
+
+/**
+ * Local view of the state shape these e2e assertions read. The real
+ * `window.__lumines.state()` (declared in src/game/test-api/install.ts) returns
+ * a wider `PublicState`; this is a structural subset for convenience. The global
+ * `Window.__lumines` augmentation comes from install.ts — not re-declared here,
+ * to avoid two conflicting declarations of the same global property.
+ */
 interface State {
   grid: Cell[][];
   score: number;
@@ -10,21 +18,6 @@ interface State {
   sweepX: number;
   /** Additive (lumines-grid-and-sweep): distinct completed 2x2 squares. */
   distinctSquares: number;
-}
-
-declare global {
-  interface Window {
-    __lumines?: {
-      seed(n: number): void;
-      state(): State;
-      marked(): { row: number; col: number }[];
-      spawn(piece: Piece): void;
-      tick(): void;
-      sweepNow(): void;
-      sweepProgress(dtMs: number): void;
-      clockAdvance(dtMs: number): void;
-    };
-  }
 }
 
 const MONO_A: Piece = [

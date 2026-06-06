@@ -1,5 +1,6 @@
 import {
   advanceSweep,
+  COLS,
   COLS_PER_BEAT,
   computeMarked,
   createGame,
@@ -44,6 +45,12 @@ export interface RenderState {
   gameOver: boolean;
   sweepX: number;
   marked: MarkedCell[];
+  /** Additive (render-only): the next pieces for the preview panel. */
+  queue: GameState["queue"];
+  /** Additive (render-only): current skin index for palette/theme swap. */
+  skinIndex: number;
+  /** Additive (render-only): active BPM (drives the sweep, shown in the HUD). */
+  bpm: number;
 }
 
 export interface ControllerOptions {
@@ -358,6 +365,9 @@ export class GameController {
       gameOver: this.state.gameOver,
       sweepX: this.state.sweepX,
       marked: computeMarked(this.state.grid).marked,
+      queue: this.state.queue,
+      skinIndex: this.state.skinIndex,
+      bpm: skinBpm(this.state.skinIndex),
     };
   }
 
@@ -413,6 +423,37 @@ export class GameController {
     const grid = this.state.grid.map((r) => r.slice());
     grid[row]![col] = color;
     this.state = { ...this.state, grid };
+  }
+
+  /**
+   * Test-only: mark a settled cell as carrying a chain special (additive).
+   * Coordinate is `row * COLS + col`, matching `state().specials`. Lets a test
+   * set up a chain activation deterministically without driving an RNG special
+   * through gravity. Does not emit.
+   */
+  testSetSpecial(row: number, col: number): void {
+    const specials = new Set(this.state.specials);
+    specials.add(row * COLS + col);
+    this.state = { ...this.state, specials };
+  }
+
+  /**
+   * Test-only: set the current skin index directly (additive). The active BPM in
+   * `state()` follows it. Lets a test assert BPM-driven sweep speed without
+   * clearing enough squares to advance naturally.
+   */
+  testSetSkin(index: number): void {
+    this.state = { ...this.state, skinIndex: index };
+    this.emit();
+  }
+
+  /**
+   * Test-only: the raw GameState (additive). Exposes internal counters the
+   * public projection omits (e.g. `clearsInSkin`) so progression tests can
+   * assert the per-skin counter reset deterministically.
+   */
+  testRawState(): GameState {
+    return this.state;
   }
 
   /** One gravity step; NEVER auto-spawns. */

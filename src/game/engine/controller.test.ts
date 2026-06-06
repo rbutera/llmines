@@ -301,3 +301,112 @@ describe("Production clock→dt path: suspended + re-suspend", () => {
     c.stop();
   });
 });
+
+describe("Skin / BPM-driven sweep progression (9.x)", () => {
+  const SEC_PER_EIGHTH = 60 / BPM / 2;
+  const MS_PER_EIGHTH = SEC_PER_EIGHTH * 1000;
+
+  function primed(): GameController {
+    const c = new GameController({ testMode: true, seed: 1 });
+    c.testBeatFrame(MS_PER_EIGHTH); // establish the baseline frame
+    return c;
+  }
+
+  it("9.1 a higher-BPM skin advances more columns per second of clock time", () => {
+    // Skin 0 = 120 BPM. Advance one eighth-note -> exactly one column.
+    const slow = primed();
+    const slowBefore = slow.testState().sweepX;
+    slow.testBeatFrame(MS_PER_EIGHTH);
+    const slowDelta = slow.testState().sweepX - slowBefore;
+    expect(slowDelta).toBeCloseTo(1, 6);
+
+    // Switch to skin 1 (144 BPM) at a bar boundary (sweepX wrapped to 0 first).
+    const fast = primed();
+    // Run a full pass so sweepX returns to ~0, then set the faster skin so it
+    // latches at the next bar.
+    fast.testBeatFrame(16 * MS_PER_EIGHTH);
+    fast.testSetSkin(1);
+    const bpm1 = fast.testState().bpm;
+    expect(bpm1).toBe(144);
+    const fastBefore = fast.testState().sweepX;
+    fast.testBeatFrame(MS_PER_EIGHTH);
+    const fastDelta = fast.testState().sweepX - fastBefore;
+    // Same clock dt, higher BPM -> more columns advanced.
+    expect(fastDelta).toBeGreaterThan(slowDelta);
+    expect(fastDelta).toBeCloseTo(144 / 120, 6);
+  });
+
+  it("9.2 crossing the squares-cleared threshold advances skinIndex and resets the counter", () => {
+    const c = new GameController({ testMode: true, seed: 1 });
+    // Build a 3x11 mono block on the floor = 20 squares (the threshold).
+    for (let r = ROWS - 3; r < ROWS; r++) {
+      for (let col = 0; col < 11; col++) c.testSetCell(r, col, 0);
+    }
+    expect(c.testState().skinIndex).toBe(0);
+    c.testSweepNow();
+    expect(c.testState().skinIndex).toBe(1);
+    expect(c.testRawState().clearsInSkin).toBe(0);
+  });
+
+  it("9.4 a mid-pass skin (BPM) change does not discontinuously jump the bar", () => {
+    const c = primed();
+    // Advance a few columns into the pass (well short of the wrap).
+    c.testBeatFrame(3 * MS_PER_EIGHTH);
+    const xBefore = c.testState().sweepX;
+    expect(xBefore).toBeGreaterThan(0);
+    expect(xBefore).toBeLessThan(COLS - 1);
+    // Change the skin (and BPM) mid-pass.
+    c.testSetSkin(2); // 168 BPM
+    // The next frame with dt=0 must NOT move the bar at all (no jump from the
+    // tempo change itself); the new tempo only takes effect from the next bar.
+    c.testBeatFrame(0);
+    expect(c.testState().sweepX).toBeCloseTo(xBefore, 6);
+    // And a tiny further advance is continuous (no discontinuous leap): the bar
+    // moves by roughly one column for one eighth-note even mid-pass, because the
+    // active BPM is still the latched (pre-change) tempo until the next bar.
+    c.testBeatFrame(MS_PER_EIGHTH);
+    const moved = c.testState().sweepX - xBefore;
+    expect(moved).toBeGreaterThan(0);
+    expect(moved).toBeLessThan(2); // continuous, not a jump
+  });
+
+  it("9.3 same inputs advance skins reproducibly (deterministic)", () => {
+    function run(): { skin: number; clears: number } {
+      const c = new GameController({ testMode: true, seed: 1 });
+      for (let r = ROWS - 3; r < ROWS; r++) {
+        for (let col = 0; col < 11; col++) c.testSetCell(r, col, 0);
+      }
+      c.testSweepNow();
+      return {
+        skin: c.testState().skinIndex,
+        clears: c.testRawState().clearsInSkin,
+      };
+    }
+    expect(run()).toEqual(run());
+  });
+});
+
+describe("Specials via the test seam (5.5)", () => {
+  it("setSpecial places a chain cell that surfaces in state().specials", () => {
+    const c = new GameController({ testMode: true, seed: 1 });
+    c.testSetCell(ROWS - 1, 0, 0);
+    c.testSetSpecial(ROWS - 1, 0);
+    expect(c.testState().specials).toContain((ROWS - 1) * COLS + 0);
+  });
+
+  it("a chain in a cleared square floods its connected region via the seam", () => {
+    const c = new GameController({ testMode: true, seed: 1 });
+    // mono-0 square cols 0-1 + same-colour tail to col 6, chain on (ROWS-1,0).
+    c.testSetCell(ROWS - 1, 0, 0);
+    c.testSetCell(ROWS - 1, 1, 0);
+    c.testSetCell(ROWS - 2, 0, 0);
+    c.testSetCell(ROWS - 2, 1, 0);
+    for (let col = 2; col <= 6; col++) c.testSetCell(ROWS - 1, col, 0);
+    c.testSetSpecial(ROWS - 1, 0);
+    c.testSweepNow();
+    for (let col = 0; col <= 6; col++) {
+      expect(c.testState().grid[ROWS - 1]![col]).toBe(null);
+    }
+    expect(c.testState().specials).toHaveLength(0);
+  });
+});

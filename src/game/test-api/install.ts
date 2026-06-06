@@ -15,6 +15,10 @@ export interface LuminesTestApi {
    * frame. In addition to (not a replacement for) `sweepProgress`.
    */
   clockAdvance(dtMs: number): void;
+  /** Additive: mark a settled cell as a chain special (coord = row*COLS+col). */
+  setSpecial(row: number, col: number): void;
+  /** Additive: set the current skin index (active BPM follows it). */
+  setSkin(index: number): void;
 }
 
 declare global {
@@ -39,6 +43,8 @@ export function installTestApi(controller: GameController): () => void {
     sweepNow: () => controller.testSweepNow(),
     sweepProgress: (dtMs) => controller.testSweepProgress(dtMs),
     clockAdvance: (dtMs) => controller.testClockAdvance(dtMs),
+    setSpecial: (row, col) => controller.testSetSpecial(row, col),
+    setSkin: (index) => controller.testSetSkin(index),
   };
   window.__lumines = api;
   return () => {

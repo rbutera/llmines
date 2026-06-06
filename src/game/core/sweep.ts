@@ -47,7 +47,7 @@ function deleteColumn(
 ): boolean {
   let flooded = false;
   for (const row of pass.markedByCol[col]!) {
-    const colour = grid[row]![col];
+    const colour = grid[row]![col] ?? null;
     if (colour === null) continue;
     const coord = row * COLS + col;
     const isChain = specials.has(coord);

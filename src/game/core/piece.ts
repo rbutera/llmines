@@ -5,7 +5,7 @@ import {
   SPAWN_ROW,
   SPECIAL_RATE,
 } from "./constants";
-import { cloneGrid, inBounds, pieceCells, settle } from "./grid";
+import { cloneGrid, inBounds, pieceCells } from "./grid";
 import { nextBit, nextFloat } from "./rng";
 import type {
   ActivePiece,

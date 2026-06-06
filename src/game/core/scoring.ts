@@ -7,7 +7,7 @@ import {
   SINGLE_COLOUR_BONUS,
   SQUARE_BASE_SCORE,
 } from "./constants";
-import type { Grid } from "./types";
+import type { Cell, Grid } from "./types";
 
 /**
  * Faithful Lumines pass score. Replaces the prior `deletedCount * distinctSquares`
@@ -44,11 +44,11 @@ export function nextCombo(combo: number, squares: number): number {
  */
 export function boardStateBonus(grid: Grid): number {
   let count = 0;
-  let colour: number | null = null;
+  let colour: Cell = null;
   let multiColour = false;
   for (let row = 0; row < ROWS; row++) {
     for (let col = 0; col < COLS; col++) {
-      const cell = grid[row]![col];
+      const cell: Cell = grid[row]![col] ?? null;
       if (cell === null) continue;
       count += 1;
       if (colour === null) colour = cell;
