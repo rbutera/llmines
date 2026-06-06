@@ -97,6 +97,10 @@ export class GameController {
     if (this.started) return;
     this.started = true;
     if (!this.testMode) {
+      // The Start click IS the user gesture: resume the AudioContext here so
+      // musical time starts immediately, rather than waiting for the first
+      // keyboard input (otherwise now() stays 0, dt stays 0, board frozen).
+      this.resumeClockOnFirstGesture();
       this.state = spawnNext(this.state);
       this.startLoop();
     }
@@ -117,6 +121,10 @@ export class GameController {
     this.state = createGame(seed ?? 1);
     this.gravityAccumMs = 0;
     this.lastClockNow = 0;
+    // Re-arm the gesture-resume so start() resumes the context again. The
+    // AudioContext itself is already running, so resume() is a cheap no-op, but
+    // the flag must not short-circuit the start() path.
+    this.clockResumed = false;
     this.start();
   }
 
@@ -139,20 +147,42 @@ export class GameController {
     this.lastClockNow = 0;
     const frame = (): void => {
       if (!this.started) return;
-      // Time comes ONLY from the injected clock (seconds). dt is the elapsed
-      // wall/musical time since the previous frame, converted to ms so the
-      // existing dtMs-based sweep/gravity path is byte-identical to before.
-      const now = this.clock.now();
-      if (this.lastClockNow === 0) this.lastClockNow = now;
-      const dt = Math.min((now - this.lastClockNow) * 1000, 100); // clamp tab-out jumps
-      this.lastClockNow = now;
-      this.advance(dt);
-      this.emit();
+      this.runFrame();
       if (this.started && !this.state.gameOver) {
         this.rafId = requestAnimationFrame(frame);
       }
     };
     this.rafId = requestAnimationFrame(frame);
+  }
+
+  /**
+   * One production frame: derive dt from the injected clock and advance. Time
+   * comes ONLY from the clock (seconds); dt is the elapsed musical time since
+   * the previous frame, converted to ms so the existing dtMs-based sweep/gravity
+   * path is byte-identical to before. Extracted so the clock-derive-dt path is
+   * unit-testable without rAF (see testProductionFrame).
+   */
+  private runFrame(): void {
+    const now = this.clock.now();
+    // A suspended AudioContext reports now() === 0. This happens on the first
+    // pre-resume frame, on the baseline-establishing frame right after resume,
+    // AND on a re-suspend after running (tab backgrounding / iOS interrupt).
+    // In every one of those cases treat dt as 0 and (re)set the baseline:
+    //   - now <= 0            → suspended (pre-resume or re-suspend)
+    //   - lastClockNow <= 0   → first valid reading, no usable prior baseline
+    //   - now < lastClockNow  → clock went backwards (defensive)
+    // Without this, (0 - lastClockNow) would be a large NEGATIVE dt that runs
+    // the sweep backwards (sweepX) and drives gravityAccumMs negative.
+    let dt: number;
+    if (now <= 0 || this.lastClockNow <= 0 || now < this.lastClockNow) {
+      dt = 0;
+    } else {
+      // Normal monotonic case: byte-identical to before (seconds→ms, 100ms clamp).
+      dt = Math.min((now - this.lastClockNow) * 1000, 100); // clamp tab-out jumps
+    }
+    this.lastClockNow = now;
+    this.advance(dt);
+    this.emit();
   }
 
   /** Advance production timing by dt ms: sweep + gravity + auto-spawn. */
@@ -256,6 +286,15 @@ export class GameController {
     return this.clock;
   }
 
+  /**
+   * Test-only: the raw gravity accumulator (ms). Exposed so tests can assert it
+   * never goes NEGATIVE — a negative accumulator (from a negative dt on
+   * re-suspend) stalls gravity and is hidden by the clamp in renderState().
+   */
+  testGravityAccumMs(): number {
+    return this.gravityAccumMs;
+  }
+
   // ---- deterministic test interface ---------------------------------------
   // These map directly to core ops and never run the production loop.
 
@@ -305,6 +344,16 @@ export class GameController {
    * the clock seam, so audio-driven timing is testable the same way. Requires a
    * clock that supports `advance` (the default test-mode {@link FakeClock}).
    */
+  /**
+   * Test-only: run exactly one production frame (the {@link runFrame} path that
+   * derives dt from successive `clock.now()` readings), WITHOUT requestAnimation-
+   * Frame. Lets tests exercise the real production clock→dt→advance pipeline —
+   * including the suspended (now()===0) and re-suspend cases — deterministically.
+   */
+  testProductionFrame(): void {
+    this.runFrame();
+  }
+
   testClockAdvance(dtMs: number): void {
     const c = this.clock as Clock & { advance?: (seconds: number) => void };
     if (typeof c.advance !== "function") {

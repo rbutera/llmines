@@ -57,7 +57,7 @@ export function createAudioClock(): AudioClock {
       return ctx.currentTime;
     },
     resume(): void {
-      if (ctx && ctx.state === "suspended") {
+      if (ctx?.state === "suspended") {
         void ctx.resume();
       }
     },
