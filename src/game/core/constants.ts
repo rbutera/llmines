@@ -26,5 +26,14 @@ export const GRAVITY_INTERVAL_MS = 700;
 /** Soft-drop gravity interval (ms) while soft-drop is engaged. */
 export const SOFT_DROP_INTERVAL_MS = 60;
 
+/**
+ * New-block hold window (ms): a freshly spawned block holds at the top — a
+ * deliberate "ready to place" beat — before gravity begins. One beat (0.5s),
+ * music-synced so the hold lands on the tempo. A held fast/slow-fall key does
+ * NOT carry across this hold; the player must re-press to fast-fall the new
+ * block. The hold lapses to normal gravity if no fresh press arrives.
+ */
+export const HOLD_MS = SECONDS_PER_BEAT * 1000; // 500ms
+
 /** Backing track URL (served from public/). */
 export const BACKING_TRACK_URL = "/backing-track.mp3";

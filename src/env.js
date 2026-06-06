@@ -8,6 +8,15 @@ export const env = createEnv({
    */
   server: {
     NODE_ENV: z.enum(["development", "test", "production"]),
+    /**
+     * NextAuth (Auth.js v5). Optional so the app builds/runs without auth
+     * configured (e.g. the deterministic test build, which mocks auth). Auth.js
+     * reads AUTH_GOOGLE_ID / AUTH_GOOGLE_SECRET for the Google provider and
+     * AUTH_SECRET for JWT signing by convention.
+     */
+    AUTH_SECRET: z.string().optional(),
+    AUTH_GOOGLE_ID: z.string().optional(),
+    AUTH_GOOGLE_SECRET: z.string().optional(),
   },
 
   /**
@@ -22,6 +31,12 @@ export const env = createEnv({
      * normal/production builds — no test hooks are exposed.
      */
     NEXT_PUBLIC_TEST_MODE: z.enum(["0", "1"]).optional(),
+    /**
+     * Convex deployment URL for the real backend. Optional: unset in the
+     * deterministic test build (which uses an in-memory mock), required for the
+     * real-Convex production pass.
+     */
+    NEXT_PUBLIC_CONVEX_URL: z.string().url().optional(),
   },
 
   /**
@@ -30,7 +45,11 @@ export const env = createEnv({
    */
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
+    AUTH_SECRET: process.env.AUTH_SECRET,
+    AUTH_GOOGLE_ID: process.env.AUTH_GOOGLE_ID,
+    AUTH_GOOGLE_SECRET: process.env.AUTH_GOOGLE_SECRET,
     NEXT_PUBLIC_TEST_MODE: process.env.NEXT_PUBLIC_TEST_MODE,
+    NEXT_PUBLIC_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

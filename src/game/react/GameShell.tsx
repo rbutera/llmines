@@ -6,8 +6,12 @@ import { GameController } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
 import { installTestApi } from "../test-api/install";
+import { AccountBar } from "../account/AccountBar";
+import { useAuth, useScores } from "../account/context";
+import { Leaderboard } from "../account/Leaderboard";
 import { ControlsCheatsheet } from "./ControlsCheatsheet";
 import { GameCanvas } from "./GameCanvas";
+import { ScoreFx } from "./ScoreFx";
 
 type Phase = "start" | "playing" | "gameover";
 
@@ -23,6 +27,23 @@ export function GameShell() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const phaseRef = useRef<Phase>("start");
   phaseRef.current = phase;
+
+  const { user } = useAuth();
+  const { submitScore } = useScores();
+  const submittedRef = useRef(false);
+
+  // On game over, persist the run's score for the signed-in player (the same
+  // path a deterministic `window.__lumines.endGame` takes). Unauthenticated
+  // runs are never submitted. Guarded so each game over submits at most once.
+  useEffect(() => {
+    if (phase !== "gameover") {
+      submittedRef.current = false;
+      return;
+    }
+    if (submittedRef.current) return;
+    submittedRef.current = true;
+    if (user) void submitScore(score);
+  }, [phase, user, submitScore, score]);
 
   // Create the controller on the client; wire subscription + test interface.
   useEffect(() => {
@@ -47,7 +68,10 @@ export function GameShell() {
       const action = keyToAction(e);
       if (!action) return;
       e.preventDefault();
-      controller.input(action);
+      // A held key emits repeat=true keydowns; only repeat=false is a fresh,
+      // deliberate press. This lets a soft/hard-drop release the new-block hold
+      // only on a genuine re-press — a key held across a lock does not carry.
+      controller.input(action, { fresh: !e.repeat });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -98,13 +122,16 @@ export function GameShell() {
 
 function Header() {
   return (
-    <div className="mb-6 flex items-end justify-between">
-      <h1 className="bg-gradient-to-r from-[#37e0c9] to-[#ff5fb0] bg-clip-text text-3xl font-black tracking-tight text-transparent sm:text-4xl">
-        LLMines
-      </h1>
-      <span className="text-xs tracking-widest text-white/40 uppercase">
-        a lumines-like
-      </span>
+    <div className="mb-6 flex items-center justify-between gap-4">
+      <div className="flex items-baseline gap-3">
+        <h1 className="bg-gradient-to-r from-[#37e0c9] to-[#ff5fb0] bg-clip-text text-3xl font-black tracking-tight text-transparent sm:text-4xl">
+          LLMines
+        </h1>
+        <span className="hidden text-xs tracking-widest text-white/40 uppercase sm:inline">
+          a lumines-like
+        </span>
+      </div>
+      <AccountBar />
     </div>
   );
 }
@@ -133,7 +160,10 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           Start game
         </button>
       </div>
-      <ControlsCheatsheet />
+      <div className="flex flex-col gap-4">
+        <ControlsCheatsheet />
+        <Leaderboard />
+      </div>
     </section>
   );
 }
@@ -150,7 +180,12 @@ function PlayingScreen({
       aria-label="Game"
       className="grid items-start gap-6 md:grid-cols-[1fr_240px]"
     >
-      <GameCanvas controller={controller} />
+      <div className="relative">
+        <GameCanvas controller={controller} />
+        {/* Juicy in-view scoring feedback; the authoritative score stays in the
+            HUD aside below (data-testid="score"). */}
+        <ScoreFx score={score} />
+      </div>
       <aside className="flex flex-col gap-4">
         <div className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur">
           <div className="text-xs tracking-widest text-white/50 uppercase">
@@ -178,25 +213,32 @@ function GameOverScreen({
 }) {
   return (
     <section
-      data-testid="game-over"
       aria-label="Game over"
-      className="mx-auto max-w-md rounded-2xl border border-white/10 bg-white/5 p-10 text-center backdrop-blur"
+      className="mx-auto grid max-w-3xl items-start gap-6 md:grid-cols-[1fr_280px]"
     >
-      <h2 className="text-3xl font-black tracking-tight text-[#ff5fb0]">
-        Game over
-      </h2>
-      <div className="mt-6 text-xs tracking-widest text-white/50 uppercase">
-        Final score
-      </div>
-      <div className="font-mono text-6xl font-black tabular-nums">{score}</div>
-      <button
-        data-testid="restart"
-        onClick={onRestart}
-        autoFocus
-        className="mt-8 rounded-xl bg-gradient-to-r from-[#ff5fb0] to-[#c93f87] px-8 py-3 text-lg font-bold text-white shadow-lg transition hover:brightness-110 focus:ring-4 focus:ring-[#ff5fb0]/40 focus:outline-none"
+      <div
+        data-testid="game-over"
+        className="rounded-2xl border border-white/10 bg-white/5 p-10 text-center backdrop-blur"
       >
-        Play again
-      </button>
+        <h2 className="text-3xl font-black tracking-tight text-[#ff5fb0]">
+          Game over
+        </h2>
+        <div className="mt-6 text-xs tracking-widest text-white/50 uppercase">
+          Final score
+        </div>
+        <div className="font-mono text-6xl font-black tabular-nums">
+          {score}
+        </div>
+        <button
+          data-testid="restart"
+          onClick={onRestart}
+          autoFocus
+          className="mt-8 rounded-xl bg-gradient-to-r from-[#ff5fb0] to-[#c93f87] px-8 py-3 text-lg font-bold text-white shadow-lg transition hover:brightness-110 focus:ring-4 focus:ring-[#ff5fb0]/40 focus:outline-none"
+        >
+          Play again
+        </button>
+      </div>
+      <Leaderboard />
     </section>
   );
 }

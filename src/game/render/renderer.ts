@@ -262,6 +262,11 @@ export class PixiRenderer {
     if (!rs.active) return;
     const { cells, pos } = rs.active;
     const yOff = rs.fallProgress * CELL;
+    // During the spawn hold the block is "armed" at the top: a brighter,
+    // pulsing glow reads as a deliberate "ready to place" beat (not a stall).
+    const glow = rs.hold.active
+      ? 0.55 + 0.35 * (0.5 + 0.5 * Math.sin(this.clock / 90))
+      : 0.4;
     const map: [number, number, Cell][] = [
       [pos.row, pos.col, cells[0][0]],
       [pos.row, pos.col + 1, cells[0][1]],
@@ -269,7 +274,7 @@ export class PixiRenderer {
       [pos.row + 1, pos.col + 1, cells[1][1]],
     ];
     for (const [row, col, color] of map) {
-      this.cellRect(g, col, row, yOff, color, { glow: 0.4 });
+      this.cellRect(g, col, row, yOff, color, { glow });
     }
   }
 

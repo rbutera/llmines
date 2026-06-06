@@ -4,6 +4,7 @@ import { type Metadata } from "next";
 import { Geist } from "next/font/google";
 
 import { TRPCReactProvider } from "~/trpc/react";
+import { AccountProvider } from "~/game/account/AccountProvider";
 
 export const metadata: Metadata = {
   title: "LLMines",
@@ -22,7 +23,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geist.variable}`}>
       <body>
-        <TRPCReactProvider>{children}</TRPCReactProvider>
+        <TRPCReactProvider>
+          <AccountProvider>{children}</AccountProvider>
+        </TRPCReactProvider>
       </body>
     </html>
   );

@@ -1,15 +1,40 @@
-import type { Piece, PublicState } from "../core";
-import type { GameController } from "../engine/controller";
+import type { Piece } from "../core";
+import { mockStore } from "../account/mock-store";
+import type { GameController, PublicTestState } from "../engine/controller";
+
+/** Deterministic mock-auth seam (TEST_MODE only). */
+export interface LuminesTestAuth {
+  /**
+   * Mock-authenticate as this identity. `subject` is the stable id the server
+   * derives the player from (`ctx.auth.getUserIdentity()`), never a
+   * client-trusted arg — here it identifies the mock player's leaderboard row.
+   */
+  signIn(identity: { name: string; subject: string }): void;
+  /** Return to the unauthenticated state. */
+  signOut(): void;
+}
 
 /** The deterministic interface exposed at `window.__lumines` in test mode. */
 export interface LuminesTestApi {
   seed(n: number): void;
-  state(): PublicState;
+  state(): PublicTestState;
   marked(): { row: number; col: number }[];
   spawn(piece: Piece): void;
   tick(): void;
   sweepNow(): void;
   sweepProgress(dtMs: number): void;
+  /** Simulate a FRESH, deliberate soft-drop press (releases the spawn hold). */
+  pressSoftDrop(): void;
+  /** Simulate a FRESH, deliberate hard-drop press (releases the spawn hold). */
+  pressHardDrop(): void;
+  /** Mock auth (Google SSO stand-in) driving the signed-in UI + submit path. */
+  auth: LuminesTestAuth;
+  /**
+   * Deterministically end the current game with this exact final score, running
+   * the REAL game-over path. Signed in => submits to the (mock) backend and
+   * refreshes personal-best + leaderboard; signed out => not written.
+   */
+  endGame(score: number): void;
 }
 
 declare global {
@@ -33,6 +58,13 @@ export function installTestApi(controller: GameController): () => void {
     tick: () => controller.testTick(),
     sweepNow: () => controller.testSweepNow(),
     sweepProgress: (dtMs) => controller.testSweepProgress(dtMs),
+    pressSoftDrop: () => controller.testPressSoftDrop(),
+    pressHardDrop: () => controller.testPressHardDrop(),
+    auth: {
+      signIn: (identity) => mockStore.signIn(identity),
+      signOut: () => mockStore.signOut(),
+    },
+    endGame: (score) => controller.testEndGame(score),
   };
   window.__lumines = api;
   return () => {
