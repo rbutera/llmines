@@ -20,6 +20,7 @@ declare global {
       tick(): void;
       sweepNow(): void;
       sweepProgress(dtMs: number): void;
+      clockAdvance(dtMs: number): void;
     };
   }
 }
