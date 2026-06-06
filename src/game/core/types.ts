@@ -22,10 +22,24 @@ export interface PiecePos {
   col: number;
 }
 
+/**
+ * A generated piece plus its (generation-time) chain-special decision. The
+ * special is decided when the piece is generated so it can be shown in the
+ * preview queue before it spawns. `cellIndex` is 0..3 reading the 2x2 in
+ * row-major order: 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right.
+ */
+export interface GeneratedPiece {
+  cells: Piece;
+  /** Present when this piece carries a chain special on one of its cells. */
+  special?: { cellIndex: 0 | 1 | 2 | 3 };
+}
+
 /** The active, still-falling piece. */
 export interface ActivePiece {
   cells: Piece;
   pos: PiecePos;
+  /** If this piece carries a chain special, which of its 4 cells holds it. */
+  special?: { cellIndex: 0 | 1 | 2 | 3 };
 }
 
 /** A marked cell coordinate. */
@@ -73,4 +87,23 @@ export interface GameState {
   rngState: number;
   /** Active sweep pass, or null when none is in progress. Internal. */
   sweepPass?: SweepPass | null;
+  /**
+   * Consecutive qualifying-pass count (each clearing >= 4 squares). Indexes the
+   * combo multiplier curve; reset to 0 by any pass clearing < 4 squares.
+   */
+  combo: number;
+  /**
+   * Coordinates (`row * COLS + col`) of settled cells that carry a chain
+   * special. Sparse; parallel to the cell colour in `grid`.
+   */
+  specials: Set<number>;
+  /**
+   * Pre-generated upcoming pieces (depth >= PREVIEW_DEPTH + 1). The head spawns
+   * next; drawn in the canonical RNG order so a seeded run is reproducible.
+   */
+  queue: GeneratedPiece[];
+  /** Index into the ordered skin list (progression). */
+  skinIndex: number;
+  /** Squares cleared within the current skin (drives skin advancement). */
+  clearsInSkin: number;
 }

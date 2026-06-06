@@ -1,6 +1,5 @@
 import {
   advanceSweep,
-  BPM,
   COLS_PER_BEAT,
   computeMarked,
   createGame,
@@ -14,7 +13,9 @@ import {
   rotateCW,
   runFullSweep,
   seedState,
-  spawnNext,
+  skinBpm,
+  softDrop,
+  spawnFromQueue,
   spawnPiece,
   SWEEP_MS_PER_COL,
   type GameState,
@@ -107,6 +108,13 @@ export class GameController {
   private sweepColumnsConsumed = 0;
   private gravityAccumMs = 0;
   private started = false;
+  /**
+   * The BPM the sweep is currently advancing at. Sourced from the active skin,
+   * but only re-read at a bar/pass boundary (when `sweepX` wraps) so a mid-pass
+   * skin change does NOT discontinuously move the bar — the new tempo takes
+   * effect from the next bar. 0 = not yet set (read on the first advance).
+   */
+  private activeBpm = 0;
 
   constructor(opts: ControllerOptions = {}) {
     this.testMode = opts.testMode ?? false;
@@ -132,7 +140,7 @@ export class GameController {
       // musical time starts immediately, rather than waiting for the first
       // keyboard input (otherwise now() stays 0, dt stays 0, board frozen).
       this.resumeClockOnFirstGesture();
-      this.state = spawnNext(this.state);
+      this.state = spawnFromQueue(this.state);
       this.startLoop();
     }
     this.emit();
@@ -154,6 +162,7 @@ export class GameController {
     this.lastClockNow = 0;
     this.sweepStartT = 0;
     this.sweepColumnsConsumed = 0;
+    this.activeBpm = 0;
     // Re-arm the gesture-resume so start() resumes the context again. The
     // AudioContext itself is already running, so resume() is a cheap no-op, but
     // the flag must not short-circuit the start() path.
@@ -180,6 +189,7 @@ export class GameController {
     this.lastClockNow = 0;
     this.sweepStartT = 0;
     this.sweepColumnsConsumed = 0;
+    this.activeBpm = 0;
     const frame = (): void => {
       if (!this.started) return;
       this.runFrame();
@@ -222,13 +232,18 @@ export class GameController {
       return;
     }
 
-    // --- Sweep: pure function of absolute clock time ---
-    // columns = elapsed beats * COLS_PER_BEAT (one column per eighth-note).
-    const elapsed = now - this.sweepStartT;
-    const targetColumns = elapsed * (BPM / 60) * COLS_PER_BEAT;
-    const delta = targetColumns - this.sweepColumnsConsumed;
+    // --- Sweep: integrate the active BPM over the clock delta ---
+    // columns += dtSeconds * (bpm/60) * COLS_PER_BEAT (one column per eighth-
+    // note at COLS_PER_BEAT=2). The BPM is the current SKIN's BPM, but re-read
+    // only at bar boundaries (see currentSweepBpm) so a mid-pass skin change
+    // does not jump the bar. Within a constant-BPM segment this is exactly the
+    // absolute-time formula (integral of a constant rate), so it stays
+    // frame-rate independent and drift-free.
+    const dtSeconds = now - this.lastClockNow;
+    const bpm = this.currentSweepBpm();
+    const delta = dtSeconds * (bpm / 60) * COLS_PER_BEAT;
     if (delta > 0) {
-      this.sweepColumnsConsumed = targetColumns;
+      this.sweepColumnsConsumed += delta;
       this.advanceSweepColumns(delta);
     }
 
@@ -237,6 +252,19 @@ export class GameController {
     this.lastClockNow = now;
     this.advanceGravity(dt);
     this.emit();
+  }
+
+  /**
+   * The BPM the sweep should advance at this frame. The active skin's BPM is
+   * latched at each bar/pass boundary (when `sweepX` is at 0) rather than read
+   * live, so a skin change mid-pass does not discontinuously move the bar — the
+   * new tempo applies from the next bar. Latches on the first read too.
+   */
+  private currentSweepBpm(): number {
+    if (this.activeBpm === 0 || this.state.sweepX === 0) {
+      this.activeBpm = skinBpm(this.state.skinIndex);
+    }
+    return this.activeBpm;
   }
 
   /** Advance the sweep by an absolute-time-derived column delta. */
@@ -261,7 +289,7 @@ export class GameController {
     this.state = state;
     if (locked) {
       this.gravityAccumMs = 0;
-      this.state = spawnNext(this.state); // production auto-spawns
+      this.state = spawnFromQueue(this.state); // production auto-spawns
     }
   }
 
@@ -281,11 +309,12 @@ export class GameController {
         this.state = rotateCW(this.state);
         break;
       case "softDrop": {
-        const { state, locked } = gravityStep(this.state);
+        // Use the core softDrop so the +1/row soft-drop score is applied.
+        const { state, locked } = softDrop(this.state);
         this.state = state;
         if (locked && !this.testMode) {
           this.gravityAccumMs = 0;
-          this.state = spawnNext(this.state);
+          this.state = spawnFromQueue(this.state);
         }
         break;
       }
@@ -293,7 +322,7 @@ export class GameController {
         this.state = hardDrop(this.state);
         if (!this.testMode) {
           this.gravityAccumMs = 0;
-          this.state = spawnNext(this.state);
+          this.state = spawnFromQueue(this.state);
         }
         break;
     }

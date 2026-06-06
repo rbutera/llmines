@@ -23,6 +23,11 @@ export function createGame(seed = 1): GameState {
     gameOver: false,
     sweepX: 0,
     rngState: seedState(seed),
+    combo: 0,
+    specials: new Set<number>(),
+    queue: [],
+    skinIndex: 0,
+    clearsInSkin: 0,
   };
 }
 

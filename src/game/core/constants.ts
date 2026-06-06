@@ -44,3 +44,38 @@ export const SOFT_DROP_INTERVAL_MS = 60;
 
 /** Backing track URL (served from public/). */
 export const BACKING_TRACK_URL = "/backing-track.mp3";
+
+// --- V2 depth: scoring / specials / preview / progression ------------------
+
+/** Base points per distinct square cleared in a pass. */
+export const SQUARE_BASE_SCORE = 40;
+
+/**
+ * Cross-pass combo multiplier curve. A pass clearing >= 4 squares applies a
+ * multiplier indexed by the consecutive-qualifying-pass count (`combo`), capped
+ * at the final entry. A pass clearing < 4 squares applies x1 and resets combo.
+ */
+export const COMBO_CURVE = [4, 8, 12, 16] as const;
+
+/** Minimum squares in one pass to trigger the combo multiplier. */
+export const COMBO_MIN_SQUARES = 4;
+
+/** Flat bonus when the settled field is reduced to a single colour. */
+export const SINGLE_COLOUR_BONUS = 1000;
+/** Flat bonus when the board is emptied of all locked cells. */
+export const ALL_CLEAR_BONUS = 10000;
+
+/**
+ * Chain-special spawn rate: per-piece probability, decided at generation time
+ * off the single in-state RNG. ~1 special per 30 pieces.
+ */
+export const SPECIAL_RATE = 1 / 30;
+
+/** Preview depth: the UI shows the next 3 pieces. */
+export const PREVIEW_DEPTH = 3;
+
+/**
+ * Squares-cleared threshold to advance to the next skin. Deterministic so a
+ * seeded run advances skins reproducibly.
+ */
+export const SKIN_ADVANCE_THRESHOLD = 20;

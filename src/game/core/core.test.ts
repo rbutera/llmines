@@ -332,11 +332,12 @@ describe("sweep, deletion & scoring (6.x)", () => {
     base.grid[ROWS - 2]![0] = 0;
     base.grid[ROWS - 2]![1] = 0;
     const s = runFullSweep(base);
-    expect(s.score).toBe(4);
+    // Faithful rule: 1 square x 40 = 40, plus the all-clear bonus (board emptied).
+    expect(s.score).toBe(40 + 10000);
     expect(s.grid.flat().every((c) => c === null)).toBe(true);
   });
 
-  it("three separate 2x2 squares in one pass -> 12 deleted x 3 = 36", () => {
+  it("three separate 2x2 squares in one pass -> 3 x 40 (+ all-clear bonus)", () => {
     const base = createGame();
     const cols = [0, 4, 8];
     for (const c of cols) {
@@ -346,7 +347,8 @@ describe("sweep, deletion & scoring (6.x)", () => {
       base.grid[ROWS - 2]![c + 1] = 1;
     }
     const s = runFullSweep(base);
-    expect(s.score).toBe(36);
+    // 3 squares < 4, so no combo multiplier: 3 x 40 = 120, plus all-clear bonus.
+    expect(s.score).toBe(3 * 40 + 10000);
   });
 
   it("gravity fills the gap after a sweep deletes cells underneath", () => {
@@ -361,7 +363,9 @@ describe("sweep, deletion & scoring (6.x)", () => {
     // the 1 falls to the floor of col 0; the square is gone
     expect(s.grid[ROWS - 1]![0]).toBe(1);
     expect(s.grid[ROWS - 1]![1]).toBe(null);
-    expect(s.score).toBe(4);
+    // 1 square x 40 = 40; one lone `1` remains so the field is a single colour
+    // -> single-colour bonus (1000).
+    expect(s.score).toBe(40 + 1000);
   });
 
   it("advanceSweep moves sweepX by 1 col per 1 column unit", () => {
@@ -376,7 +380,8 @@ describe("sweep, deletion & scoring (6.x)", () => {
     base.grid[ROWS - 2]![0] = 0;
     base.grid[ROWS - 2]![1] = 0;
     const s = advanceSweep(base, COLS);
-    expect(s.score).toBe(4);
+    // 1 square x 40 = 40, plus all-clear bonus (board emptied).
+    expect(s.score).toBe(40 + 10000);
     expect(s.sweepX).toBeCloseTo(0, 6);
   });
 });
@@ -445,8 +450,9 @@ describe("incremental per-column settle (the deferred-gravity bug fix, 1.x)", ()
     // square cleared incrementally, but score not yet banked mid-pass.
     expect(mid.score).toBe(0);
     const done = advanceSweep(mid, COLS - mid.sweepX);
-    // 1 distinct square at pass start, 4 deleted -> deletedCount(4) * squares(1).
-    expect(done.score).toBe(4);
+    // 1 distinct square at pass start -> 1 x 40 = 40; the B stack remains as a
+    // single colour -> single-colour bonus (1000).
+    expect(done.score).toBe(40 + 1000);
     expect(done.sweepX).toBeCloseTo(0, 6);
   });
 });
@@ -569,13 +575,16 @@ describe("snapshot/settle race + cascade correctness (2.x)", () => {
   it("the cascade square is marked at the next pass and clears on it", () => {
     // Complete this pass (A square clears, B square forms via cascade).
     const afterPass1 = advanceSweep(buildCascadeBoard(), COLS);
-    expect(afterPass1.score).toBe(4); // only the A square scored this pass
+    // Only the A square scored this pass: 1 x 40 = 40. The cascade B square (one
+    // colour) remains on the board -> single-colour bonus (1000).
+    expect(afterPass1.score).toBe(40 + 1000);
     // B square is now on the floor, untouched.
     expect(afterPass1.grid[ROWS - 1]![0]).toBe(1);
     // Next full pass clears the cascade B square.
     const afterPass2 = advanceSweep(afterPass1, COLS);
     expect(afterPass2.grid[ROWS - 1]![0]).toBe(null);
-    expect(afterPass2.score).toBe(8); // +4 for the B square
+    // +40 for the B square, and the board is now empty -> all-clear bonus.
+    expect(afterPass2.score).toBe(40 + 1000 + 40 + 10000);
   });
 });
 
@@ -633,7 +642,8 @@ describe("partial-coverage matrix (3.x)", () => {
     squareAt(base, 0, 0);
     const s = advanceSweep(base, COLS);
     expect(s.grid[ROWS - 1]![0]).toBe(null);
-    expect(s.score).toBe(4);
+    // 1 x 40 = 40, board emptied -> all-clear bonus.
+    expect(s.score).toBe(40 + 10000);
   });
 
   it("square formed BEHIND the bar mid-pass waits for the next pass", () => {
@@ -656,7 +666,8 @@ describe("partial-coverage matrix (3.x)", () => {
     // Next full pass clears it (now in the new snapshot).
     s = advanceSweep(s, COLS);
     expect(s.grid[ROWS - 1]![0]).toBe(null);
-    expect(s.score).toBe(4);
+    // 1 x 40 = 40, board emptied -> all-clear bonus.
+    expect(s.score).toBe(40 + 10000);
   });
 
   it("square completed mid-pass AHEAD of the bar waits for the next pass", () => {
@@ -675,7 +686,8 @@ describe("partial-coverage matrix (3.x)", () => {
     // Next pass clears it.
     s = advanceSweep(s, COLS);
     expect(s.grid[ROWS - 1]![8]).toBe(null);
-    expect(s.score).toBe(4);
+    // 1 x 40 = 40, board emptied -> all-clear bonus.
+    expect(s.score).toBe(40 + 10000);
   });
 });
 

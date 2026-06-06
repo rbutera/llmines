@@ -294,7 +294,9 @@ describe("Production clock→dt path: suspended + re-suspend", () => {
     expect(squareCleared(c, 0)).toBe(true);
     expect(squareCleared(c, 6)).toBe(true);
     expect(c.getRenderState().sweepX).toBeLessThan(2); // wrapped to a fresh pass
-    expect(c.testState().score).toBe(16); // 8 cells * 2 squares, banked ONCE
+    // Faithful rule: 2 squares x 40 = 80, banked ONCE; the board is emptied by
+    // the clear -> all-clear bonus (10,000).
+    expect(c.testState().score).toBe(80 + 10000);
 
     c.stop();
   });
