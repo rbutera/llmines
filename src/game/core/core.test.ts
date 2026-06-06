@@ -445,6 +445,46 @@ describe("snapshot/settle race + cascade correctness (2.x)", () => {
   });
 });
 
+describe("sweep determinism: step-size independence (5.3 core)", () => {
+  /** Board with a clearable square that the sweep crosses, plus a stack to settle. */
+  function build(): GameState {
+    const base = createGame();
+    base.grid[ROWS - 1]![0] = 0;
+    base.grid[ROWS - 1]![1] = 0;
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    for (let row = 0; row <= ROWS - 3; row++) base.grid[row]![0] = 1; // stack
+    return base;
+  }
+
+  it("advancing 16 cols in one call == sixteen 1-col calls (grid + score + sweepX)", () => {
+    const oneShot = advanceSweep(build(), COLS);
+    let split: GameState = build();
+    for (let i = 0; i < COLS; i++) split = advanceSweep(split, 1);
+    expect(split.grid).toEqual(oneShot.grid);
+    expect(split.score).toBe(oneShot.score);
+    expect(split.sweepX).toBeCloseTo(oneShot.sweepX, 6);
+  });
+
+  it("3 cols in one call == three 1-col calls", () => {
+    const oneShot = advanceSweep(build(), 3);
+    let split: GameState = build();
+    for (let i = 0; i < 3; i++) split = advanceSweep(split, 1);
+    expect(split.grid).toEqual(oneShot.grid);
+    expect(split.score).toBe(oneShot.score);
+    expect(split.sweepX).toBeCloseTo(oneShot.sweepX, 6);
+  });
+
+  it("fractional steps sum to the same state as one big step", () => {
+    const oneShot = advanceSweep(build(), 5);
+    let split: GameState = build();
+    for (let i = 0; i < 10; i++) split = advanceSweep(split, 0.5);
+    expect(split.grid).toEqual(oneShot.grid);
+    expect(split.score).toBe(oneShot.score);
+    expect(split.sweepX).toBeCloseTo(oneShot.sweepX, 6);
+  });
+});
+
 describe("partial-coverage matrix (3.x)", () => {
   /** Square sitting in cols [c, c+1] on the floor, mono colour. */
   function squareAt(base: GameState, c: number, color: 0 | 1): void {

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Piece, PublicState } from "../core";
+import { BPM, COLS, type Piece, type PublicState } from "../core";
 import { __resetAudioClockForTests } from "../audio/clock";
 import { type Clock, FakeClock } from "../time/clock";
-import { GameController } from "./controller";
+import { forwardDelta, GameController } from "./controller";
 
 const MONO_A: Piece = [
   [0, 0],
@@ -66,6 +66,82 @@ describe("Regression: clock seam does not drift behaviour", () => {
       for (let i = 0; i < 5; i++) c.testClockAdvance(dt / 5);
     });
     expect(split).toEqual(oneShot);
+  });
+});
+
+describe("forwardDelta (wrap-aware sweep delta)", () => {
+  it("plain forward delta with no wrap", () => {
+    expect(forwardDelta(2, 5, COLS)).toBe(3);
+  });
+  it("wraps when target is behind (one wrap added)", () => {
+    expect(forwardDelta(15, 1, COLS)).toBe(2); // 15 -> 16(=0) -> 1
+  });
+  it("zero when equal", () => {
+    expect(forwardDelta(7, 7, COLS)).toBe(0);
+  });
+});
+
+describe("Beat-derived sweep timing (5.x)", () => {
+  /** Seconds per eighth-note at the current BPM (one column's worth of time). */
+  const SEC_PER_EIGHTH = 60 / BPM / 2; // beat = 60/BPM; eighth = beat/2
+  const MS_PER_EIGHTH = SEC_PER_EIGHTH * 1000;
+
+  /** Fresh test-mode controller with a FakeClock, primed past the baseline frame. */
+  function primed(): GameController {
+    const c = new GameController({ testMode: true, seed: 1 });
+    // First beat-frame establishes the sweep baseline (sweepStartT) and does not
+    // advance; prime it so subsequent frames measure from a known origin.
+    c.testBeatFrame(MS_PER_EIGHTH); // baseline frame (clock now > 0, no prior)
+    return c;
+  }
+
+  it("5.1 one eighth-note advances exactly one column", () => {
+    const c = primed();
+    const before = c.testState().sweepX;
+    c.testBeatFrame(MS_PER_EIGHTH);
+    expect(c.testState().sweepX - before).toBeCloseTo(1, 6);
+  });
+
+  it("5.2 two full 4/4 bars complete exactly one pass and wrap to the left edge", () => {
+    const c = primed();
+    // Two 4/4 bars = 8 beats = 16 eighth-notes = 16 columns = one full pass.
+    c.testBeatFrame(16 * MS_PER_EIGHTH);
+    expect(c.testState().sweepX).toBeCloseTo(0, 6); // wrapped to the left edge
+    expect(c.testSweepColumnsConsumed()).toBeCloseTo(16, 6);
+  });
+
+  it("5.3 frame-rate independence: 3 eighths in one step == three steps (sweepX + grid)", () => {
+    // Empty board: gravity is a no-op (no active piece), so the comparison
+    // isolates the absolute-time sweep path. (A clearable-square variant of this
+    // determinism property is proven directly against the pure core below.)
+    const oneStep = primed();
+    oneStep.testBeatFrame(3 * MS_PER_EIGHTH);
+
+    const threeSteps = primed();
+    threeSteps.testBeatFrame(MS_PER_EIGHTH);
+    threeSteps.testBeatFrame(MS_PER_EIGHTH);
+    threeSteps.testBeatFrame(MS_PER_EIGHTH);
+
+    expect(threeSteps.testState().grid).toEqual(oneStep.testState().grid);
+    expect(threeSteps.testState().sweepX).toBeCloseTo(
+      oneStep.testState().sweepX,
+      6,
+    );
+    expect(threeSteps.testSweepColumnsConsumed()).toBeCloseTo(
+      oneStep.testSweepColumnsConsumed(),
+      6,
+    );
+  });
+
+  it("5.4 dropped frame: position matches absolute time with no cumulative drift", () => {
+    const c = primed();
+    // Simulate a big gap (a dropped/delayed frame spanning 5 eighth-notes).
+    c.testBeatFrame(5 * MS_PER_EIGHTH);
+    // Then a normal frame.
+    c.testBeatFrame(MS_PER_EIGHTH);
+    // Total elapsed since baseline = 6 eighth-notes = 6 columns.
+    expect(c.testSweepColumnsConsumed()).toBeCloseTo(6, 6);
+    expect(c.testState().sweepX).toBeCloseTo(6, 6);
   });
 });
 

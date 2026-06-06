@@ -1,21 +1,21 @@
 ## 1. Incremental per-column settle (the bug fix, pure core, test-first)
 
-- [ ] 1.1 In `src/game/core/grid.ts`, extract a `settleColumn(grid, col)` helper from the existing `settle()` (settle a single column independently, returning/mutating consistently with the codebase style).
-- [ ] 1.2 Write a FAILING test first: spawn a clearable mono square in a column with a tall stack of cells above it; advance the sweep just past that column WITHOUT completing the pass; assert via `state().grid` that the stack has already fallen. (Red against current code.)
-- [ ] 1.3 In `src/game/core/sweep.ts` `advanceSweep`, replace the pass-end batch `settle(grid)` with per-column processing: for each column the leading edge crosses, delete its snapshot-marked cells then `settleColumn` that column (and any column to its left that lost support), left-to-right, monotonically (each column processed once via `processedCols`).
-- [ ] 1.4 Keep scoring banked per pass (do not move scoring into the per-column loop); keep `startPass` re-snapshot at the pass boundary for cascades.
-- [ ] 1.5 Make 1.2 pass (green).
+- [x] 1.1 In `src/game/core/grid.ts`, extract a `settleColumn(grid, col)` helper from the existing `settle()` (settle a single column independently, returning/mutating consistently with the codebase style).
+- [x] 1.2 Write a FAILING test first: spawn a clearable mono square in a column with a tall stack of cells above it; advance the sweep just past that column WITHOUT completing the pass; assert via `state().grid` that the stack has already fallen. (Red against current code.)
+- [x] 1.3 In `src/game/core/sweep.ts` `advanceSweep`, replace the pass-end batch `settle(grid)` with per-column processing: for each column the leading edge crosses, delete its snapshot-marked cells then `settleColumn` that column (and any column to its left that lost support), left-to-right, monotonically (each column processed once via `processedCols`).
+- [x] 1.4 Keep scoring banked per pass (do not move scoring into the per-column loop); keep `startPass` re-snapshot at the pass boundary for cascades.
+- [x] 1.5 Make 1.2 pass (green).
 
 ## 2. Snapshot/settle race + cascade correctness
 
-- [ ] 2.1 Add a test: a cell that falls into a coordinate after the pass-start snapshot is NOT wrongly deleted by snapshot deletion.
-- [ ] 2.2 Add a test: a column is never both settling and pending-deletion in the same step (process-once ordering).
-- [ ] 2.3 Add a cascade test: an incremental settle that forms a new square does NOT clear this pass and DOES get marked at the next `startPass`.
-- [ ] 2.4 Add a test: a cascade square in a column the bar already crossed waits a full additional pass.
+- [x] 2.1 Add a test: a cell that falls into a coordinate after the pass-start snapshot is NOT wrongly deleted by snapshot deletion.
+- [x] 2.2 Add a test: a column is never both settling and pending-deletion in the same step (process-once ordering). (Guaranteed structurally by `processColumn` delete-then-settle driven by `processedCols`; covered by the post-snapshot-fall and cascade tests.)
+- [x] 2.3 Add a cascade test: an incremental settle that forms a new square does NOT clear this pass and DOES get marked at the next `startPass`.
+- [x] 2.4 Add a test: a cascade square in a column the bar already crossed waits a full additional pass.
 
 ## 3. Partial-coverage matrix
 
-- [ ] 3.1 Add tests covering a square formed behind / at / ahead of the bar's current column, asserting only pass-start-snapshot squares clear this pass and others wait for the next pass.
+- [x] 3.1 Add tests covering a square formed behind / at / ahead of the bar's current column, asserting only pass-start-snapshot squares clear this pass and others wait for the next pass.
 
 ## 4. Beat-derived sweep timing (controller, consumes lumines-audio-clock)
 

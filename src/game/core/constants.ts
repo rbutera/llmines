@@ -13,6 +13,14 @@ export const SPAWN_ROW = 0;
 export const BPM = 120;
 export const SECONDS_PER_BEAT = 60 / BPM; // 0.5s
 
+/**
+ * Sweep cadence: one column per EIGHTH-NOTE = two columns per beat, so a full
+ * 16-column traversal spans 8 eighth-notes... no: 16 eighth-notes = 8 beats =
+ * two 4/4 bars. The controller uses this to convert absolute musical time into
+ * an absolute sweep position (a pure function of the clock).
+ */
+export const COLS_PER_BEAT = 2; // one column per eighth-note
+
 /** Sweep: full 16-column traversal = 8 beats = 4.0s -> 0.25s per column. */
 export const SWEEP_BEATS_PER_TRAVERSAL = 8;
 export const SWEEP_SECONDS_PER_TRAVERSAL =

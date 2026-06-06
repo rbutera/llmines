@@ -1,5 +1,8 @@
 import {
   advanceSweep,
+  BPM,
+  COLS,
+  COLS_PER_BEAT,
   computeMarked,
   createGame,
   GRAVITY_INTERVAL_MS,
@@ -57,6 +60,17 @@ export interface ControllerOptions {
 type Subscriber = (s: RenderState) => void;
 
 /**
+ * Forward column delta from `from` to `to` on the wrapped [0, COLS) sweep
+ * track. The sweep only ever moves forward (with wraps), so a `to` that is
+ * numerically less than `from` means a wrap occurred: add a full `COLS`. Pure.
+ */
+export function forwardDelta(from: number, to: number, cols: number): number {
+  let delta = to - from;
+  while (delta < 0) delta += cols;
+  return delta;
+}
+
+/**
  * Owns the single GameState and all wall-clock timing. The production rAF loop
  * applies gravity + the music-synced sweep and auto-spawns. In test mode the
  * auto-loop is disabled and the game is driven deterministically by the test
@@ -74,6 +88,19 @@ export class GameController {
   private rafId: number | null = null;
   /** Previous `clock.now()` reading (seconds); 0 = no prior frame yet. */
   private lastClockNow = 0;
+  /**
+   * Absolute clock time (seconds) the sweep is measured from — set on the first
+   * valid (post-resume) frame so `sweepX` is a PURE function of `clock.now()`:
+   * columns = (now - sweepStartT) * (BPM/60) * COLS_PER_BEAT. 0 = not yet set.
+   */
+  private sweepStartT = 0;
+  /**
+   * Absolute columns the sweep has been advanced to so far (monotonic, spanning
+   * many passes). Each frame we recompute the absolute target from the clock and
+   * feed only the forward DELTA to the pure core, so dropped frames/GC pauses
+   * never accumulate drift — the next frame catches up from absolute time.
+   */
+  private sweepColumnsConsumed = 0;
   private gravityAccumMs = 0;
   private started = false;
 
@@ -121,6 +148,8 @@ export class GameController {
     this.state = createGame(seed ?? 1);
     this.gravityAccumMs = 0;
     this.lastClockNow = 0;
+    this.sweepStartT = 0;
+    this.sweepColumnsConsumed = 0;
     // Re-arm the gesture-resume so start() resumes the context again. The
     // AudioContext itself is already running, so resume() is a cheap no-op, but
     // the flag must not short-circuit the start() path.
@@ -145,6 +174,8 @@ export class GameController {
 
   private startLoop(): void {
     this.lastClockNow = 0;
+    this.sweepStartT = 0;
+    this.sweepColumnsConsumed = 0;
     const frame = (): void => {
       if (!this.started) return;
       this.runFrame();
@@ -156,43 +187,63 @@ export class GameController {
   }
 
   /**
-   * One production frame: derive dt from the injected clock and advance. Time
-   * comes ONLY from the clock (seconds); dt is the elapsed musical time since
-   * the previous frame, converted to ms so the existing dtMs-based sweep/gravity
-   * path is byte-identical to before. Extracted so the clock-derive-dt path is
-   * unit-testable without rAF (see testProductionFrame).
+   * One production frame. The sweep is derived from ABSOLUTE clock time (a pure
+   * function of `clock.now()`), not an accumulated dt — so a dropped frame, GC
+   * pause, or tab-out never desyncs the bar from the music: the next frame
+   * recomputes the absolute target and catches up. Gravity keeps its own dt
+   * accumulator (gravity is not music-synced). Extracted so the whole pipeline
+   * is unit-testable without rAF (see testProductionFrame).
    */
   private runFrame(): void {
     const now = this.clock.now();
     // A suspended AudioContext reports now() === 0. This happens on the first
     // pre-resume frame, on the baseline-establishing frame right after resume,
     // AND on a re-suspend after running (tab backgrounding / iOS interrupt).
-    // In every one of those cases treat dt as 0 and (re)set the baseline:
+    // In every one of those cases treat the frame as paused (dt=0, sweep frozen)
+    // and (re)anchor the sweep baseline so musical time resumes from here:
     //   - now <= 0            → suspended (pre-resume or re-suspend)
     //   - lastClockNow <= 0   → first valid reading, no usable prior baseline
     //   - now < lastClockNow  → clock went backwards (defensive)
-    // Without this, (0 - lastClockNow) would be a large NEGATIVE dt that runs
-    // the sweep backwards (sweepX) and drives gravityAccumMs negative.
-    let dt: number;
     if (now <= 0 || this.lastClockNow <= 0 || now < this.lastClockNow) {
-      dt = 0;
-    } else {
-      // Normal monotonic case: byte-identical to before (seconds→ms, 100ms clamp).
-      dt = Math.min((now - this.lastClockNow) * 1000, 100); // clamp tab-out jumps
+      // Re-anchor the sweep so the next valid frame measures from `now`, keeping
+      // sweepX a pure function of (now - sweepStartT) with no rewind/jump. Reset
+      // the consumed-columns counter too: it is relative to sweepStartT, so the
+      // next frame's delta is computed from this fresh baseline (not the stale
+      // pre-suspend total, which would otherwise swallow the first frame).
+      this.sweepStartT = now > 0 ? now : 0;
+      this.sweepColumnsConsumed = 0;
+      this.lastClockNow = now;
+      // dt = 0: do not advance sweep or gravity this frame.
+      this.emit();
+      return;
     }
+
+    // --- Sweep: pure function of absolute clock time ---
+    // columns = elapsed beats * COLS_PER_BEAT (one column per eighth-note).
+    const elapsed = now - this.sweepStartT;
+    const targetColumns = elapsed * (BPM / 60) * COLS_PER_BEAT;
+    const delta = targetColumns - this.sweepColumnsConsumed;
+    if (delta > 0) {
+      this.sweepColumnsConsumed = targetColumns;
+      this.advanceSweepColumns(delta);
+    }
+
+    // --- Gravity: independent dt accumulator (not music-synced) ---
+    const dt = Math.min((now - this.lastClockNow) * 1000, 100); // clamp tab-out
     this.lastClockNow = now;
-    this.advance(dt);
+    this.advanceGravity(dt);
     this.emit();
   }
 
-  /** Advance production timing by dt ms: sweep + gravity + auto-spawn. */
-  private advance(dtMs: number): void {
+  /** Advance the sweep by an absolute-time-derived column delta. */
+  private advanceSweepColumns(columns: number): void {
     if (this.state.gameOver) return;
+    this.state = advanceSweep(this.state, columns);
+  }
 
-    // Music-synced sweep: continuous, snapshot-per-pass scoring.
-    this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
-
-    // Gravity on a fixed tick.
+  /** Advance gravity by dt ms on a fixed tick + auto-spawn. */
+  private advanceGravity(dtMs: number): void {
+    if (this.state.gameOver) return;
     this.gravityAccumMs += dtMs;
     while (this.gravityAccumMs >= GRAVITY_INTERVAL_MS) {
       this.gravityAccumMs -= GRAVITY_INTERVAL_MS;
@@ -364,5 +415,28 @@ export class GameController {
     c.advance(dtMs / 1000);
     this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
     this.emit();
+  }
+
+  /**
+   * Additive beat-sync driver: advance the (fake) clock by `dtMs` and run ONE
+   * logical production frame so the sweep is driven by the real absolute-time
+   * path (`runFrame`). Unlike {@link testClockAdvance} (which calls the core
+   * directly), this exercises the production beat-derived timing end to end, so
+   * tests can assert "one eighth-note advances exactly one column" and
+   * frame-rate independence. Requires an advanceable clock (the default
+   * test-mode {@link FakeClock}). Does NOT replace `sweepProgress`/`sweepNow`.
+   */
+  testBeatFrame(dtMs: number): void {
+    const c = this.clock as Clock & { advance?: (seconds: number) => void };
+    if (typeof c.advance !== "function") {
+      throw new Error("testBeatFrame requires an advanceable clock (FakeClock)");
+    }
+    c.advance(dtMs / 1000);
+    this.runFrame();
+  }
+
+  /** Test-only: the absolute columns the sweep has consumed since its baseline. */
+  testSweepColumnsConsumed(): number {
+    return this.sweepColumnsConsumed;
   }
 }
