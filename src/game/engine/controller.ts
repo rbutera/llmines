@@ -20,6 +20,8 @@ import {
   type Piece,
   type PublicState,
 } from "../core";
+import { createAudioClock } from "../audio/clock";
+import { type Clock, FakeClock } from "../time/clock";
 
 export type InputAction =
   | "left"
@@ -44,6 +46,12 @@ export interface RenderState {
 export interface ControllerOptions {
   testMode?: boolean;
   seed?: number;
+  /**
+   * Time source. Defaults to a {@link FakeClock} in test mode and an
+   * {@link createAudioClock} (AudioContext-backed) clock in production. The
+   * controller is the ONLY layer that reads time.
+   */
+  clock?: Clock;
 }
 
 type Subscriber = (s: RenderState) => void;
@@ -58,15 +66,24 @@ export class GameController {
   private state: GameState;
   private readonly testMode: boolean;
   private readonly subscribers = new Set<Subscriber>();
+  /** The sole time source. Read only inside the production rAF frame. */
+  private readonly clock: Clock;
+  /** Whether the production AudioContext has been resumed (first gesture). */
+  private clockResumed = false;
 
   private rafId: number | null = null;
-  private lastTs = 0;
+  /** Previous `clock.now()` reading (seconds); 0 = no prior frame yet. */
+  private lastClockNow = 0;
   private gravityAccumMs = 0;
   private started = false;
 
   constructor(opts: ControllerOptions = {}) {
     this.testMode = opts.testMode ?? false;
     this.state = createGame(opts.seed ?? 1);
+    // Default time source per mode: a manual FakeClock in tests, the
+    // AudioContext-backed clock in production. AudioContext is browser-only, so
+    // it is only constructed in production (where the rAF loop also lives).
+    this.clock = opts.clock ?? (this.testMode ? new FakeClock() : createAudioClock());
   }
 
   // ---- lifecycle -----------------------------------------------------------
@@ -99,6 +116,7 @@ export class GameController {
     this.stop();
     this.state = createGame(seed ?? 1);
     this.gravityAccumMs = 0;
+    this.lastClockNow = 0;
     this.start();
   }
 
@@ -118,12 +136,16 @@ export class GameController {
   // ---- production loop -----------------------------------------------------
 
   private startLoop(): void {
-    this.lastTs = 0;
-    const frame = (ts: number): void => {
+    this.lastClockNow = 0;
+    const frame = (): void => {
       if (!this.started) return;
-      if (this.lastTs === 0) this.lastTs = ts;
-      const dt = Math.min(ts - this.lastTs, 100); // clamp tab-out jumps
-      this.lastTs = ts;
+      // Time comes ONLY from the injected clock (seconds). dt is the elapsed
+      // wall/musical time since the previous frame, converted to ms so the
+      // existing dtMs-based sweep/gravity path is byte-identical to before.
+      const now = this.clock.now();
+      if (this.lastClockNow === 0) this.lastClockNow = now;
+      const dt = Math.min((now - this.lastClockNow) * 1000, 100); // clamp tab-out jumps
+      this.lastClockNow = now;
       this.advance(dt);
       this.emit();
       if (this.started && !this.state.gameOver) {
@@ -162,6 +184,7 @@ export class GameController {
 
   input(action: InputAction): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
+    this.resumeClockOnFirstGesture();
     switch (action) {
       case "left":
         this.state = moveLeft(this.state);
@@ -192,6 +215,21 @@ export class GameController {
     this.emit();
   }
 
+  /**
+   * On the first production gesture, resume the AudioContext so musical time
+   * starts. Before this, the AudioClock reports 0 and the sweep does not
+   * advance (the board waits rather than jumping). No-op in test mode and for
+   * clocks without a `resume` hook (e.g. an injected FakeClock).
+   */
+  private resumeClockOnFirstGesture(): void {
+    if (this.testMode || this.clockResumed) return;
+    const c = this.clock as Clock & { resume?: () => void };
+    if (typeof c.resume === "function") {
+      c.resume();
+      this.clockResumed = true;
+    }
+  }
+
   // ---- render / read access ------------------------------------------------
 
   private renderState(): RenderState {
@@ -211,6 +249,11 @@ export class GameController {
 
   getRenderState(): RenderState {
     return this.renderState();
+  }
+
+  /** Test-only: the injected time source, for asserting mode-appropriate defaults. */
+  getClock(): Clock {
+    return this.clock;
   }
 
   // ---- deterministic test interface ---------------------------------------
