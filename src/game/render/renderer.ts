@@ -38,6 +38,45 @@ function columnStack(grid: Grid, col: number): { row: number; cell: Cell }[] {
 }
 
 /**
+ * Pure collapse diff: match each column's new stack to its old stack (by
+ * bottom-up index) and, for any cell that ended LOWER than it started, return a
+ * starting pixel offset (negative = above its rest position) so the renderer can
+ * ease it down. This is what animates an incremental per-column settle: the bar
+ * clearing a column emits a new RenderState whose column lost cells, so the
+ * stack above falls and is tweened here — no special-casing needed for the
+ * deferred-gravity fix. Keyed by `row * COLS + col`. Exported for testing.
+ */
+export function computeCollapseOffsets(
+  oldGrid: Grid,
+  newGrid: Grid,
+  cell = CELL,
+): Map<number, number> {
+  const offsets = new Map<number, number>();
+  for (let col = 0; col < COLS; col++) {
+    // Settle preserves the colour ORDER of surviving cells within a column, so
+    // the new stack is a subsequence of the old one. Match them top-down, pairing
+    // each new cell to the next old cell of the SAME colour. This correctly
+    // animates an incremental settle where cells were cleared from BELOW the
+    // survivors (the deferred-gravity fix's frame): the survivors fell by the
+    // number of cleared cells beneath them. A bottom-up index match would miss
+    // this because the bottom rows stay occupied across the frame.
+    const oldStack = columnStack(oldGrid, col).reverse(); // now top-down
+    const newStack = columnStack(newGrid, col).reverse(); // now top-down
+    let oi = 0;
+    for (const nu of newStack) {
+      while (oi < oldStack.length && oldStack[oi]!.cell !== nu.cell) oi++;
+      if (oi >= oldStack.length) break; // no further match (defensive)
+      const oldRow = oldStack[oi]!.row;
+      oi++;
+      if (nu.row > oldRow) {
+        offsets.set(nu.row * COLS + col, (oldRow - nu.row) * cell);
+      }
+    }
+  }
+  return offsets;
+}
+
+/**
  * Immediate-mode Pixi renderer. Redraws each frame from the latest RenderState
  * plus a small animation model:
  *  - active piece descends smoothly via fallProgress
@@ -83,9 +122,14 @@ export class PixiRenderer {
     this.app = app;
     parent.appendChild(app.canvas);
     app.canvas.style.display = "block";
+    // Render-scale fit (display-only): fill the container's width and derive the
+    // height from the logical aspect ratio. The logical grid (COLS x ROWS) and
+    // all cell coordinates in state() are unchanged — this is pure CSS scaling.
+    // Previously the canvas was capped at its native BOARD_W (640px), which made
+    // the board feel small on wider containers; scaling to 100% fixes that.
     app.canvas.style.width = "100%";
     app.canvas.style.height = "auto";
-    app.canvas.style.maxWidth = `${BOARD_W}px`;
+    app.canvas.style.aspectRatio = `${BOARD_W} / ${BOARD_H}`;
     app.canvas.setAttribute("aria-hidden", "true");
 
     const stage = new Container();
@@ -126,19 +170,8 @@ export class PixiRenderer {
 
   /** Match each column's new stack to its old stack to animate fallen cells. */
   private seedCollapse(oldGrid: Grid, newGrid: Grid): void {
-    for (let col = 0; col < COLS; col++) {
-      const oldStack = columnStack(oldGrid, col);
-      const newStack = columnStack(newGrid, col);
-      const n = Math.min(oldStack.length, newStack.length);
-      for (let i = 0; i < n; i++) {
-        const oldRow = oldStack[i]!.row;
-        const newRow = newStack[i]!.row;
-        if (newRow > oldRow) {
-          // fell downward: start visually at old position, ease to new
-          const key = newRow * COLS + col;
-          this.fallOffsets.set(key, (oldRow - newRow) * CELL);
-        }
-      }
+    for (const [key, off] of computeCollapseOffsets(oldGrid, newGrid)) {
+      this.fallOffsets.set(key, off);
     }
   }
 

@@ -19,6 +19,7 @@ import {
   spawnPiece,
 } from "./piece";
 import { advanceSweep, runFullSweep } from "./sweep";
+import { publicState } from "./index";
 import type { GameState, Grid, Piece } from "./types";
 
 const MONO_A: Piece = [
@@ -85,6 +86,19 @@ describe("rng / piece generation (3.3)", () => {
     }
     // With independent cells we expect more than just the 2 monochrome pieces.
     expect(seen.size).toBeGreaterThan(2);
+  });
+});
+
+describe("grid 16x10 (6.1)", () => {
+  it("constants pin COLS=16, ROWS=10", () => {
+    expect(COLS).toBe(16);
+    expect(ROWS).toBe(10);
+  });
+
+  it("state().grid is exactly 10 rows x 16 cols", () => {
+    const ps = publicState(createGame());
+    expect(ps.grid.length).toBe(10);
+    for (const row of ps.grid) expect(row.length).toBe(16);
   });
 });
 
@@ -243,6 +257,69 @@ describe("square detection (5.x)", () => {
     // left 2x2 of 0s and right 2x2 of 1s = 2 squares, 8 cells
     expect(r.distinctSquares).toBe(2);
     expect(r.marked.length).toBe(8);
+  });
+
+  // 7.1 — parametric: a mono WxH rectangle counts (W-1)(H-1) squares, all marked.
+  const rectCases: { w: number; h: number; squares: number }[] = [
+    { w: 2, h: 2, squares: 1 },
+    { w: 2, h: 3, squares: 2 },
+    { w: 3, h: 2, squares: 2 },
+    { w: 3, h: 3, squares: 4 },
+    { w: 4, h: 4, squares: 9 },
+    { w: 5, h: 3, squares: 8 },
+  ];
+  for (const { w, h, squares } of rectCases) {
+    it(`7.1 mono ${w}x${h} (WxH cols x rows) -> ${squares} squares, ${w * h} marked`, () => {
+      const rows = Array.from({ length: h }, () => "0".repeat(w));
+      const r = computeMarked(gridFrom(rows));
+      expect(r.distinctSquares).toBe(squares); // (w-1)*(h-1)
+      expect(r.marked.length).toBe(w * h);
+    });
+  }
+
+  it("7.2 cross-piece square: detection scans the settled grid, not piece origin", () => {
+    // Two halves contributed by different 'pieces' meet to form one mono 2x2.
+    const g = emptyGrid();
+    g[ROWS - 1]![3] = 0; // bottom-left from one piece
+    g[ROWS - 2]![3] = 0; // top-left from another piece
+    g[ROWS - 1]![4] = 0;
+    g[ROWS - 2]![4] = 0;
+    const r = computeMarked(g);
+    expect(r.distinctSquares).toBe(1);
+    expect(r.marked.length).toBe(4);
+  });
+
+  it("7.2 no line clears: a fully filled row alone clears nothing", () => {
+    const g = emptyGrid();
+    // Fill the bottom row with an alternating pattern so no mono 2x2 exists.
+    for (let c = 0; c < COLS; c++) g[ROWS - 1]![c] = (c % 2) as 0 | 1;
+    const r = computeMarked(g);
+    expect(r.distinctSquares).toBe(0);
+    expect(r.marked.length).toBe(0);
+  });
+});
+
+describe("publicState distinctSquares + shape (7.3)", () => {
+  it("exposes distinctSquares matching overlap-counting detection", () => {
+    const base = createGame();
+    // mono 3x3 of A on the floor -> 4 distinct squares.
+    for (let row = ROWS - 3; row < ROWS; row++) {
+      for (let col = 0; col < 3; col++) base.grid[row]![col] = 0;
+    }
+    const ps = publicState(base);
+    expect(ps.distinctSquares).toBe(4);
+    expect(ps.distinctSquares).toBe(computeMarked(base.grid).distinctSquares);
+  });
+
+  it("existing state fields unchanged in shape (grid/score/gameOver/sweepX)", () => {
+    const ps = publicState(createGame());
+    expect(ps.grid.length).toBe(ROWS);
+    expect(ps.grid[0]!.length).toBe(COLS);
+    expect(ps.score).toBe(0);
+    expect(ps.gameOver).toBe(false);
+    expect(ps.sweepX).toBe(0);
+    // distinctSquares is additive and present.
+    expect(typeof ps.distinctSquares).toBe("number");
   });
 });
 

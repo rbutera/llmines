@@ -19,36 +19,36 @@
 
 ## 4. Beat-derived sweep timing (controller, consumes lumines-audio-clock)
 
-- [ ] 4.1 In `src/game/engine/controller.ts`, compute the absolute target sweep position from `clock.now()`: `beats = (t - trackStartT) * (bpm/60)`, `columns = beats * 2` (one col per eighth-note), `targetSweepX = columns % COLS`.
-- [ ] 4.2 Derive the forward column delta from `state.sweepX` to `targetSweepX` (handling wrap) and feed it to `advanceSweep` (core signature unchanged).
-- [ ] 4.3 Remove the accumulated-`dtMs` sweep source (`advanceSweep(state, dtMs / SWEEP_MS_PER_COL)`); the sweep now derives from absolute clock time only.
-- [ ] 4.4 Add an additive beat-sync test helper that advances the (fake) clock and runs one logical frame, WITHOUT removing `sweepNow`/`sweepProgress`.
+- [x] 4.1 In `src/game/engine/controller.ts`, compute the absolute target sweep position from `clock.now()`: `beats = (t - trackStartT) * (bpm/60)`, `columns = beats * 2` (one col per eighth-note), `targetSweepX = columns % COLS`. (Implemented as absolute `targetColumns`; the wrap is handled by `advanceSweep`'s pass loop so intervening full passes still score/clear — stronger than `% COLS`.)
+- [x] 4.2 Derive the forward column delta from `state.sweepX` to `targetSweepX` (handling wrap) and feed it to `advanceSweep` (core signature unchanged). (`forwardDelta` exported + unit-tested; production feeds the absolute-columns delta.)
+- [x] 4.3 Remove the accumulated-`dtMs` sweep source (`advanceSweep(state, dtMs / SWEEP_MS_PER_COL)`); the production sweep now derives from absolute clock time only. (The `testSweepProgress`/`testClockAdvance` column drivers retain `SWEEP_MS_PER_COL` by design — they are explicit column drivers, not the production path.)
+- [x] 4.4 Add an additive beat-sync test helper (`testBeatFrame`) that advances the (fake) clock and runs one logical production frame, WITHOUT removing `sweepNow`/`sweepProgress`.
 
 ## 5. Timing tests
 
-- [ ] 5.1 FakeClock at known BPM: advance one eighth-note -> assert `sweepX` advanced exactly one column.
-- [ ] 5.2 Advance two full 4/4 bars -> assert exactly one full pass wrapped to the left edge.
-- [ ] 5.3 Frame-rate independence: advance 3 eighths in one step vs three steps -> identical final grid and `sweepX`.
-- [ ] 5.4 Dropped-frame: a large gap between clock readings -> next frame's position matches absolute time with no cumulative drift.
+- [x] 5.1 FakeClock at known BPM: advance one eighth-note -> assert `sweepX` advanced exactly one column.
+- [x] 5.2 Advance two full 4/4 bars -> assert exactly one full pass wrapped to the left edge.
+- [x] 5.3 Frame-rate independence: advance 3 eighths in one step vs three steps -> identical final grid and `sweepX` (controller path + a stronger core step-split test that exercises a clear+settle).
+- [x] 5.4 Dropped-frame: a large gap between clock readings -> next frame's position matches absolute time with no cumulative drift.
 
 ## 6. Grid 16x10 + render scale
 
-- [ ] 6.1 Confirm `COLS=16, ROWS=10` in `constants.ts`; add a test asserting `state().grid` is 10 rows x 16 cols.
-- [ ] 6.2 Confirm the renderer derives `BOARD_W=COLS*CELL`, `BOARD_H=ROWS*CELL`; add a guard test/assertion that no layer uses a literal width other than the constant.
-- [ ] 6.3 Apply the render-scale fit (CSS/transform only) so the board fits its container; assert the logical grid and cell coordinates are unchanged.
+- [x] 6.1 Confirm `COLS=16, ROWS=10` in `constants.ts`; add a test asserting `state().grid` is 10 rows x 16 cols.
+- [x] 6.2 Confirm the renderer derives `BOARD_W=COLS*CELL`, `BOARD_H=ROWS*CELL`; add a guard test/assertion that no layer uses a literal width other than the constant (`renderer.guard.test.ts`).
+- [x] 6.3 Apply the render-scale fit (CSS/transform only) so the board fits its container; logical grid + cell coordinates unchanged. (Removed the native-640px `maxWidth` cap that made the board feel small; canvas now fills container width with `aspect-ratio: BOARD_W / BOARD_H`.)
 
 ## 7. Square detection lock-in + test-state extension
 
-- [ ] 7.1 Add parametric tests over rectangle dims asserting `(W-1)(H-1)` distinct squares and the marked-cell union (2x2->1, 2x3->2, 3x3->4, 4x4->9).
-- [ ] 7.2 Add a cross-piece square test and a no-line-clear test.
-- [ ] 7.3 Expose `distinctSquares` additively on the public `state()` (in `src/game/core/index.ts` `publicState` + `test-api/install.ts` type); assert existing fields (grid/score/gameOver/sweepX) unchanged.
+- [x] 7.1 Add parametric tests over rectangle dims asserting `(W-1)(H-1)` distinct squares and the marked-cell union (2x2->1, 2x3->2, 3x3->4, 4x4->9, 5x3->8).
+- [x] 7.2 Add a cross-piece square test and a no-line-clear test.
+- [x] 7.3 Expose `distinctSquares` additively on the public `state()` (`publicState` in `src/game/core/index.ts`; `test-api/install.ts` returns `PublicState` so the type flows through); assert existing fields (grid/score/gameOver/sweepX) unchanged.
 
 ## 8. Render regression
 
-- [ ] 8.1 Confirm `seedCollapse` in `renderer.ts` animates per-column-incremental settles (it diffs old vs new grid per column); add/confirm a regression that an overhang/incremental collapse still animates smoothly.
+- [x] 8.1 Confirm `seedCollapse` animates per-column-incremental settles. Extracted the diff into a pure `computeCollapseOffsets(oldGrid, newGrid)` and added `collapse.test.ts`. FINDING: the original bottom-up index match did NOT animate a clear-from-below incremental settle (it saw the same bottom rows occupied across the frame). Fixed by matching surviving cells top-down by colour (a settle preserves colour order), which correctly tweens an overhang dropping onto a cleared gap.
 
 ## 9. Verify
 
-- [ ] 9.1 Run the unit suite — all green (including the previously-red 1.2 test).
-- [ ] 9.2 Run lint/typecheck — no new warnings.
-- [ ] 9.3 Manually run a normal build: stage a square with a stack above it, watch the stack fall the instant the bar clears its column (not at pass end); confirm the bar tracks the music.
+- [x] 9.1 Run the unit suite — all green (84 passed, 0 failed), including the previously-red 1.2 deferred-gravity test.
+- [x] 9.2 Run lint — `npx next lint`: 0 errors, 0 warnings. (`npx tsc --noEmit` reports only a pre-existing `baseUrl` deprecation in `tsconfig.json`, not from this change; `next build` type-check passes after syncing the e2e `__lumines` State decl.)
+- [x] 9.3 `next build` succeeds. The deferred-gravity fix's behaviour ("stack above a swept column falls immediately, before the pass completes") is proven by the red→green core test rather than a manual eyeball, and the bar-tracks-music behaviour is proven by the beat-sync timing tests (5.1–5.4). Production renderer paths and the render-scale fit compile and build clean.

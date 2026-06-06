@@ -8,6 +8,8 @@ interface State {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  /** Additive (lumines-grid-and-sweep): distinct completed 2x2 squares. */
+  distinctSquares: number;
 }
 
 declare global {
