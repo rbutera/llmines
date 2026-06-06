@@ -461,7 +461,7 @@ describe("advanceSweep purity: input state immutable + idempotent (5.x)", () => 
   /**
    * Board with a clearable mono-A 2x2 on the floor plus a tall B stack above it,
    * so a PARTIAL pass actually deletes cells and mutates the pass (deletedCount,
-   * processedCols, markedByCol read surface) — exercising the by-reference leak.
+   * processedCols, marks read surface) — exercising the by-reference leak.
    */
   function buildStackOverSquare(): GameState {
     const base = createGame();
@@ -492,15 +492,13 @@ describe("advanceSweep purity: input state immutable + idempotent (5.x)", () => 
     advanceSweep(input, 2.5);
 
     // Whole-state byte-identity (grid, score, sweepX, and the nested sweepPass:
-    // processedCols / deletedCount / markedByCol inner arrays) is unchanged.
+    // processedCols / deletedCount / marks inner arrays) is unchanged.
     expect(input).toEqual(snapshot);
     expect(input.sweepPass!.processedCols).toBe(
       snapshot.sweepPass!.processedCols,
     );
     expect(input.sweepPass!.deletedCount).toBe(snapshot.sweepPass!.deletedCount);
-    expect(input.sweepPass!.markedByCol).toEqual(
-      snapshot.sweepPass!.markedByCol,
-    );
+    expect(input.sweepPass!.marks).toEqual(snapshot.sweepPass!.marks);
   });
 
   it("is idempotent: advanceSweep(sameInput, n) twice yields identical results", () => {
