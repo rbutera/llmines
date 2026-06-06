@@ -72,14 +72,44 @@ export function viewGrid(state: GameState): Grid {
 export function settle(grid: Grid): Grid {
   const out = emptyGrid();
   for (let col = 0; col < COLS; col++) {
-    let writeRow = ROWS - 1;
-    for (let row = ROWS - 1; row >= 0; row--) {
-      const cell = grid[row]![col] ?? null;
-      if (cell !== null) {
-        out[writeRow]![col] = cell;
-        writeRow--;
-      }
-    }
+    settleColumnInto(grid, out, col);
   }
   return out;
+}
+
+/** Settle one column of `src` into `dst` (per-column gravity). Helper for both. */
+function settleColumnInto(src: Grid, dst: Grid, col: number): void {
+  let writeRow = ROWS - 1;
+  for (let row = ROWS - 1; row >= 0; row--) {
+    const cell = src[row]![col] ?? null;
+    if (cell !== null) {
+      dst[writeRow]![col] = cell;
+      writeRow--;
+    }
+  }
+  // Clear any cells above the new top (in case dst already held this column).
+  for (; writeRow >= 0; writeRow--) dst[writeRow]![col] = null;
+}
+
+/**
+ * Per-column gravity for a SINGLE column, mutating `grid` in place. Cells in
+ * `col` fall straight down to rest on the floor or another cell; other columns
+ * are untouched. Used by the incremental per-column sweep settle so a stack
+ * above a swept column falls the instant the bar clears that column, rather than
+ * waiting for a batch settle at pass end.
+ */
+export function settleColumn(grid: Grid, col: number): void {
+  // Collect the column's occupied cells top-to-bottom, then re-lay them from the
+  // floor up. Mutates in place so callers working on a cloned grid stay cheap.
+  const stack: Cell[] = [];
+  for (let row = 0; row < ROWS; row++) {
+    const cell = grid[row]![col] ?? null;
+    if (cell !== null) stack.push(cell);
+  }
+  let row = ROWS - 1;
+  for (let i = stack.length - 1; i >= 0; i--) {
+    grid[row]![col] = stack[i]!;
+    row--;
+  }
+  for (; row >= 0; row--) grid[row]![col] = null;
 }
