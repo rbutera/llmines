@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { BOARD_ASPECT } from "../core";
 import type { GameController } from "../engine/controller";
 import { PixiRenderer } from "../render/renderer";
 
@@ -34,7 +35,7 @@ export function GameCanvas({ controller }: { controller: GameController }) {
     <div
       ref={hostRef}
       className="w-full overflow-hidden rounded-xl ring-1 shadow-2xl ring-white/10"
-      style={{ aspectRatio: "16 / 10", boxShadow: "0 0 60px -15px #37e0c980" }}
+      style={{ aspectRatio: BOARD_ASPECT, boxShadow: "0 0 60px -15px #37e0c980" }}
     />
   );
 }

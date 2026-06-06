@@ -1,7 +1,21 @@
-import { HOLD_MS, SPAWN_COL, SPAWN_ROW } from "./constants";
-import { cloneGrid, inBounds, pieceCells, settle } from "./grid";
-import { nextBit } from "./rng";
-import type { ActivePiece, GameState, Grid, Piece, PiecePos } from "./types";
+import {
+  COLS,
+  HOLD_MS,
+  PREVIEW_DEPTH,
+  SPAWN_COL,
+  SPAWN_ROW,
+  SPECIAL_RATE,
+} from "./constants";
+import { cloneGrid, inBounds, pieceCells } from "./grid";
+import { nextBit, nextFloat } from "./rng";
+import type {
+  ActivePiece,
+  GameState,
+  GeneratedPiece,
+  Grid,
+  Piece,
+  PiecePos,
+} from "./types";
 
 /** Draw the next piece from the RNG, returning [nextState, piece]. */
 export function nextPiece(rngState: number): [number, Piece] {
@@ -16,6 +30,94 @@ export function nextPiece(rngState: number): [number, Piece] {
       [c, d],
     ],
   ];
+}
+
+/**
+ * Generate the next piece plus its chain-special decision, drawing off the SINGLE
+ * in-state RNG in the pinned CANONICAL ORDER:
+ *   1. 4 colour bits (the existing `nextPiece` order)
+ *   2. 1 special roll: special iff `nextFloat < SPECIAL_RATE` (~1/30)
+ *   3. if special, 1 more draw to pick which of the 4 cells carries it
+ *
+ * This order is the determinism contract: a seeded run is identical whether or
+ * not the preview/specials are consumed, because the colour draws always come
+ * first and in the same sequence. NEVER introduce a second RNG.
+ */
+export function generateNext(rngState: number): [number, GeneratedPiece] {
+  const [s1, cells] = nextPiece(rngState);
+  const [s2, roll] = nextFloat(s1);
+  if (roll >= SPECIAL_RATE) {
+    return [s2, { cells }];
+  }
+  const [s3, pick] = nextFloat(s2);
+  const cellIndex = Math.min(3, Math.floor(pick * 4)) as 0 | 1 | 2 | 3;
+  return [s3, { cells, special: { cellIndex } }];
+}
+
+/**
+ * Refill the preview queue to depth `PREVIEW_DEPTH + 1` (head + the 3 shown),
+ * drawing in the canonical order. Pure: returns a new state with the advanced
+ * `rngState` and a longer `queue`.
+ */
+export function refillQueue(state: GameState): GameState {
+  let rngState = state.rngState;
+  const queue = state.queue.slice();
+  while (queue.length < PREVIEW_DEPTH + 1) {
+    const [next, gp] = generateNext(rngState);
+    rngState = next;
+    queue.push(gp);
+  }
+  return { ...state, rngState, queue };
+}
+
+/**
+ * Spawn the head of the preview queue, then refill it. Replaces `spawnNext`'s
+ * draw-one-on-spawn behaviour so the preview is truthful and the special is
+ * decided at generation time. Falls back to a fresh draw if the queue is empty.
+ */
+export function spawnFromQueue(state: GameState): GameState {
+  const filled = refillQueue(state);
+  const queue = filled.queue.slice();
+  const head = queue.shift();
+  if (!head) return filled;
+  const spawned = spawnGeneratedPiece({ ...filled, queue }, head);
+  // Keep the preview topped up after consuming the head.
+  return refillQueue(spawned);
+}
+
+/** Coordinate (`row*COLS+col`) of the cell at `cellIndex` for a piece at `pos`. */
+function specialCoordFor(pos: PiecePos, cellIndex: 0 | 1 | 2 | 3): number {
+  const row = pos.row + (cellIndex >= 2 ? 1 : 0);
+  const col = pos.col + (cellIndex % 2 === 1 ? 1 : 0);
+  return row * COLS + col;
+}
+
+/**
+ * Place a generated piece (carrying any special decision) at spawn. On game over
+ * the special is dropped with the piece.
+ */
+export function spawnGeneratedPiece(
+  state: GameState,
+  gp: GeneratedPiece,
+): GameState {
+  const pos: PiecePos = { row: SPAWN_ROW, col: SPAWN_COL };
+  if (!canPlace(state.grid, gp.cells, pos)) {
+    return {
+      ...state,
+      active: null,
+      gameOver: true,
+      hold: { active: false, remainingMs: 0 },
+    };
+  }
+  // A freshly spawned piece holds at the top for one beat before gravity
+  // resumes (brownfield new-block hold). The controller drives the timer /
+  // release. Arming it here means the queue-based production spawn path keeps
+  // the hold behaviour that brownfield's spawnPiece established.
+  return {
+    ...state,
+    active: { cells: gp.cells, pos, special: gp.special },
+    hold: { active: true, remainingMs: HOLD_MS },
+  };
 }
 
 /** Can a piece with these cells legally occupy this top-left position? */
@@ -127,7 +229,54 @@ export function lockPiece(state: GameState): GameState {
   for (const { row, col, color } of pieceCells(state.active)) {
     if (inBounds(row, col) && color !== null) grid[row]![col] = color;
   }
-  return { ...state, grid: settle(grid), active: null };
+
+  // Record this piece's chain-special coordinate (if any) at its merged
+  // position, then settle the grid and the specials set TOGETHER so a special
+  // cell falls with its column. The special travels with the cell, not the slot.
+  const specials = new Set(state.specials);
+  if (state.active.special) {
+    const coord = specialCoordFor(state.active.pos, state.active.special.cellIndex);
+    const row = Math.floor(coord / COLS);
+    const col = coord % COLS;
+    if (inBounds(row, col)) specials.add(coord);
+  }
+
+  const settled = settleSpecials(grid, specials);
+  return {
+    ...state,
+    grid: settled.grid,
+    specials: settled.specials,
+    active: null,
+  };
+}
+
+/**
+ * Settle every column by gravity, carrying chain-special markers down with the
+ * exact cells they sit on. Returns the settled grid and the relocated specials
+ * set. Per-column and order-independent in result; mirrors `settle()` but keeps
+ * `specials` coordinates aligned to their cells after the fall.
+ */
+export function settleSpecials(
+  grid: Grid,
+  specials: Set<number>,
+): { grid: Grid; specials: Set<number> } {
+  const rows = grid.length;
+  const out: Grid = grid.map((r) => r.map(() => null as Grid[number][number]));
+  const newSpecials = new Set<number>();
+  const cols = grid[0]!.length;
+  for (let col = 0; col < cols; col++) {
+    let writeRow = rows - 1;
+    for (let row = rows - 1; row >= 0; row--) {
+      const cell = grid[row]![col] ?? null;
+      if (cell === null) continue;
+      out[writeRow]![col] = cell;
+      if (specials.has(row * cols + col)) {
+        newSpecials.add(writeRow * cols + col);
+      }
+      writeRow--;
+    }
+  }
+  return { grid: out, specials: newSpecials };
 }
 
 /**
@@ -149,12 +298,20 @@ export function gravityStep(state: GameState): {
   return { state: lockPiece(state), locked: true };
 }
 
-/** Soft drop: one extra gravity step (same semantics, faster cadence). */
+/**
+ * Soft drop: one extra gravity step. When the piece actually descends a row
+ * (i.e. it did not lock), award +1 point per the soft-drop scoring rule. A step
+ * that locks the piece (it could not descend) scores nothing for that step.
+ */
 export function softDrop(state: GameState): {
   state: GameState;
   locked: boolean;
 } {
-  return gravityStep(state);
+  const result = gravityStep(state);
+  if (!result.locked) {
+    return { state: { ...result.state, score: result.state.score + 1 }, locked: false };
+  }
+  return result;
 }
 
 /** Hard drop: descend to the lowest legal row, then lock immediately. */

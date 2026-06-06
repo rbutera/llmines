@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { COLS, HOLD_MS, ROWS } from "./constants";
 import { computeMarked } from "./detect";
-import { createGame, emptyGrid, settle, viewGrid } from "./grid";
+import {
+  createGame,
+  emptyGrid,
+  settle,
+  settleColumn,
+  viewGrid,
+} from "./grid";
 import {
   gravityStep,
   hardDrop,
@@ -17,6 +23,7 @@ import {
   tickHold,
 } from "./piece";
 import { advanceSweep, runFullSweep } from "./sweep";
+import { publicState } from "./index";
 import type { GameState, Grid, Piece } from "./types";
 
 const MONO_A: Piece = [
@@ -27,6 +34,11 @@ const MONO_B: Piece = [
   [1, 1],
   [1, 1],
 ];
+
+/** Deep-clone a grid (test helper; mirrors core cloneGrid without the import). */
+function cloneForTest(grid: Grid): Grid {
+  return grid.map((r) => r.slice());
+}
 
 /** Build a grid from a compact string map: '.'=empty, '0'=A, '1'=B. */
 function gridFrom(rows: string[]): Grid {
@@ -78,6 +90,19 @@ describe("rng / piece generation (3.3)", () => {
     }
     // With independent cells we expect more than just the 2 monochrome pieces.
     expect(seen.size).toBeGreaterThan(2);
+  });
+});
+
+describe("grid 16x10 (6.1)", () => {
+  it("constants pin COLS=16, ROWS=10", () => {
+    expect(COLS).toBe(16);
+    expect(ROWS).toBe(10);
+  });
+
+  it("state().grid is exactly 10 rows x 16 cols", () => {
+    const ps = publicState(createGame());
+    expect(ps.grid.length).toBe(10);
+    for (const row of ps.grid) expect(row.length).toBe(16);
   });
 });
 
@@ -298,6 +323,69 @@ describe("square detection (5.x)", () => {
     expect(r.distinctSquares).toBe(2);
     expect(r.marked.length).toBe(8);
   });
+
+  // 7.1 — parametric: a mono WxH rectangle counts (W-1)(H-1) squares, all marked.
+  const rectCases: { w: number; h: number; squares: number }[] = [
+    { w: 2, h: 2, squares: 1 },
+    { w: 2, h: 3, squares: 2 },
+    { w: 3, h: 2, squares: 2 },
+    { w: 3, h: 3, squares: 4 },
+    { w: 4, h: 4, squares: 9 },
+    { w: 5, h: 3, squares: 8 },
+  ];
+  for (const { w, h, squares } of rectCases) {
+    it(`7.1 mono ${w}x${h} (WxH cols x rows) -> ${squares} squares, ${w * h} marked`, () => {
+      const rows = Array.from({ length: h }, () => "0".repeat(w));
+      const r = computeMarked(gridFrom(rows));
+      expect(r.distinctSquares).toBe(squares); // (w-1)*(h-1)
+      expect(r.marked.length).toBe(w * h);
+    });
+  }
+
+  it("7.2 cross-piece square: detection scans the settled grid, not piece origin", () => {
+    // Two halves contributed by different 'pieces' meet to form one mono 2x2.
+    const g = emptyGrid();
+    g[ROWS - 1]![3] = 0; // bottom-left from one piece
+    g[ROWS - 2]![3] = 0; // top-left from another piece
+    g[ROWS - 1]![4] = 0;
+    g[ROWS - 2]![4] = 0;
+    const r = computeMarked(g);
+    expect(r.distinctSquares).toBe(1);
+    expect(r.marked.length).toBe(4);
+  });
+
+  it("7.2 no line clears: a fully filled row alone clears nothing", () => {
+    const g = emptyGrid();
+    // Fill the bottom row with an alternating pattern so no mono 2x2 exists.
+    for (let c = 0; c < COLS; c++) g[ROWS - 1]![c] = (c % 2) as 0 | 1;
+    const r = computeMarked(g);
+    expect(r.distinctSquares).toBe(0);
+    expect(r.marked.length).toBe(0);
+  });
+});
+
+describe("publicState distinctSquares + shape (7.3)", () => {
+  it("exposes distinctSquares matching overlap-counting detection", () => {
+    const base = createGame();
+    // mono 3x3 of A on the floor -> 4 distinct squares.
+    for (let row = ROWS - 3; row < ROWS; row++) {
+      for (let col = 0; col < 3; col++) base.grid[row]![col] = 0;
+    }
+    const ps = publicState(base);
+    expect(ps.distinctSquares).toBe(4);
+    expect(ps.distinctSquares).toBe(computeMarked(base.grid).distinctSquares);
+  });
+
+  it("existing state fields unchanged in shape (grid/score/gameOver/sweepX)", () => {
+    const ps = publicState(createGame());
+    expect(ps.grid.length).toBe(ROWS);
+    expect(ps.grid[0]!.length).toBe(COLS);
+    expect(ps.score).toBe(0);
+    expect(ps.gameOver).toBe(false);
+    expect(ps.sweepX).toBe(0);
+    // distinctSquares is additive and present.
+    expect(typeof ps.distinctSquares).toBe("number");
+  });
 });
 
 describe("sweep, deletion & scoring (6.x)", () => {
@@ -309,11 +397,12 @@ describe("sweep, deletion & scoring (6.x)", () => {
     base.grid[ROWS - 2]![0] = 0;
     base.grid[ROWS - 2]![1] = 0;
     const s = runFullSweep(base);
-    expect(s.score).toBe(4);
+    // Faithful rule: 1 square x 40 = 40, plus the all-clear bonus (board emptied).
+    expect(s.score).toBe(40 + 10000);
     expect(s.grid.flat().every((c) => c === null)).toBe(true);
   });
 
-  it("three separate 2x2 squares in one pass -> 12 deleted x 3 = 36", () => {
+  it("three separate 2x2 squares in one pass -> 3 x 40 (+ all-clear bonus)", () => {
     const base = createGame();
     const cols = [0, 4, 8];
     for (const c of cols) {
@@ -323,7 +412,8 @@ describe("sweep, deletion & scoring (6.x)", () => {
       base.grid[ROWS - 2]![c + 1] = 1;
     }
     const s = runFullSweep(base);
-    expect(s.score).toBe(36);
+    // 3 squares < 4, so no combo multiplier: 3 x 40 = 120, plus all-clear bonus.
+    expect(s.score).toBe(3 * 40 + 10000);
   });
 
   it("gravity fills the gap after a sweep deletes cells underneath", () => {
@@ -338,7 +428,9 @@ describe("sweep, deletion & scoring (6.x)", () => {
     // the 1 falls to the floor of col 0; the square is gone
     expect(s.grid[ROWS - 1]![0]).toBe(1);
     expect(s.grid[ROWS - 1]![1]).toBe(null);
-    expect(s.score).toBe(4);
+    // 1 square x 40 = 40; one lone `1` remains so the field is a single colour
+    // -> single-colour bonus (1000).
+    expect(s.score).toBe(40 + 1000);
   });
 
   it("advanceSweep moves sweepX by 1 col per 1 column unit", () => {
@@ -353,8 +445,312 @@ describe("sweep, deletion & scoring (6.x)", () => {
     base.grid[ROWS - 2]![0] = 0;
     base.grid[ROWS - 2]![1] = 0;
     const s = advanceSweep(base, COLS);
-    expect(s.score).toBe(4);
+    // 1 square x 40 = 40, plus all-clear bonus (board emptied).
+    expect(s.score).toBe(40 + 10000);
     expect(s.sweepX).toBeCloseTo(0, 6);
+  });
+});
+
+describe("settleColumn (single-column gravity)", () => {
+  it("drops a floating cell in one column to the floor, leaving others alone", () => {
+    const g = gridFrom(["0.1", "...", "..."]);
+    // col 0 has a floating 0 at row 0; col 2 has a floating 1 at row 0.
+    settleColumn(g, 0);
+    expect(g[ROWS - 1]![0]).toBe(0);
+    expect(g[0]![0]).toBe(null);
+    // col 2 was NOT settled.
+    expect(g[0]![2]).toBe(1);
+    expect(g[ROWS - 1]![2]).toBe(null);
+  });
+
+  it("matches settle() for the settled column", () => {
+    const g = gridFrom(["0...", "....", "0...", "...."]);
+    const full = settle(g);
+    settleColumn(g, 0);
+    expect(g[ROWS - 1]![0]).toBe(full[ROWS - 1]![0]);
+    expect(g[ROWS - 2]![0]).toBe(full[ROWS - 2]![0]);
+    expect(g[0]![0]).toBe(null);
+  });
+});
+
+describe("incremental per-column settle (the deferred-gravity bug fix, 1.x)", () => {
+  /**
+   * Place a clearable mono 2x2 in a column with a tall stack of a DIFFERENT
+   * colour sitting on top of it. Advance the sweep just past those columns
+   * WITHOUT completing the pass; the stack above the cleared cells must have
+   * already fallen (per-column incremental settle), not waited for pass end.
+   */
+  function buildStackOverSquare(): GameState {
+    const base = createGame();
+    // cols 0,1: 2x2 mono A square on the floor.
+    base.grid[ROWS - 1]![0] = 0;
+    base.grid[ROWS - 1]![1] = 0;
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    // tall stack of B directly above the square in col 0 (rows 0..ROWS-3).
+    for (let row = 0; row <= ROWS - 3; row++) base.grid[row]![0] = 1;
+    return base;
+  }
+
+  it("stack above a swept column falls immediately, before the pass completes", () => {
+    const base = buildStackOverSquare();
+    // Advance just past columns 0 and 1 (leading edge at col 2), nowhere near
+    // the 16-col pass end.
+    const s = advanceSweep(base, 2.5);
+    expect(s.sweepX).toBeCloseTo(2.5, 6);
+    // The pass is NOT complete (sweepX << COLS), yet the square's cells are gone
+    // and the B stack in col 0 has already fallen to the floor.
+    expect(s.grid[ROWS - 1]![0]).toBe(1); // bottom of fallen B stack
+    expect(s.grid[ROWS - 1]![1]).toBe(null); // square cell cleared, nothing fell here
+    // The full B stack (ROWS-2 cells) now rests on the floor of col 0.
+    const colZeroCells = s.grid.filter((r) => r[0] === 1).length;
+    expect(colZeroCells).toBe(ROWS - 2);
+    // None of the B cells were wrongly deleted.
+    expect(s.grid[0]![0]).toBe(null); // top is now empty (stack fell)
+  });
+
+  it("does not change overall score timing: score still banks at pass end", () => {
+    const base = buildStackOverSquare();
+    const mid = advanceSweep(base, 2.5);
+    // square cleared incrementally, but score not yet banked mid-pass.
+    expect(mid.score).toBe(0);
+    const done = advanceSweep(mid, COLS - mid.sweepX);
+    // 1 distinct square at pass start -> 1 x 40 = 40; the B stack remains as a
+    // single colour -> single-colour bonus (1000).
+    expect(done.score).toBe(40 + 1000);
+    expect(done.sweepX).toBeCloseTo(0, 6);
+  });
+});
+
+describe("advanceSweep purity: input state immutable + idempotent (5.x)", () => {
+  /**
+   * Board with a clearable mono-A 2x2 on the floor plus a tall B stack above it,
+   * so a PARTIAL pass actually deletes cells and mutates the pass (deletedCount,
+   * processedCols, marks read surface) — exercising the by-reference leak.
+   */
+  function buildStackOverSquare(): GameState {
+    const base = createGame();
+    base.grid[ROWS - 1]![0] = 0;
+    base.grid[ROWS - 1]![1] = 0;
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    for (let row = 0; row <= ROWS - 3; row++) base.grid[row]![0] = 1;
+    return base;
+  }
+
+  /**
+   * Drive a PARTIAL pass first so the resulting state carries a live, mid-flight
+   * `sweepPass` (processedCols > 0, deletedCount > 0). This `mid` state is the
+   * exact object the production frame re-invokes `advanceSweep` on each frame, so
+   * it is the input whose immutability matters.
+   */
+  function midPartialPass(): GameState {
+    return advanceSweep(buildStackOverSquare(), 2.5);
+  }
+
+  it("does not mutate the caller's GameState during a partial pass", () => {
+    const input = midPartialPass();
+    expect(input.sweepPass).not.toBeNull();
+    const snapshot = structuredClone(input);
+
+    // A further partial advance on the SAME object must not write through.
+    advanceSweep(input, 2.5);
+
+    // Whole-state byte-identity (grid, score, sweepX, and the nested sweepPass:
+    // processedCols / deletedCount / marks inner arrays) is unchanged.
+    expect(input).toEqual(snapshot);
+    expect(input.sweepPass!.processedCols).toBe(
+      snapshot.sweepPass!.processedCols,
+    );
+    expect(input.sweepPass!.deletedCount).toBe(snapshot.sweepPass!.deletedCount);
+    expect(input.sweepPass!.marks).toEqual(snapshot.sweepPass!.marks);
+  });
+
+  it("is idempotent: advanceSweep(sameInput, n) twice yields identical results", () => {
+    const input = midPartialPass();
+    const a = advanceSweep(input, 2.5);
+    const b = advanceSweep(input, 2.5);
+    expect(b.grid).toEqual(a.grid);
+    expect(b.score).toBe(a.score);
+    expect(b.sweepX).toBeCloseTo(a.sweepX, 6);
+    expect(b.sweepPass).toEqual(a.sweepPass);
+  });
+});
+
+describe("snapshot/settle race + cascade correctness (2.x)", () => {
+  it("a cell that falls into a snapshot coordinate after the snapshot is NOT deleted", () => {
+    // col 0: mono A 2x2 at the floor (snapshot-marked at pass start), and a lone
+    // B floating two rows above it. When col 0 is swept, the A square is deleted
+    // and the B cell falls DOWN INTO coordinates that were snapshot-marked
+    // (rows ROWS-1/ROWS-2). The B cell must survive — deletion is by (row,col)
+    // snapshot, applied before settle, so the post-settle B is not re-deleted.
+    const base = createGame();
+    base.grid[ROWS - 1]![0] = 0;
+    base.grid[ROWS - 1]![1] = 0;
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    base.grid[ROWS - 4]![0] = 1; // floats above the square in col 0
+    const s = advanceSweep(base, 2.5);
+    // B fell to the floor of col 0; the A square is gone.
+    expect(s.grid[ROWS - 1]![0]).toBe(1);
+    expect(s.grid[ROWS - 1]![1]).toBe(null);
+    // exactly one B cell survives in col 0.
+    expect(s.grid.filter((r) => r[0] === 1).length).toBe(1);
+  });
+
+  /**
+   * Build a board where NO B 2x2 exists at pass start, but an incremental settle
+   * (after the A square below clears) drops the scattered B cells into a fresh
+   * B 2x2 — a true cascade. Per column: A square (rows ROWS-1,ROWS-2), then two
+   * B cells at rows ROWS-3 and ROWS-5 (a gap at ROWS-4 prevents any 2x2 at start
+   * — vertically the B's are not adjacent). After the A's clear and the column
+   * settles, the two B's fall to rows ROWS-1,ROWS-2, forming a B 2x2 across both
+   * columns.
+   */
+  function buildCascadeBoard(): GameState {
+    const base = createGame();
+    for (const c of [0, 1]) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+      base.grid[ROWS - 3]![c] = 1;
+      base.grid[ROWS - 5]![c] = 1;
+    }
+    return base;
+  }
+
+  it("no B square exists at pass start (sanity for the cascade setup)", () => {
+    // Only the A 2x2 should be marked initially; the scattered B's must not be.
+    const start = computeMarked(buildCascadeBoard().grid);
+    expect(start.distinctSquares).toBe(1);
+  });
+
+  it("a cascade square formed mid-pass does NOT clear this pass", () => {
+    const s = advanceSweep(buildCascadeBoard(), 2.5); // sweep past cols 0,1
+    // The A square is cleared and the B's fell forming a NEW 2x2, but it was NOT
+    // in this pass's snapshot, so it must still be present.
+    expect(s.grid[ROWS - 1]![0]).toBe(1);
+    expect(s.grid[ROWS - 1]![1]).toBe(1);
+    expect(s.grid[ROWS - 2]![0]).toBe(1);
+    expect(s.grid[ROWS - 2]![1]).toBe(1);
+    expect(s.score).toBe(0); // not banked yet either
+  });
+
+  it("the cascade square is marked at the next pass and clears on it", () => {
+    // Complete this pass (A square clears, B square forms via cascade).
+    const afterPass1 = advanceSweep(buildCascadeBoard(), COLS);
+    // Only the A square scored this pass: 1 x 40 = 40. The cascade B square (one
+    // colour) remains on the board -> single-colour bonus (1000).
+    expect(afterPass1.score).toBe(40 + 1000);
+    // B square is now on the floor, untouched.
+    expect(afterPass1.grid[ROWS - 1]![0]).toBe(1);
+    // Next full pass clears the cascade B square.
+    const afterPass2 = advanceSweep(afterPass1, COLS);
+    expect(afterPass2.grid[ROWS - 1]![0]).toBe(null);
+    // +40 for the B square, and the board is now empty -> all-clear bonus.
+    expect(afterPass2.score).toBe(40 + 1000 + 40 + 10000);
+  });
+});
+
+describe("sweep determinism: step-size independence (5.3 core)", () => {
+  /** Board with a clearable square that the sweep crosses, plus a stack to settle. */
+  function build(): GameState {
+    const base = createGame();
+    base.grid[ROWS - 1]![0] = 0;
+    base.grid[ROWS - 1]![1] = 0;
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    for (let row = 0; row <= ROWS - 3; row++) base.grid[row]![0] = 1; // stack
+    return base;
+  }
+
+  it("advancing 16 cols in one call == sixteen 1-col calls (grid + score + sweepX)", () => {
+    const oneShot = advanceSweep(build(), COLS);
+    let split: GameState = build();
+    for (let i = 0; i < COLS; i++) split = advanceSweep(split, 1);
+    expect(split.grid).toEqual(oneShot.grid);
+    expect(split.score).toBe(oneShot.score);
+    expect(split.sweepX).toBeCloseTo(oneShot.sweepX, 6);
+  });
+
+  it("3 cols in one call == three 1-col calls", () => {
+    const oneShot = advanceSweep(build(), 3);
+    let split: GameState = build();
+    for (let i = 0; i < 3; i++) split = advanceSweep(split, 1);
+    expect(split.grid).toEqual(oneShot.grid);
+    expect(split.score).toBe(oneShot.score);
+    expect(split.sweepX).toBeCloseTo(oneShot.sweepX, 6);
+  });
+
+  it("fractional steps sum to the same state as one big step", () => {
+    const oneShot = advanceSweep(build(), 5);
+    let split: GameState = build();
+    for (let i = 0; i < 10; i++) split = advanceSweep(split, 0.5);
+    expect(split.grid).toEqual(oneShot.grid);
+    expect(split.score).toBe(oneShot.score);
+    expect(split.sweepX).toBeCloseTo(oneShot.sweepX, 6);
+  });
+});
+
+describe("partial-coverage matrix (3.x)", () => {
+  /** Square sitting in cols [c, c+1] on the floor, mono colour. */
+  function squareAt(base: GameState, c: number, color: 0 | 1): void {
+    base.grid[ROWS - 1]![c] = color;
+    base.grid[ROWS - 1]![c + 1] = color;
+    base.grid[ROWS - 2]![c] = color;
+    base.grid[ROWS - 2]![c + 1] = color;
+  }
+
+  it("square present at pass start clears this pass", () => {
+    const base = createGame();
+    squareAt(base, 0, 0);
+    const s = advanceSweep(base, COLS);
+    expect(s.grid[ROWS - 1]![0]).toBe(null);
+    // 1 x 40 = 40, board emptied -> all-clear bonus.
+    expect(s.score).toBe(40 + 10000);
+  });
+
+  it("square formed BEHIND the bar mid-pass waits for the next pass", () => {
+    // Start a pass with an empty board; the bar advances past col 5. Then a
+    // square is dropped into cols 0-1 (behind the bar). It must not clear this
+    // pass (not in snapshot), and must clear on the next full pass.
+    let s = advanceSweep(createGame(), 6); // leading edge at col 6
+    expect(s.sweepX).toBeCloseTo(6, 6);
+    // Drop a square behind the bar into cols 0-1.
+    const withSquare: GameState = { ...s, grid: cloneForTest(s.grid) };
+    withSquare.grid[ROWS - 1]![0] = 0;
+    withSquare.grid[ROWS - 1]![1] = 0;
+    withSquare.grid[ROWS - 2]![0] = 0;
+    withSquare.grid[ROWS - 2]![1] = 0;
+    // Finish this pass.
+    s = advanceSweep(withSquare, COLS - withSquare.sweepX);
+    // Behind-the-bar square survived this pass.
+    expect(s.grid[ROWS - 1]![0]).toBe(0);
+    expect(s.score).toBe(0);
+    // Next full pass clears it (now in the new snapshot).
+    s = advanceSweep(s, COLS);
+    expect(s.grid[ROWS - 1]![0]).toBe(null);
+    // 1 x 40 = 40, board emptied -> all-clear bonus.
+    expect(s.score).toBe(40 + 10000);
+  });
+
+  it("square completed mid-pass AHEAD of the bar waits for the next pass", () => {
+    // Bar advances past col 2 on an empty board, then a square is placed AHEAD
+    // (cols 8-9). It wasn't in the pass-start snapshot, so it must wait.
+    let s = advanceSweep(createGame(), 3); // leading edge at col 3
+    const withSquare: GameState = { ...s, grid: cloneForTest(s.grid) };
+    withSquare.grid[ROWS - 1]![8] = 1;
+    withSquare.grid[ROWS - 1]![9] = 1;
+    withSquare.grid[ROWS - 2]![8] = 1;
+    withSquare.grid[ROWS - 2]![9] = 1;
+    s = advanceSweep(withSquare, COLS - withSquare.sweepX);
+    // Ahead square survived (not in snapshot).
+    expect(s.grid[ROWS - 1]![8]).toBe(1);
+    expect(s.score).toBe(0);
+    // Next pass clears it.
+    s = advanceSweep(s, COLS);
+    expect(s.grid[ROWS - 1]![8]).toBe(null);
+    // 1 x 40 = 40, board emptied -> all-clear bonus.
+    expect(s.score).toBe(40 + 10000);
   });
 });
 

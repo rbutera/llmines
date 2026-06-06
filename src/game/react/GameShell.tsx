@@ -3,8 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AccountBar, Leaderboard, PersonalBest } from "../account/AccountUI";
 import { useAuth, useScores } from "../account/context";
-import { BACKING_TRACK_URL } from "../core";
-import { GameController } from "../engine/controller";
+import {
+  BACKING_TRACK_URL,
+  type GeneratedPiece,
+  PREVIEW_DEPTH,
+  skinAt,
+} from "../core";
+import { GameController, type RenderState } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
 import { installTestApi } from "../test-api/install";
@@ -22,6 +27,11 @@ type Phase = "start" | "playing" | "gameover";
 export function GameShell() {
   const [phase, setPhase] = useState<Phase>("start");
   const [score, setScore] = useState(0);
+  const [hud, setHud] = useState<{
+    queue: GeneratedPiece[];
+    skinIndex: number;
+    bpm: number;
+  }>({ queue: [], skinIndex: 0, bpm: 0 });
   const [controller, setController] = useState<GameController | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const phaseRef = useRef<Phase>("start");
@@ -41,12 +51,16 @@ export function GameShell() {
   useEffect(() => {
     const c = new GameController({ testMode: TEST_MODE, seed: 1 });
     setController(c);
-    const unsubscribe = c.subscribe((rs) => {
+    const unsubscribe = c.subscribe((rs: RenderState) => {
       setScore(rs.score);
+      // V2 HUD: preview queue, skin, BPM (drives NextPreview + skin panel).
+      setHud({ queue: rs.queue, skinIndex: rs.skinIndex, bpm: rs.bpm });
       if (rs.gameOver) {
-        // Run the score-submit path exactly once per game over. Unauthenticated
-        // runs submit nothing (the signed-out rule); the mutation/mock also
-        // enforce it server-side.
+        // Brownfield: run the score-submit path exactly once per game over.
+        // `rs.score` is now V2's score (squares*40 + combo curve), so the
+        // leaderboard submit reads the V2 scoring shape. Unauthenticated runs
+        // submit nothing (the signed-out rule); the mutation/mock also enforce
+        // it server-side.
         if (!gameOverSubmittedRef.current) {
           gameOverSubmittedRef.current = true;
           if (userRef.current) void submitRef.current(rs.score);
@@ -123,7 +137,7 @@ export function GameShell() {
         {phase === "start" && <StartScreen onStart={handleStart} />}
 
         {phase === "playing" && controller && (
-          <PlayingScreen controller={controller} score={score} />
+          <PlayingScreen controller={controller} score={score} hud={hud} />
         )}
 
         {phase === "gameover" && (
@@ -186,10 +200,13 @@ function StartScreen({ onStart }: { onStart: () => void }) {
 function PlayingScreen({
   controller,
   score,
+  hud,
 }: {
   controller: GameController;
   score: number;
+  hud: { queue: GeneratedPiece[]; skinIndex: number; bpm: number };
 }) {
+  const skin = skinAt(hud.skinIndex);
   return (
     <section
       aria-label="Game"
@@ -215,9 +232,95 @@ function PlayingScreen({
             {score}
           </div>
         </div>
+        <NextPreview queue={hud.queue} palette={skin.blockPalette} />
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur">
+          <div className="text-xs tracking-widest text-white/50 uppercase">
+            Skin
+          </div>
+          <div className="mt-1 flex items-baseline justify-between">
+            <span data-testid="skin-id" className="text-sm font-semibold">
+              {skin.id}
+            </span>
+            <span
+              data-testid="bpm"
+              className="font-mono text-sm tabular-nums text-white/60"
+            >
+              {hud.bpm} BPM
+            </span>
+          </div>
+        </div>
         <ControlsCheatsheet compact />
       </aside>
     </section>
+  );
+}
+
+/**
+ * Render-only next-3 preview. Reads the controller's queue (render projection)
+ * and draws each upcoming 2x2 piece, flagging any that carries a chain special.
+ */
+function NextPreview({
+  queue,
+  palette,
+}: {
+  queue: GeneratedPiece[];
+  palette: readonly [string, string];
+}) {
+  const upcoming = queue.slice(0, PREVIEW_DEPTH);
+  return (
+    <div
+      data-testid="preview"
+      className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur"
+    >
+      <div className="text-xs tracking-widest text-white/50 uppercase">Next</div>
+      <ol className="mt-3 flex gap-3">
+        {upcoming.map((gp, i) => (
+          <li key={i} className="flex flex-col items-center gap-1">
+            <PiecePreview piece={gp} palette={palette} />
+            {gp.special && (
+              <span
+                data-testid="preview-special"
+                className="text-[10px] font-bold tracking-wide text-[#ffd166] uppercase"
+              >
+                chain
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function PiecePreview({
+  piece,
+  palette,
+}: {
+  piece: GeneratedPiece;
+  palette: readonly [string, string];
+}) {
+  const flat = [
+    piece.cells[0][0],
+    piece.cells[0][1],
+    piece.cells[1][0],
+    piece.cells[1][1],
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-0.5">
+      {flat.map((color, idx) => {
+        const isChain = piece.special?.cellIndex === idx;
+        return (
+          <span
+            key={idx}
+            className="h-5 w-5 rounded-sm"
+            style={{
+              backgroundColor: palette[color],
+              boxShadow: isChain ? "inset 0 0 0 2px #ffd166" : undefined,
+            }}
+          />
+        );
+      })}
+    </div>
   );
 }
 

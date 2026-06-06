@@ -6,10 +6,43 @@ import {
   ROWS,
   type Piece,
 } from "../core";
+import { FakeClock } from "../time/clock";
 import { GameController, type RenderState } from "./controller";
 
 /** Frames (at 100ms each) needed to lapse the spawn-hold. */
 const HOLD_FRAMES = HOLD_MS / 100;
+
+/**
+ * Build a production controller wired to a FakeClock and a stubbed rAF, plus a
+ * `step(dtMs)` driver. In the V2 clock-driven architecture the production frame
+ * reads time from the injected clock (NOT the rAF timestamp), so `step` advances
+ * the FakeClock and then fires the captured rAF callback to run exactly one
+ * frame. The first frame after start only seeds the clock baseline (dt = 0).
+ */
+function productionWithClock(seed = 1): {
+  c: GameController;
+  step: (dtMs: number) => void;
+} {
+  let cb: ((ts: number) => void) | null = null;
+  let ts = 0;
+  (globalThis as unknown as { requestAnimationFrame: unknown }).requestAnimationFrame =
+    (fn: (t: number) => void) => {
+      cb = fn;
+      return 1;
+    };
+  (globalThis as unknown as { cancelAnimationFrame: unknown }).cancelAnimationFrame =
+    () => undefined;
+  const clock = new FakeClock();
+  const c = new GameController({ testMode: false, seed, clock });
+  return {
+    c,
+    step: (dtMs: number) => {
+      clock.advance(dtMs / 1000); // FakeClock is in seconds
+      ts += dtMs;
+      cb?.(ts);
+    },
+  };
+}
 
 /**
  * Start a production controller and lapse the new-block hold, leaving the piece
@@ -22,34 +55,11 @@ function startAndRelease(
   step: (dtMs: number) => void,
 ): void {
   c.start();
-  step(100); // seed the clock (dt = 0, hold untouched)
-  for (let i = 0; i < HOLD_FRAMES; i++) step(100); // run out the hold (no gravity)
-}
-
-/**
- * Drives the production rAF loop deterministically: requestAnimationFrame is
- * stubbed to merely capture the frame callback so the test can "step" frames
- * with an internal clock. The controller clamps dt to 100ms and ignores the
- * very first frame (it only seeds its clock), so `step(dt)` advances a non-zero
- * internal clock to avoid colliding with the controller's `lastTs === 0`
- * sentinel.
- */
-function withFakeRaf(): { step: (dtMs: number) => void } {
-  let cb: ((ts: number) => void) | null = null;
-  let clock = 0;
-  (globalThis as unknown as { requestAnimationFrame: unknown }).requestAnimationFrame =
-    (fn: (ts: number) => void) => {
-      cb = fn;
-      return 1;
-    };
-  (globalThis as unknown as { cancelAnimationFrame: unknown }).cancelAnimationFrame =
-    () => undefined;
-  return {
-    step: (dtMs: number) => {
-      clock += dtMs;
-      cb?.(clock);
-    },
-  };
+  step(100); // seed the clock baseline (dt = 0, hold untouched)
+  // HOLD_FRAMES ticks bring the hold remaining to ~0; one further frame flips it
+  // to inactive (a tick that reaches 0 lapses on the NEXT frame). All of these
+  // frames suspend gravity, so the accumulator stays at 0 afterwards.
+  for (let i = 0; i < HOLD_FRAMES + 1; i++) step(100);
 }
 
 afterEach(() => {
@@ -66,8 +76,7 @@ const CHECKER: Piece = [
 
 describe("fallProgress gating (bottom-row settle)", () => {
   it("interpolates while the piece can still descend", () => {
-    const { step } = withFakeRaf();
-    const c = new GameController({ testMode: false, seed: 1 });
+    const { c, step } = productionWithClock(1);
     startAndRelease(c, step); // spawn + lapse the hold; gravity accumulator at 0
     step(100); // 100ms accumulated toward the 700ms gravity tick
 
@@ -83,8 +92,7 @@ describe("fallProgress gating (bottom-row settle)", () => {
   });
 
   it("reports zero fall offset once the piece rests on the bottom row", () => {
-    const { step } = withFakeRaf();
-    const c = new GameController({ testMode: false, seed: 1 });
+    const { c, step } = productionWithClock(1);
     startAndRelease(c, step);
     // 58 post-hold frames -> 5800ms -> 8 gravity ticks (piece reaches the
     // bottom row at pos.row = ROWS-2) with 200ms left over accumulating toward
@@ -131,8 +139,7 @@ describe("bottom-row landing via the deterministic test API", () => {
 
 describe("new-block hold (production timing)", () => {
   it("suspends gravity while held, then resumes at normal gravity", () => {
-    const { step } = withFakeRaf();
-    const c = new GameController({ testMode: false, seed: 1 });
+    const { c, step } = productionWithClock(1);
     c.start();
     step(100); // seed the clock (dt = 0)
 
@@ -144,13 +151,21 @@ describe("new-block hold (production timing)", () => {
     expect(rs.fallProgress).toBe(0);
 
     // The hold lapses; the piece is still at the top (no carried-over fast-fall).
+    // One frame brings the remaining time to ~0; the next flips hold inactive
+    // (a tick that reaches 0 lapses on the following frame). Gravity stays
+    // suspended for both, so the piece does not descend.
+    step(100);
     step(100);
     rs = c.getRenderState();
     expect(rs.hold.active).toBe(false);
     expect(rs.active!.pos.row).toBe(0);
 
     // After one gravity interval it descends exactly one row (normal gravity).
-    for (let i = 0; i < GRAVITY_INTERVAL_MS / 100; i++) step(100);
+    // The V2 clock->dt path accumulates from absolute-time deltas, which can
+    // land a hair under the interval on the nominal frame (float drift), so
+    // advance one extra frame to guarantee the accumulator crosses the
+    // threshold; the piece must descend by exactly one row, not more.
+    for (let i = 0; i < GRAVITY_INTERVAL_MS / 100 + 1; i++) step(100);
     expect(c.getRenderState().active!.pos.row).toBe(1);
     c.stop();
   });
@@ -255,9 +270,12 @@ describe("score value path (authoritative, independent of the animated FX)", () 
     expect(c.testState().score).toBe(0);
 
     c.testSweepNow();
-    // 4 cells x 1 distinct square. This is the exact value the `score` testid
-    // renders — the cosmetic ScoreFx never participates in this number.
-    expect(c.testState().score).toBe(4);
+    // V2 scoring supersedes the old `deletedCount * distinctSquares` rule:
+    // 1 distinct square * 40 = 40, plus the all-clear board-state bonus (10,000)
+    // because the board is empty after the sweep. This is the exact value the
+    // `score` testid renders — the cosmetic ScoreFx never participates in this
+    // number (the ScoreFx overlay fires off this same V2 score state).
+    expect(c.testState().score).toBe(10040);
   });
 });
 

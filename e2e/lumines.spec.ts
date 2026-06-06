@@ -3,12 +3,22 @@ import { expect, test, type Page } from "@playwright/test";
 type Color = 0 | 1;
 type Cell = Color | null;
 type Piece = [[Color, Color], [Color, Color]];
+
+/**
+ * Local view of the state shape these e2e assertions read. The real
+ * `window.__lumines.state()` (declared in src/game/test-api/install.ts) returns
+ * a wider `PublicState`; this is a structural subset for convenience. The global
+ * `Window.__lumines` augmentation comes from install.ts — not re-declared here,
+ * to avoid two conflicting declarations of the same global property.
+ */
 interface State {
   grid: Cell[][];
   score: number;
   gameOver: boolean;
   sweepX: number;
   hold: { active: boolean; remainingMs: number };
+  /** Additive (lumines-grid-and-sweep): distinct completed 2x2 squares. */
+  distinctSquares: number;
 }
 
 declare global {
@@ -23,6 +33,9 @@ declare global {
       sweepProgress(dtMs: number): void;
       pressSoftDrop(): void;
       pressHardDrop(): void;
+      clockAdvance(dtMs: number): void;
+      setSpecial(row: number, col: number): void;
+      setSkin(index: number): void;
     };
   }
 }
@@ -155,10 +168,12 @@ test("a built 2x2 square is cleared by the sweep and scores per the rule", async
 
   await api(page, "sweepNow");
   const s = await getState(page);
-  expect(s.score).toBe(4); // 4 cells x 1 distinct square
+  // V2 scoring supersedes: 1 distinct square * 40 = 40, plus the all-clear
+  // board-state bonus (10,000) since the board is empty after the clear.
+  expect(s.score).toBe(10040);
   // all cleared
   expect(s.grid.flat().every((c) => c === null)).toBe(true);
-  await expect(page.getByTestId("score")).toHaveText("4");
+  await expect(page.getByTestId("score")).toHaveText("10040");
 });
 
 test("cells settle by gravity after deletions", async ({ page }) => {
@@ -175,8 +190,9 @@ test("cells settle by gravity after deletions", async ({ page }) => {
 
   await api(page, "sweepNow");
   const s = await getState(page);
-  // the A cells (2 squares over rows 7-9) were cleared: 6 cells x 2 squares
-  expect(s.score).toBe(12);
+  // V2 scoring supersedes: 2 distinct squares * 40 = 80, plus the single-colour
+  // board-state bonus (1,000) since only the mono-B row remains after the clear.
+  expect(s.score).toBe(1080);
   // the floating B row fell to the floor by gravity
   expect(s.grid[9]![7]).toBe(1);
   expect(s.grid[9]![8]).toBe(1);

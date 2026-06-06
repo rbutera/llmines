@@ -1,5 +1,5 @@
 import { Application, Container, Graphics } from "pixi.js";
-import { COLS, ROWS, type Cell, type Grid } from "../core";
+import { BOARD_ASPECT, COLS, ROWS, type Cell, type Grid } from "../core";
 import type { GameController, RenderState } from "../engine/controller";
 import { burstParticleCount, scoreIntensity } from "../fx/scoreFx";
 
@@ -43,6 +43,47 @@ function columnStack(grid: Grid, col: number): { row: number; cell: Cell }[] {
     if (c !== null) out.push({ row, cell: c });
   }
   return out;
+}
+
+/**
+ * Pure collapse diff: match each column's new stack to its old stack (top-down,
+ * pairing each surviving cell to the next old cell of the SAME colour — the new
+ * stack is a colour-ordered subsequence of the old one) and, for any cell that
+ * ended LOWER than it started, return a
+ * starting pixel offset (negative = above its rest position) so the renderer can
+ * ease it down. This is what animates an incremental per-column settle: the bar
+ * clearing a column emits a new RenderState whose column lost cells, so the
+ * stack above falls and is tweened here — no special-casing needed for the
+ * deferred-gravity fix. Keyed by `row * COLS + col`. Exported for testing.
+ */
+export function computeCollapseOffsets(
+  oldGrid: Grid,
+  newGrid: Grid,
+  cell = CELL,
+): Map<number, number> {
+  const offsets = new Map<number, number>();
+  for (let col = 0; col < COLS; col++) {
+    // Settle preserves the colour ORDER of surviving cells within a column, so
+    // the new stack is a subsequence of the old one. Match them top-down, pairing
+    // each new cell to the next old cell of the SAME colour. This correctly
+    // animates an incremental settle where cells were cleared from BELOW the
+    // survivors (the deferred-gravity fix's frame): the survivors fell by the
+    // number of cleared cells beneath them. A bottom-up index match would miss
+    // this because the bottom rows stay occupied across the frame.
+    const oldStack = columnStack(oldGrid, col).reverse(); // now top-down
+    const newStack = columnStack(newGrid, col).reverse(); // now top-down
+    let oi = 0;
+    for (const nu of newStack) {
+      while (oi < oldStack.length && oldStack[oi]!.cell !== nu.cell) oi++;
+      if (oi >= oldStack.length) break; // no further match (defensive)
+      const oldRow = oldStack[oi]!.row;
+      oi++;
+      if (nu.row > oldRow) {
+        offsets.set(nu.row * COLS + col, (oldRow - nu.row) * cell);
+      }
+    }
+  }
+  return offsets;
 }
 
 /**
@@ -93,9 +134,14 @@ export class PixiRenderer {
     this.app = app;
     parent.appendChild(app.canvas);
     app.canvas.style.display = "block";
+    // Render-scale fit (display-only): fill the container's width and derive the
+    // height from the logical aspect ratio. The logical grid (COLS x ROWS) and
+    // all cell coordinates in state() are unchanged — this is pure CSS scaling.
+    // Previously the canvas was capped at its native BOARD_W (640px), which made
+    // the board feel small on wider containers; scaling to 100% fixes that.
     app.canvas.style.width = "100%";
     app.canvas.style.height = "auto";
-    app.canvas.style.maxWidth = `${BOARD_W}px`;
+    app.canvas.style.aspectRatio = BOARD_ASPECT;
     app.canvas.setAttribute("aria-hidden", "true");
 
     const stage = new Container();
@@ -171,19 +217,8 @@ export class PixiRenderer {
 
   /** Match each column's new stack to its old stack to animate fallen cells. */
   private seedCollapse(oldGrid: Grid, newGrid: Grid): void {
-    for (let col = 0; col < COLS; col++) {
-      const oldStack = columnStack(oldGrid, col);
-      const newStack = columnStack(newGrid, col);
-      const n = Math.min(oldStack.length, newStack.length);
-      for (let i = 0; i < n; i++) {
-        const oldRow = oldStack[i]!.row;
-        const newRow = newStack[i]!.row;
-        if (newRow > oldRow) {
-          // fell downward: start visually at old position, ease to new
-          const key = newRow * COLS + col;
-          this.fallOffsets.set(key, (oldRow - newRow) * CELL);
-        }
-      }
+    for (const [key, off] of computeCollapseOffsets(oldGrid, newGrid)) {
+      this.fallOffsets.set(key, off);
     }
   }
 
@@ -314,11 +349,30 @@ export class PixiRenderer {
     g.clear();
     if (!rs.active) return;
     const { cells, pos } = rs.active;
-    // Defensive clamp: the active piece's lowest cells sit at `pos.row + 1`, so
-    // the smooth-fall offset must never exceed the empty rows beneath them.
-    // This guarantees no cell is ever drawn below the bottom row / canvas even
-    // if fallProgress is stale (belt-and-suspenders for the controller gate).
-    const roomBelow = Math.max(0, ROWS - 1 - (pos.row + 1));
+    // Unified dip clamp: the active piece's lowest cells sit at `pos.row + 1`, so
+    // the smooth-fall offset must never push a cell past where it will actually
+    // come to rest. ONE consistent "where does this cell come to rest" rule
+    // covers BOTH cases:
+    //   - bottom-of-grid: the floor row (ROWS - 1), and
+    //   - stacking-onto-other-blocks: the row just above the highest settled cell
+    //     beneath the piece's columns.
+    // For each of the piece's two columns we find the first occupied settled row
+    // at/under the lowest piece row; the rest surface is whichever column rests
+    // higher (so neither column ever visually overlaps the stack below it before
+    // the lock snaps). This kills the stack-on-blocks dip the same way the
+    // floor case was already fixed.
+    const lowestPieceRow = pos.row + 1;
+    const restRoomForColumn = (col: number): number => {
+      if (col < 0 || col >= COLS) return 0;
+      for (let row = lowestPieceRow + 1; row < ROWS; row++) {
+        if (rs.grid[row]?.[col] != null) return row - 1 - lowestPieceRow;
+      }
+      return ROWS - 1 - lowestPieceRow;
+    };
+    const roomBelow = Math.max(
+      0,
+      Math.min(restRoomForColumn(pos.col), restRoomForColumn(pos.col + 1)),
+    );
     const yOff = Math.min(rs.fallProgress, roomBelow) * CELL;
     // "Ready to place" cue: while the new block is held it pulses a brighter
     // glow (and an outline ring) so the hold reads as an intentional beat. The
