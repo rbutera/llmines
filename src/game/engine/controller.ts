@@ -1,7 +1,6 @@
 import {
   advanceSweep,
   BPM,
-  COLS,
   COLS_PER_BEAT,
   computeMarked,
   createGame,
