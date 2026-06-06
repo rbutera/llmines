@@ -297,4 +297,23 @@ export class GameController {
     this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
     this.emit();
   }
+
+  /**
+   * Additive clock-driven driver: advance the injected clock by `dtMs` and run
+   * one logical sweep frame derived from the clock delta. Equivalent in effect
+   * to {@link testSweepProgress} (same `advanceSweep` call) but routed through
+   * the clock seam, so audio-driven timing is testable the same way. Requires a
+   * clock that supports `advance` (the default test-mode {@link FakeClock}).
+   */
+  testClockAdvance(dtMs: number): void {
+    const c = this.clock as Clock & { advance?: (seconds: number) => void };
+    if (typeof c.advance !== "function") {
+      throw new Error(
+        "testClockAdvance requires an advanceable clock (FakeClock)",
+      );
+    }
+    c.advance(dtMs / 1000);
+    this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
+    this.emit();
+  }
 }

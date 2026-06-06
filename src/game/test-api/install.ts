@@ -10,6 +10,11 @@ export interface LuminesTestApi {
   tick(): void;
   sweepNow(): void;
   sweepProgress(dtMs: number): void;
+  /**
+   * Additive: advance the injected clock by `dtMs` and run one logical sweep
+   * frame. In addition to (not a replacement for) `sweepProgress`.
+   */
+  clockAdvance(dtMs: number): void;
 }
 
 declare global {
@@ -33,6 +38,7 @@ export function installTestApi(controller: GameController): () => void {
     tick: () => controller.testTick(),
     sweepNow: () => controller.testSweepNow(),
     sweepProgress: (dtMs) => controller.testSweepProgress(dtMs),
+    clockAdvance: (dtMs) => controller.testClockAdvance(dtMs),
   };
   window.__lumines = api;
   return () => {
