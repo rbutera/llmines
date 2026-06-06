@@ -63,6 +63,11 @@ type Subscriber = (s: RenderState) => void;
  * Forward column delta from `from` to `to` on the wrapped [0, COLS) sweep
  * track. The sweep only ever moves forward (with wraps), so a `to` that is
  * numerically less than `from` means a wrap occurred: add a full `COLS`. Pure.
+ *
+ * NOTE: retained as the design's reference wrap-delta path. The production frame
+ * now derives sweep motion from ABSOLUTE clock time (see {@link
+ * GameController.runFrame}), which never needs this; it is kept (and tested) to
+ * document the wrapped-track delta semantics the absolute path supersedes.
  */
 export function forwardDelta(from: number, to: number, cols: number): number {
   let delta = to - from;
@@ -367,6 +372,19 @@ export class GameController {
     this.started = true;
     this.state = spawnPiece(this.state, piece);
     this.emit();
+  }
+
+  /**
+   * Test-only: write a settled cell directly onto the grid (no gravity, no
+   * spawn). Lets a test set up an exact board deterministically — e.g. clearable
+   * squares at known columns — without driving pieces through gravity, which
+   * would auto-spawn RNG pieces and contaminate the board. Mutates a clone so
+   * the grid reference stays internal; does not emit.
+   */
+  testSetCell(row: number, col: number, color: 0 | 1): void {
+    const grid = this.state.grid.map((r) => r.slice());
+    grid[row]![col] = color;
+    this.state = { ...this.state, grid };
   }
 
   /** One gravity step; NEVER auto-spawns. */

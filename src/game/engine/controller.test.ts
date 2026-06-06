@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { BPM, COLS, type Piece, type PublicState } from "../core";
+import { BPM, COLS, ROWS, type Piece, type PublicState } from "../core";
 import { __resetAudioClockForTests } from "../audio/clock";
 import { type Clock, FakeClock } from "../time/clock";
 import { forwardDelta, GameController } from "./controller";
@@ -226,6 +226,75 @@ describe("Production clock→dt path: suspended + re-suspend", () => {
     c.testProductionFrame();
     expect(sweepX()).toBeGreaterThan(sweepAfterResume); // sweep forward again
     expect(gravity()).toBeGreaterThan(gravityAfterResume); // gravity forward again
+
+    c.stop();
+  });
+
+  it("suspend MID-pass then resume does not drop or double a column at the seam", () => {
+    const SEC_PER_EIGHTH = 60 / BPM / 2; // one column's worth of musical time
+
+    // Two clearable mono-B 2x2 squares in DISTINCT column pairs, written DIRECTLY
+    // onto the settled grid via the deterministic test interface (no gravity /
+    // auto-spawn contamination): square A at the left wall (cols 0-1, crossed
+    // BEFORE the seam) and square B further right (cols 6-7, crossed AFTER the
+    // seam). One distinct 2x2 each → a full pass scores 8 cells * 2 squares = 16.
+    function squareCleared(c: GameController, c0: number): boolean {
+      const g = c.testState().grid;
+      return (
+        g[ROWS - 1]![c0] === null &&
+        g[ROWS - 1]![c0 + 1] === null &&
+        g[ROWS - 2]![c0] === null &&
+        g[ROWS - 2]![c0 + 1] === null
+      );
+    }
+
+    const clock = new ScriptedClock();
+    const c = new GameController({ testMode: false, seed: 1, clock });
+    // Lay both 2x2 squares directly on the floor (cols 0-1 and 6-7) so gravity
+    // has nothing to drop and never auto-spawns mid-sweep.
+    for (const c0 of [0, 6]) {
+      c.testSetCell(ROWS - 1, c0, 1);
+      c.testSetCell(ROWS - 1, c0 + 1, 1);
+      c.testSetCell(ROWS - 2, c0, 1);
+      c.testSetCell(ROWS - 2, c0 + 1, 1);
+    }
+    expect(c.testState().distinctSquares).toBe(2); // two clearable squares
+
+    // 1) Baseline frame establishes sweepStartT (dt=0, no advance).
+    clock.value = 1;
+    c.testProductionFrame();
+    // 2) Advance ~4 columns: crosses square A (cols 0-1) but not square B.
+    clock.value = 1 + 4 * SEC_PER_EIGHTH;
+    c.testProductionFrame();
+    const midX = c.getRenderState().sweepX;
+    expect(midX).toBeGreaterThan(2); // past square A
+    expect(midX).toBeLessThan(6); // not yet at square B
+    expect(squareCleared(c, 0)).toBe(true); // A already deleted incrementally
+    expect(squareCleared(c, 6)).toBe(false); // B untouched so far
+    expect(c.testState().score).toBe(0); // not banked until pass end
+
+    // 3) Suspend MID-pass: now() → 0. Re-anchors the baseline; the in-flight
+    //    sweepPass (processedCols) is preserved so no column re-runs or is skipped.
+    clock.value = 0;
+    c.testProductionFrame();
+    expect(c.getRenderState().sweepX).toBe(midX); // frozen, not rewound
+    expect(squareCleared(c, 0)).toBe(true); // A NOT resurrected/re-deleted
+
+    // 4) Resume: a baseline frame (dt=0) then finish the rest of the pass,
+    //    continuing cleanly from the re-anchored baseline through the wrap.
+    clock.value = 2;
+    c.testProductionFrame();
+    const remainingCols = COLS - c.getRenderState().sweepX;
+    clock.value = 2 + (remainingCols + 0.5) * SEC_PER_EIGHTH; // cross the wrap
+    c.testProductionFrame();
+
+    // Seam correctness: square A (crossed before the seam) is gone exactly once
+    // and square B (crossed after) is also gone — neither dropped nor doubled —
+    // and the pass banked its full 16 once at the wrap.
+    expect(squareCleared(c, 0)).toBe(true);
+    expect(squareCleared(c, 6)).toBe(true);
+    expect(c.getRenderState().sweepX).toBeLessThan(2); // wrapped to a fresh pass
+    expect(c.testState().score).toBe(16); // 8 cells * 2 squares, banked ONCE
 
     c.stop();
   });
