@@ -51,17 +51,25 @@ const fragment = /* glsl */ `
       sin(p.y * 4.0 - t * 1.3) * 0.5 +
       sin((p.x + p.y) * 5.0 + t * 0.7) * 0.4;
     float r = length(p);
-    // Base hue anchored in the VIOLET/MAGENTA family so the background nebula
-    // matches the neon-purple board (the old 0.55 base read teal — a cohesion
-    // gap). Per-skin shift + drift are kept SMALL so every level stays in the
-    // purple world rather than wandering to teal/green. 0.78 ~ violet-magenta.
+    // Base hue anchored in the VIOLET/MAGENTA family so the background stays in
+    // the neon-purple world (cohesive with the board). Per-skin shift + drift
+    // kept SMALL so every level stays purple. 0.78 ~ violet-magenta.
     float hue = fract(0.78 + uSkin * 0.05 + t * 0.01 + flow * 0.03);
-    vec3 col = hue2rgb(hue);
-    // radial vignette so the centre (behind the board) stays calm/dark
-    float vign = smoothstep(0.85, 0.15, r);
+    // Round-2 (owner): the background must be DARK / low-key — the viewport is
+    // the ONLY thing that should grab attention, never a bright purple slab
+    // behind a near-black board. So: mix the hue heavily toward near-black, and
+    // keep only a faint dark-violet atmosphere. The colour is mostly black with a
+    // whisper of the hue, not a saturated magenta wash.
+    vec3 nearBlack = vec3(0.02, 0.01, 0.04);
+    vec3 col = mix(nearBlack, hue2rgb(hue), 0.22);
+    // radial vignette: brightest at centre, fading to the edges so the surround
+    // ring around the board stays especially dark (it framed the board too bright
+    // before).
+    float vign = smoothstep(0.9, 0.05, r);
     // gentle beat swell: cos gives a smooth bounded bump, peak on the beat
-    float beatSwell = 1.0 + 0.10 * cos(uBeat * 6.2831853);
-    float brightness = (0.18 + 0.22 * (flow * 0.5 + 0.5)) * vign * beatSwell;
+    float beatSwell = 1.0 + 0.08 * cos(uBeat * 6.2831853);
+    // Much lower base brightness — a subtle dark nebula, not a glowing slab.
+    float brightness = (0.05 + 0.10 * (flow * 0.5 + 0.5)) * vign * beatSwell;
     gl_FragColor = vec4(col * brightness * uIntensity, 1.0);
   }
 `;

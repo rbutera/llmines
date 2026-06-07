@@ -411,8 +411,8 @@ export function Cube({
           on bright blocks, dark on dark blocks). Subtle-but-clear: it preserves
           the block's colour rather than overpowering it. Animated in useFrame. */}
       {isGem && settings.gemEnabled && (
-        <mesh ref={gemRef} position={[0, 0, size * 0.18]}>
-          <octahedronGeometry args={[size * 0.2, 0]} />
+        <mesh ref={gemRef} position={[0, 0, size * 0.42]}>
+          <octahedronGeometry args={[size * 0.34, 0]} />
           <meshStandardMaterial
             ref={gemMatRef}
             color={gemColor}
@@ -420,7 +420,7 @@ export function Cube({
             emissiveIntensity={settings.gemIntensity}
             toneMapped={false}
             metalness={0.4}
-            roughness={0.25}
+            roughness={0.2}
           />
         </mesh>
       )}

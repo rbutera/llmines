@@ -16,27 +16,26 @@ import { CELL } from "./layout";
  * 3D drop SURROUND (replaces the flat SlamFlash bar/streak + SpeedLines smear
  * planes, which read as 2D decals under the straight-on ortho camera).
  *
- * This is built from BOXES, not camera-facing planes, so it carries genuine 3D
- * volume from this camera the same way the board cubes do (a box has depth +
- * edges; a plane facing the camera is a flat decal). Three parts:
+ * Built from BOXES, not camera-facing planes, so it carries genuine 3D volume
+ * from this camera the same way the board cubes do. Three parts:
  *
- *  1. ENERGY SHELL (continuous) — a translucent additive box hull, slightly
- *     larger than the 2x2 piece, riding the active-piece group so it wraps the
- *     falling block. Its opacity + how far it bulges scales with the shared drop
- *     ENERGY (soft-drop trail / heat). At rest it is invisible; as the piece
- *     drops faster the cage brightens and its glowing edges flare. This is the
- *     "speed-distortion field" around the block.
+ *  1. AIR-RESISTANCE band (soft-drop, round-2 rework — owner). On a SOFT drop the
+ *     effect concentrates on the LEADING (bottom) edge of the falling piece, as
+ *     if air resistance is pushing UP against the bottom cells: a hot compressed
+ *     glow band hugging the bottom edge that bulges DOWNWARD + brightens with
+ *     soft-drop energy, plus two upward-deflecting wisps peeling off the bottom
+ *     corners. It tracks the piece (rotation-aware: a 2x2's leading edge is its
+ *     bottom edge, which follows the piece position). Distinct from the hard-drop.
  *
- *  2. AFTER-IMAGES (trail) — a small POOL of ghost box hulls. While the piece
- *     descends with energy, we periodically STAMP a ghost at the piece's current
- *     world position; each ghost then fades + shrinks in place over ~0.25s. Left
- *     in true world space, they string UP the column the piece fell through with
- *     real depth + overlap — a 3D motion trail, not an upward plane.
+ *  2. AFTER-IMAGES (trail) — a small POOL of ghost box hulls stamped in WORLD
+ *     space as the piece descends with energy; each fades + shrinks in place over
+ *     ~0.25s, stringing UP the column with real depth/overlap (a 3D motion trail,
+ *     not an upward plane).
  *
- *  3. IMPACT SHELL (hard-drop burst) — on a hard-drop landing, a box hull snaps
- *     to the piece footprint at the landing row then EXPANDS outward + fades over
- *     ~0.3s: an expanding 3D shock cage. Pairs with the (kept) screen-shake +
- *     spark burst for a landing that punches.
+ *  3. IMPACT SHELL (hard-drop burst — KEEP EXACTLY, owner: "SICK"). On a
+ *     hard-drop landing a box hull snaps to the piece footprint at the landing
+ *     row then EXPANDS outward + fades over ~0.3s: an expanding 3D shock cage.
+ *     Pairs with the (kept) screen-shake + spark burst.
  *
  * Strictly cosmetic + pooled (fixed mesh sets, no per-event allocation). Seeded
  * only from render-only signals (drop energy + the hard-drop event queue); the
@@ -107,10 +106,12 @@ export const DropShell = forwardRef<
     intensity: number;
   }
 >(function DropShell({ energyRef, activeWorldRef, intensity }, ref) {
-  // Continuous shell (child of THIS group; the caller nests it under the active
-  // piece group so it follows the block).
-  const shellRef = useRef<THREE.Group>(null);
-  const shellMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  // Air-resistance band group (soft-drop): hugs the piece's leading/bottom edge,
+  // world-positioned each frame. A core glow band + two corner deflection wisps.
+  const airRef = useRef<THREE.Group>(null);
+  const airBandMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const airWispLMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const airWispRMatRef = useRef<THREE.MeshBasicMaterial>(null);
 
   // World-space ghost trail + impact shells live in a separate root group.
   const trailRootRef = useRef<THREE.Group>(null);
@@ -152,27 +153,53 @@ export const DropShell = forwardRef<
     [],
   );
 
-  useFrame((_s, dt) => {
+  useFrame((s, dt) => {
     const clampedDt = Math.min(dt, 0.05);
     const energy = Math.max(0, Math.min(1, energyRef.current ?? 0));
-
-    // --- 1. Continuous energy shell: world-positioned over the live piece. ---
-    // Positioned in WORLD space (not nested under the piece group) so this single
-    // component can own the shell AND the world-space trail/impacts. The shell
-    // tracks the piece via activeWorldRef; it hides when no piece / no energy.
-    const shell = shellRef.current;
-    const shellMat = shellMatRef.current;
+    const now = s.clock.elapsedTime;
     const world = activeWorldRef.current;
-    if (shell && shellMat) {
+
+    // --- 1. AIR-RESISTANCE band (soft-drop): leading/bottom-edge effect. ---
+    // World-positioned at the piece's BOTTOM edge (world.y is the 2x2 centre, so
+    // the bottom edge is ~one cell below). A hot band hugs that edge and bulges
+    // DOWNWARD + brightens with soft-drop energy (air piling up under the leading
+    // cells); two wisps peel up off the bottom corners (deflected airflow). Hidden
+    // at rest, so a stationary / hard-dropping piece shows nothing here.
+    const air = airRef.current;
+    if (air) {
       const on = !!world && energy > 0.02;
-      shell.visible = on;
+      air.visible = on;
       if (on && world) {
-        shell.position.set(world.x, world.y, CELL * 0.1);
-        // Bulge a little with speed so the cage visibly distends — a "force field"
-        // squeezing the block, not a static box.
-        const bulge = 1 + energy * 0.18;
-        shell.scale.set(bulge, bulge, 1 + energy * 0.5);
-        shellMat.opacity = Math.min(0.5, energy * 0.42 * Math.max(0.5, intensity));
+        const bottomY = world.y - CELL; // leading edge of the 2x2
+        air.position.set(world.x, bottomY, CELL * 0.16);
+        // The band squashes (wider + thinner) and pushes down as energy rises —
+        // compressed air under the leading edge.
+        const e = energy * Math.max(0.5, intensity);
+        if (airBandMatRef.current) {
+          airBandMatRef.current.opacity = Math.min(0.85, 0.25 + e * 0.7);
+        }
+        const band = air.children[0] as THREE.Mesh | undefined;
+        if (band) {
+          band.scale.set(1 + energy * 0.5, 0.5 + energy * 0.9, 1);
+          band.position.y = -energy * CELL * 0.18; // pushed down with speed
+        }
+        // Corner wisps: peel UP and OUT from the bottom corners, flickering, to
+        // read as deflected airflow. Length + opacity scale with energy.
+        const flick = 0.7 + 0.3 * Math.sin(now * 22);
+        const wispLen = (0.4 + energy * 1.1) * CELL;
+        const wL = air.children[1] as THREE.Mesh | undefined;
+        const wR = air.children[2] as THREE.Mesh | undefined;
+        if (wL) {
+          wL.scale.set(1, wispLen, 1);
+          wL.position.set(-CELL * (0.55 + energy * 0.2), wispLen * 0.4, 0);
+        }
+        if (wR) {
+          wR.scale.set(1, wispLen, 1);
+          wR.position.set(CELL * (0.55 + energy * 0.2), wispLen * 0.4, 0);
+        }
+        const wispOp = Math.min(0.7, e * 0.6) * flick;
+        if (airWispLMatRef.current) airWispLMatRef.current.opacity = wispOp;
+        if (airWispRMatRef.current) airWispRMatRef.current.opacity = wispOp;
       }
     }
 
@@ -238,14 +265,16 @@ export const DropShell = forwardRef<
 
   return (
     <>
-      {/* Continuous energy shell — world-positioned each frame over the live
-          piece (so this one component owns the shell + the world trail). */}
-      <group ref={shellRef} visible={false}>
+      {/* AIR-RESISTANCE band (soft-drop) — world-positioned each frame at the
+          piece's leading/bottom edge. child[0] = hot compression band hugging the
+          bottom edge; child[1]/child[2] = corner deflection wisps peeling up. */}
+      <group ref={airRef} visible={false}>
+        {/* [0] compression band — wide, thin, hugging the bottom edge */}
         <mesh>
-          <boxGeometry args={[shellW, shellH, shellD]} />
+          <boxGeometry args={[shellW * 0.96, CELL * 0.34, shellD * 0.7]} />
           <meshBasicMaterial
-            ref={shellMatRef}
-            color="#b06bff"
+            ref={airBandMatRef}
+            color="#ff8de6"
             transparent
             opacity={0}
             depthWrite={false}
@@ -253,8 +282,33 @@ export const DropShell = forwardRef<
             side={THREE.DoubleSide}
             blending={THREE.AdditiveBlending}
           />
-          {/* Glowing cage edges — this is what makes the hull read as a 3D cage. */}
-          <Edges color="#e0b8ff" />
+          <Edges color="#ffd6f6" />
+        </mesh>
+        {/* [1] left corner wisp — unit-tall, scaled in useFrame */}
+        <mesh>
+          <boxGeometry args={[CELL * 0.16, 1, CELL * 0.16]} />
+          <meshBasicMaterial
+            ref={airWispLMatRef}
+            color="#ffb3ee"
+            transparent
+            opacity={0}
+            depthWrite={false}
+            toneMapped={false}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+        {/* [2] right corner wisp */}
+        <mesh>
+          <boxGeometry args={[CELL * 0.16, 1, CELL * 0.16]} />
+          <meshBasicMaterial
+            ref={airWispRMatRef}
+            color="#ffb3ee"
+            transparent
+            opacity={0}
+            depthWrite={false}
+            toneMapped={false}
+            blending={THREE.AdditiveBlending}
+          />
         </mesh>
       </group>
 

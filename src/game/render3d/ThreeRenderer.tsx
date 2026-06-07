@@ -149,7 +149,10 @@ export function ThreeRenderer({ controller }: { controller: GameController }) {
         // (width follows from the aspect), with max-h/max-w guarding overflow.
         height: "100%",
         aspectRatio: BOARD_ASPECT,
-        boxShadow: "0 0 60px -15px #c45cff80",
+        // Round-2 (owner): keep the surround DARK. A faint violet edge accent
+        // only (low alpha, tight spread) so the board reads as the hero — not a
+        // bright purple halo slab around the canvas.
+        boxShadow: "0 0 24px -18px #c45cff66",
       }}
     >
       {/* Settings panel — hidden until toggled so it never blocks play. */}

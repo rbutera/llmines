@@ -58,16 +58,19 @@ describe("visual settings: music volume (item 10)", () => {
   });
 });
 
-describe("visual settings: gem variants dialled down (item 4)", () => {
-  it("the gem marker default is subtler than the old oversized amber default", () => {
-    // The pre-polish default was 2.6 (oversized + overpowering). The polish round
-    // dials it down so the marker is clear-but-subtle and the block colour shows.
-    expect(DEFAULT_SETTINGS.gemIntensity).toBeLessThan(2.6);
+describe("visual settings: gem variants are clearly visible (round-2)", () => {
+  it("the gem marker default is bright enough to be unmistakable", () => {
+    // Round-2 (owner: "saw ZERO gems"). The earlier dialled-down default (1.6 +
+    // low-contrast variants) was effectively invisible. The marker must now read
+    // clearly, so the default glow is bumped up.
+    expect(DEFAULT_SETTINGS.gemIntensity).toBeGreaterThanOrEqual(3);
   });
 
-  it("exposes light + dark gem variant colours", () => {
-    expect(typeof DEFAULT_SETTINGS.gemLightColor).toBe("string");
-    expect(typeof DEFAULT_SETTINGS.gemDarkColor).toBe("string");
+  it("exposes high-contrast light + dark gem variant colours", () => {
+    expect(DEFAULT_SETTINGS.gemLightColor).toMatch(/^#[0-9a-fA-F]{6}$/);
+    expect(DEFAULT_SETTINGS.gemDarkColor).toMatch(/^#[0-9a-fA-F]{6}$/);
+    // The two variants must differ so each pops against its block type (one for
+    // bright/white blocks, one for dark/purple blocks).
     expect(DEFAULT_SETTINGS.gemLightColor).not.toBe(DEFAULT_SETTINGS.gemDarkColor);
   });
 });

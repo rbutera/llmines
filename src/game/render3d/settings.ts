@@ -171,13 +171,19 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   // overpowered the board and obscured the block colour. Dial it down to a
   // subtle-but-clear inlay; the light/dark variants below adapt to the cell so
   // the underlying colour identity is preserved.
-  gemIntensity: 1.6,
-  // Light variant (bright / white blocks): GOLD. A gem on a light block reads as
-  // a gold gem (owner-specified 2026-06-07).
-  gemLightColor: "#ffcf33",
-  // Dark variant (dark blocks): BRIGHT PURPLE. A gem on a dark block reads as a
-  // bright purple gem — instantly distinct from the gold light-block variant.
-  gemDarkColor: "#c45cff",
+  // Round-2 (owner: "saw ZERO gems"). The gem WAS rendering all along, but the
+  // marker was too small + too LOW-CONTRAST to spot: gold on white blocks and
+  // purple on purple blocks both blended (and the cohesion re-theme pushed the
+  // chrome/surround toward the same purple as the dark-gem colour, worsening the
+  // purple-on-purple blend). Fix = UNMISTAKABLE: bigger marker (Cube), brighter
+  // glow, and HIGH-CONTRAST variants that pop against EACH block type (swapped).
+  gemIntensity: 3.0,
+  // Light variant — used on BRIGHT / WHITE blocks: deep saturated MAGENTA so the
+  // gem pops hard against the near-white block (gold-on-white was invisible).
+  gemLightColor: "#ff2bd6",
+  // Dark variant — used on DARK / PURPLE-X blocks: bright GOLD/amber so the gem
+  // pops against the violet block (purple-on-purple was invisible).
+  gemDarkColor: "#ffd23f",
   previewEnabled: true,
 
   // Polish-fix — visual hierarchy, contrast pushed HARD (owner: "want way more
@@ -222,7 +228,7 @@ export const DEFAULT_SETTINGS: VisualSettings = {
  * colours, or the seizure-inducing active-piece pulse settings) can't keep
  * overriding the fix. Everything else the player tuned is preserved.
  */
-export const SETTINGS_SCHEMA_VERSION = 2;
+export const SETTINGS_SCHEMA_VERSION = 3;
 
 /**
  * Keys whose DEFAULT meaning changed in the 2026-06-07 polish-fix round. A
