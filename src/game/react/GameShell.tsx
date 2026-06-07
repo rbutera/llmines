@@ -79,8 +79,17 @@ export function GameShell() {
     // Silent until unlock() runs on the Start gesture; skipped entirely in
     // TEST_MODE so the deterministic suite stays observationally identical.
     if (!TEST_MODE && typeof window !== "undefined") {
-      audioEngineRef.current = new InteractiveAudioEngine();
+      const engine = new InteractiveAudioEngine();
+      audioEngineRef.current = engine;
       audioDeriverRef.current = new AudioEventDeriver();
+      // Opt-in dev hook (URL `?audiodev=1` only): expose a handle to drive audio
+      // events directly, so "clearing advances the song" is verifiable live
+      // without having to skilfully clear squares headlessly. Absent in normal
+      // use (no query param) so production stays clean.
+      if (window.location.search.includes("audiodev=1")) {
+        (window as unknown as { __luminesAudioDev?: InteractiveAudioEngine }).__luminesAudioDev =
+          engine;
+      }
     }
     const unsubscribe = c.subscribe((rs: RenderState) => {
       // Production-start acceptance probe (read-only). Surfaces the few fields the
@@ -89,21 +98,6 @@ export function GameShell() {
       // (frozen sweep / no spawn) fails CI. It mirrors the latest RenderState and
       // mutates nothing. Distinct from window.__lumines (the deterministic
       // TEST_MODE control seam), which is intentionally absent in production.
-      if (typeof window !== "undefined") {
-        (
-          window as unknown as {
-            __luminesProbe?: {
-              sweepX: number;
-              hasActive: boolean;
-              gameOver: boolean;
-            };
-          }
-        ).__luminesProbe = {
-          sweepX: rs.sweepX,
-          hasActive: rs.active != null,
-          gameOver: rs.gameOver,
-        };
-      }
       // Derive musical events from the RenderState diff and fire them (in-key,
       // quantised to the next 1/16). Pure subscriber — never touches game logic.
       // No-op before the Start gesture unlocks the engine.
@@ -111,6 +105,27 @@ export function GameShell() {
       const deriver = audioDeriverRef.current;
       if (engine && deriver) {
         for (const ev of deriver.derive(rs)) engine.fire(ev);
+      }
+      if (typeof window !== "undefined") {
+        // Read-only acceptance probe. Surfaces the e2e-guarded fields PLUS the
+        // live audio state, so "clearing advances the song" (segment index +
+        // vox gain) is HEADLESS-VERIFIABLE — a verification can drive real
+        // clears and assert the segment steps forward + the vox gain rises.
+        (
+          window as unknown as {
+            __luminesProbe?: {
+              sweepX: number;
+              hasActive: boolean;
+              gameOver: boolean;
+              audio?: ReturnType<InteractiveAudioEngine["getAudioState"]>;
+            };
+          }
+        ).__luminesProbe = {
+          sweepX: rs.sweepX,
+          hasActive: rs.active != null,
+          gameOver: rs.gameOver,
+          audio: engine?.getAudioState(),
+        };
       }
       setScore(rs.score);
       // V2 HUD: preview queue, skin, BPM (drives NextPreview + skin panel).

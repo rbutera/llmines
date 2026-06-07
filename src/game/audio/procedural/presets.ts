@@ -40,23 +40,32 @@ export type SfxName =
 
 /** How clearing reveals the recorded song layers (the "build" curve). */
 export interface UnlockCurve {
+  // --- VERTICAL: vocal reveal within the active segment ---
+  /** Flat progression added by ANY clear (so even a 1-square clear steps audibly). */
+  perClear: number;
   /** progression added per cleared square. */
   perSquare: number;
   /** progression added per combo step on a clear. */
   perCombo: number;
   /** progression added by a chain cascade (per cell, capped by the engine). */
   perChain: number;
-  /** progression removed each beat when idle (pulls the mix back to the bed). */
-  decayPerBeat: number;
   /**
-   * [start, end] progression band over which each layer fades 0 -> full.
-   * melody reveals lowest, then guitar, then vocals (the hot-streak payoff).
+   * progression removed each quarter-note ONCE the post-clear grace window has
+   * elapsed (the engine holds progression after each clear). Small, so a normal
+   * clear cadence net-builds the vocal instead of bleeding out between clears.
    */
-  bands: {
-    melody: [number, number];
-    guitar: [number, number];
-    vocal: [number, number];
-  };
+  decayPerBeat: number;
+  /** [start, end] progression band over which the VOX layer fades 0 -> full. */
+  vocalBand: [number, number];
+
+  // --- HORIZONTAL: stepping forward through song segments ---
+  /**
+   * Clearing-weight needed to advance ONE segment. Weight per clear is
+   * `1 + squares + combo` (chains: `2 + size`). Lower = the song moves through
+   * its sections faster. Tuned so a normal session crosses several segments in
+   * the first minute.
+   */
+  clearsPerSegment: number;
 }
 
 export interface AudioPreset {
@@ -85,11 +94,13 @@ const PRESET_A: AudioPreset = {
     chain: { sfx: "chain" },
   },
   curve: {
-    perSquare: 0.05,
-    perCombo: 0.04,
-    perChain: 0.1,
-    decayPerBeat: 0.012,
-    bands: { melody: [0.12, 0.4], guitar: [0.45, 0.75], vocal: [0.8, 1.0] },
+    perClear: 0.12,
+    perSquare: 0.06,
+    perCombo: 0.05,
+    perChain: 0.12,
+    decayPerBeat: 0.014,
+    vocalBand: [0.1, 0.55],
+    clearsPerSegment: 5, // gentler horizontal advance
   },
   intensityReactive: false,
 };
@@ -111,11 +122,13 @@ const PRESET_B: AudioPreset = {
     chain: { sfx: "chain", riser: true },
   },
   curve: {
+    perClear: 0.18,
     perSquare: 0.08,
     perCombo: 0.07,
     perChain: 0.18,
-    decayPerBeat: 0.022,
-    bands: { melody: [0.06, 0.3], guitar: [0.32, 0.6], vocal: [0.62, 0.92] },
+    decayPerBeat: 0.02,
+    vocalBand: [0.05, 0.45], // vox audibly in after ~1 clear, full after ~2
+    clearsPerSegment: 3, // a normal session crosses several segments in the first minute
   },
   intensityReactive: true,
 };
@@ -136,11 +149,13 @@ const PRESET_C: AudioPreset = {
     chain: { sfx: "chain", blip: true, riser: true },
   },
   curve: {
+    perClear: 0.28,
     perSquare: 0.12,
     perCombo: 0.1,
     perChain: 0.28,
-    decayPerBeat: 0.018,
-    bands: { melody: [0.04, 0.22], guitar: [0.22, 0.45], vocal: [0.45, 0.8] },
+    decayPerBeat: 0.016,
+    vocalBand: [0.03, 0.32], // vox slams in fast
+    clearsPerSegment: 2, // aggressive horizontal advance
   },
   intensityReactive: true,
 };

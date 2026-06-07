@@ -1,5 +1,12 @@
 ## Context
 
+> **Revision (post-playtest):** the first cut used a single ~8-bar loop with four
+> vertical stem layers and a per-beat progression decay. Playtest verdict: "the
+> song never progresses." Two root causes were found and fixed (see D8), and the
+> design pivoted from a single window to ORDERED SEGMENTS so clearing moves the
+> song FORWARD through its sections (horizontal), with the vocal reveal as the
+> vertical axis. The decisions below marked "(revised)" reflect the segment model.
+
 The spike (`spike/procedural-audio` @ `4bc4222`) established the architecture: a `ProceduralAudioEngine` owning all Tone nodes + its own `Tone.Transport` (the master musical clock), and an `AudioEventDeriver` that diffs successive `RenderState`s into a small `AudioEvent` union. GameShell builds both on mount (skipped in `TEST_MODE`), unlocks the AudioContext on the Start gesture, and fires derived events on every RenderState emit. This is strictly additive: the deterministic core, RNG, scoring, and `window.__lumines` are untouched; the layer only SUBSCRIBES to fields the controller already emits.
 
 The spike branched from `96902df` (the polish base) **before** the visual fixes on `feat/lumines-v2-complete` (`88615f9`) existed. So the spike's GameShell carries a STALE layout. We therefore port the audio *files* verbatim and hand-merge ONLY the audio wiring onto the visual-complete GameShell — never taking the spike's GameShell wholesale (that would regress the approved viewport/chrome/skin-chip fixes).
@@ -67,7 +74,15 @@ All three play the layered recorded bed by default; a `useProceduralBed` fallbac
 Every Tone call stays guarded (try/catch swallow) exactly as the spike established. Buffer load failures fall back: missing ad-lib → procedural blip; missing bed → procedural bed. The production-start e2e asserts 0 page errors, so no audio path may throw.
 
 ### D7 — Persistence + UI
-`audioMix` ('A'|'B'|'C') and `muted` persist via the existing `settings.ts` localStorage blob (additive key, defaults to 'B' Reactive — the most representative). A small "Audio mix" `<select>` sits with the mute toggle. `TEST_MODE` builds none of this (suite stays observationally identical).
+`audioMix` ('A'|'B'|'C') and `muted` persist (own `llmines.audioMix` localStorage key, defaults to 'B'). A small "Audio mix" `<select>` sits with the mute toggle. `TEST_MODE` builds none of this (suite stays observationally identical).
+
+### D8 (revised) — Why the first cut "never progressed", and the segment pivot
+Playtest: the song didn't advance. Root causes:
+  1. **Decay outran sparse clears.** A per-quarter-note decay ran ~1.9×/s while real clears are seconds apart; between two clears decay removed more than one clear added, so progression never accumulated. **Fix:** a post-clear GRACE window (hold ~6 beats before decay resumes) + a flat `perClear` floor so every clear steps audibly + a short layer-gain ramp (0.35s) so the audible gain TRACKS progression instead of crawling behind a constantly-restarted 1.2s ramp.
+  2. **Vertical-only doesn't read as "the song progressing."** Even fixed, fading gain on one looped window isn't what the owner meant — they want the song to move FORWARD through its structure. **Fix:** cut the track into SIX ordered segments (sequential 8-bar windows, all stems active from bar 0; bar-0 window confirmed to carry every stem). Each segment = a `bed` + `vox` loop, all phase-aligned (identical length, crossfade-wrapped). A monotonic `clearProgress` accumulator (`1 + squares + combo` per clear; `2 + size` per chain) crosses `clearsPerSegment` to step the active segment; segment beds crossfade on the next bar (`@1m`). The vertical vox reveal now operates WITHIN the active segment. Idle decays the vox but never the segment.
+
+### D9 — Headless verifiability (the thing that let the bug ship)
+The mechanic shipped broken because nothing measured it (the e2e runs in TEST_MODE where audio is off). Now: the engine exposes `getAudioState()` (progression, segmentIndex, maxSegmentReached, clearProgress, live `layerGains.{bed,vox}` read from the actual audio params); GameShell mirrors it on `window.__luminesProbe.audio`. A deterministic integration test mocks Tone (gains apply ramp targets immediately; the beat loop is pumpable) and drives real clears, ASSERTING segment-advance + vox-rise + idle-recede + "C faster than A". A `?audiodev=1` URL hook exposes the engine so the same is provable live in the browser (used to capture the proof numbers).
 
 ## Risks / Trade-offs
 

@@ -11,31 +11,35 @@ The game SHALL play interactive audio derived purely from the already-emitted `R
 - **WHEN** the AudioContext is blocked, or a bed/SFX asset fails to load, or a Tone trigger throws
 - **THEN** the game continues normally and no error surfaces to the page (0 console/page errors)
 
-### Requirement: Layered recorded bed
-The game SHALL play a base instrumental loop (drums + bass + percussion) built from the soundtrack's stems, started on the Start gesture and synced to a 112 BPM transport. Three further stem layers (melody, guitar, vocals) SHALL play in phase with the base loop, each through its own gain. A procedural synth bed SHALL remain available as a fallback when the recorded layers fail to load.
+### Requirement: Segmented recorded bed
+The game SHALL play the soundtrack as a sequence of ordered ~8-bar SEGMENTS (sections of the real track), each with an instrumental `bed` loop and a `vox` loop. All segments SHALL be phase-aligned and started on the Start gesture synced to a 112 BPM transport; only the active segment SHALL be audible. A procedural synth bed SHALL remain available as a fallback when the recorded segments fail to load.
 
-#### Scenario: Base bed loops without an audible seam
-- **WHEN** any recorded layer reaches its loop point
-- **THEN** it repeats without a click (seam discontinuity reduced to near-zero by a crossfade-wrap) and stays phase-aligned with the other layers
+#### Scenario: A segment loops without an audible seam
+- **WHEN** a recorded segment loop reaches its loop point
+- **THEN** it repeats without a click (seam reduced to near-zero by a crossfade-wrap) and stays phase-aligned with the other segments
 
 #### Scenario: Bed fallback
-- **WHEN** the recorded layer files cannot be loaded
+- **WHEN** the recorded segment files cannot be loaded
 - **THEN** the procedural synth bed plays instead and the game is unaffected
 
-### Requirement: Clearing advances the song
-The upper stem layers (melody, guitar, vocals) SHALL start muted and fade in progressively as the player clears squares, and SHALL recede back toward the base bed when the player goes idle. Gain changes SHALL use smooth ramps, never hard cuts. The reveal curve SHALL differ per preset (gentle/slow for A, responsive for B, aggressive for C).
+### Requirement: Clearing advances the song (horizontal + vertical)
+Cumulative clearing activity SHALL step the active SEGMENT forward through the song's sections (new material plays), and the advance SHALL be monotonic (idle never rewinds it). Independently, within the active segment the VOX layer SHALL fade in as recent clearing builds and recede when the player goes idle. All gain changes SHALL use smooth ramps, never hard cuts. Both the advance threshold and the vox reveal curve SHALL differ per preset (gentle for A, responsive for B, aggressive for C). The current segment index, progression, and live layer gains SHALL be observable for verification.
 
-#### Scenario: Clearing reveals layers
-- **WHEN** the player clears squares and sustains a combo
-- **THEN** melody fades in first, then guitar, then vocals on a hot streak, building toward the full mix
+#### Scenario: Clearing steps the song forward through segments
+- **WHEN** the player accumulates clears
+- **THEN** the active segment index advances (1 → 2 → 3 …) so new musical material plays, crossfaded on a bar boundary
 
-#### Scenario: Idle recedes layers
+#### Scenario: Clearing reveals the vocal within a segment
+- **WHEN** the player clears squares
+- **THEN** the active segment's vox layer fades up and is clearly audible after a few clears (not subtle)
+
+#### Scenario: Idle recedes the vocal but NOT the segment
 - **WHEN** the player stops clearing for a sustained period
-- **THEN** the upper layers fade back down toward just the base bed
+- **THEN** the vox layer fades back down, while the segment index stays where the player reached (the song does not rewind)
 
-#### Scenario: Reveal speed differs by preset
+#### Scenario: Advance + reveal speed differ by preset
 - **WHEN** the same number of clears occurs under preset A vs preset C
-- **THEN** A reveals less of the song (lower progression) than C
+- **THEN** C reaches a later segment AND reveals more vox than A for the same clears
 
 ### Requirement: Ad-lib action SFX
 The game SHALL trigger curated, recorded backing-vocal one-shots on game actions (move, rotate, soft-drop, lock, line-clear/match, hard-drop, gem-clear, chain), beat-quantised to the transport's 16th-note grid, and in key with the C#-minor bed.

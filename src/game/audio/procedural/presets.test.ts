@@ -70,18 +70,38 @@ describe("audio presets", () => {
     expect(layerGain(1, [0.2, 0.6])).toBe(1);
   });
 
-  it("reveals the song MORE slowly under A than C for the same clears", () => {
-    // Simulate N identical line-clears and compare resulting progression.
-    const simulate = (mix: AudioMix, clears: number) => {
+  it("reveals the VOX MORE slowly under A than C (per-clear bump + earlier band)", () => {
+    // A's per-clear vertical bump is smaller than C's...
+    const bump = (mix: AudioMix) =>
+      PRESETS[mix].curve.perClear + 1 * PRESETS[mix].curve.perSquare;
+    expect(bump("A")).toBeLessThan(bump("C"));
+    // ...and after ONE typical clear, A's vox is quieter than C's (not saturated).
+    const voxAfterOne = (mix: AudioMix) =>
+      layerGain(bump(mix), PRESETS[mix].curve.vocalBand);
+    expect(voxAfterOne("A")).toBeLessThan(voxAfterOne("C"));
+  });
+
+  it("advances segments faster under C than A for the same clears (horizontal)", () => {
+    // weight per clear = 1 + squares + combo; segment index = floor(sum/threshold)
+    const segAfter = (mix: AudioMix, clears: number, squares = 1, combo = 0) => {
+      const per = PRESETS[mix].curve.clearsPerSegment;
+      const weight = 1 + squares + combo;
+      return Math.floor((clears * weight) / per);
+    };
+    // After 6 single clears, C should be on a LATER segment than A.
+    expect(segAfter("C", 6)).toBeGreaterThan(segAfter("A", 6));
+    // And a handful of clears must move the song forward at all under B.
+    expect(segAfter("B", 6)).toBeGreaterThan(0);
+  });
+
+  it("every preset reaches full vox within a few clears (not subtle)", () => {
+    for (const mix of ["A", "B", "C"] as AudioMix[]) {
       const c = PRESETS[mix].curve;
       let p = 0;
-      for (let i = 0; i < clears; i++) {
-        p = Math.min(1, p + 4 * c.perSquare + 1 * c.perCombo);
-      }
-      return p;
-    };
-    const a = simulate("A", 3);
-    const cc = simulate("C", 3);
-    expect(a).toBeLessThan(cc);
+      // 4 typical clears (squares=1, combo=0)
+      for (let i = 0; i < 4; i++) p = Math.min(1, p + c.perClear + c.perSquare);
+      const vox = layerGain(p, c.vocalBand);
+      expect(vox, `${mix} vox should be clearly audible after 4 clears`).toBeGreaterThan(0.5);
+    }
   });
 });

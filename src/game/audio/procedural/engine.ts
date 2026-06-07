@@ -50,19 +50,45 @@ import { energyToDegree, scaleNote } from "./scale";
 const BPM = 112;
 /** C#4 — action blips ring ~2 octaves above the bed root (C#2) so they cut through. */
 const BLIP_BASE = 61;
+/**
+ * Quarter-notes to HOLD progression after a clear before decay resumes. At
+ * 112 BPM a quarter is ~0.536s, so ~6 beats ≈ 3.2s of grace — long enough that
+ * a normal, sparse clear cadence keeps building the song instead of the decay
+ * bleeding it out between clears (the bug: clears were too rare to outrun decay).
+ */
+const GRACE_BEATS = 6;
+/** Seconds for a layer-gain ramp. Short so the audible gain TRACKS progression
+ * promptly (a long ramp + per-beat re-issue made gains crawl far behind). */
+const LAYER_RAMP_S = 0.35;
 
 /** Public base path for the recorded audio assets. */
 const ASSET_BASE = "/audio";
 
-/** The recorded stem layers. `base` is always on; the rest are clear-gated. */
-const LAYER_FILES = {
-  base: `${ASSET_BASE}/bed-base.mp3`,
-  melody: `${ASSET_BASE}/layer-melody.mp3`,
-  guitar: `${ASSET_BASE}/layer-guitar.mp3`,
-  vocal: `${ASSET_BASE}/layer-vocal.mp3`,
-} as const;
+/**
+ * The song is cut into ORDERED SEGMENTS — sequential 8-bar windows from
+ * different sections of the real track (intro → verse → build → hook → …). Each
+ * segment has a `bed` (instrumental) loop and a `vox` (lead+backing vocals)
+ * loop, all the same length (~16.94s) so they loop in phase and segment
+ * crossfades land on the bar grid.
+ *
+ * Two axes of "clearing advances the song":
+ *  - HORIZONTAL: cumulative clears step the active SEGMENT forward (1→2→3…), so
+ *    NEW musical material plays — the song moves through its structure instead of
+ *    looping one window. Segment→segment is crossfaded on a bar boundary.
+ *  - VERTICAL: within the active segment, the VOX layer fades in as recent
+ *    clearing builds `progression`, and recedes when idle.
+ */
+const SEGMENT_COUNT = 6;
+const segBed = (i: number) => `${ASSET_BASE}/seg${i}-bed.mp3`;
+const segVox = (i: number) => `${ASSET_BASE}/seg${i}-vox.mp3`;
 
-type UpperLayer = "melody" | "guitar" | "vocal";
+/** One loaded segment: its bed + vox players and their gain nodes. */
+interface Segment {
+  bedPlayer?: Tone.Player;
+  voxPlayer?: Tone.Player;
+  bedGain?: Tone.Gain; // 1 when this is the active segment, 0 otherwise
+  voxGain?: Tone.Gain; // 0..1 vertical reveal (only meaningful for the active seg)
+}
 
 /** The eight curated ad-lib one-shots and their files. */
 const SFX_FILES: Record<SfxName, string> = {
@@ -100,10 +126,15 @@ export class InteractiveAudioEngine {
   private master?: Tone.Gain;
   private filter?: Tone.Filter;
 
-  // Recorded bed: one Player per stem layer + a gain per upper layer.
-  private layerPlayers: Partial<Record<keyof typeof LAYER_FILES, Tone.Player>> = {};
-  private layerGains: Partial<Record<UpperLayer, Tone.Gain>> = {};
-  /** True once the recorded base bed loaded + started (else the synth bed runs). */
+  // Recorded bed: ordered segments, each with a bed + vox player/gain. All start
+  // synced to the transport at time 0 so every segment loop stays in phase; only
+  // the ACTIVE segment's gains are non-zero.
+  private segments: Segment[] = [];
+  /** Index of the currently-playing segment (horizontal song advance). */
+  private segmentIndex = 0;
+  /** Highest segment index reached (so an idle dip never rewinds the song). */
+  private maxSegmentReached = 0;
+  /** True once the recorded bed loaded + started (else the synth bed runs). */
   private recordedBedActive = false;
 
   // Recorded ad-lib SFX one-shots.
@@ -140,10 +171,19 @@ export class InteractiveAudioEngine {
   // Adaptive intensity: 0 (calm) .. 1 (hot). Decays each beat; bumped on clears.
   private intensity = 0;
   /**
-   * Song progression: 0 (just the bed) .. 1 (full mix). Clears bump it, idle
-   * decays it; the upper layer gains track it via the active preset's bands.
+   * VERTICAL progression: 0 (bed only) .. 1 (vox full). Clears bump it, idle
+   * decays it; the active segment's VOX gain tracks it via the preset bands.
    */
   private progression = 0;
+  /** Quarter-notes elapsed since the last clear; gates the decay grace window. */
+  private beatsSinceClear = GRACE_BEATS + 1;
+  /**
+   * HORIZONTAL advance accumulator: a weighted count of clearing activity
+   * (squares + combos + chains). Crossing a per-preset threshold steps the song
+   * to the next SEGMENT, so new material plays. Monotonic — never decays (the
+   * song moves forward through its structure as you progress).
+   */
+  private clearProgress = 0;
 
   /** Pick the active mix (instant — no teardown). */
   setPreset(mix: AudioMix): void {
@@ -159,6 +199,49 @@ export class InteractiveAudioEngine {
 
   getPreset(): AudioMix {
     return this.preset.mix;
+  }
+
+  /**
+   * Live audio state for the test probe (so "clearing advances the song" is
+   * HEADLESS-VERIFIABLE). Reports both axes:
+   *  - `segmentIndex` / `maxSegmentReached` / `clearProgress` — the HORIZONTAL
+   *    song advance (which section is playing).
+   *  - `progression` + `layerGains.{bed,vox}` — the VERTICAL reveal (how much of
+   *    the active segment's vocal is in).
+   * The ACTUAL audio-param gain values are read (not computed targets) so a
+   * verification can prove the ramps really moved, not just that the math did.
+   */
+  getAudioState(): {
+    progression: number;
+    segmentIndex: number;
+    maxSegmentReached: number;
+    segmentCount: number;
+    clearProgress: number;
+    recordedBedActive: boolean;
+    layerGains: { bed: number; vox: number };
+    intensity: number;
+  } {
+    const read = (g: Tone.Gain | undefined): number => {
+      try {
+        return g ? g.gain.value : 0;
+      } catch {
+        return 0;
+      }
+    };
+    const active = this.segments[this.segmentIndex];
+    return {
+      progression: this.progression,
+      segmentIndex: this.segmentIndex,
+      maxSegmentReached: this.maxSegmentReached,
+      segmentCount: this.segments.length,
+      clearProgress: this.clearProgress,
+      recordedBedActive: this.recordedBedActive,
+      intensity: this.intensity,
+      layerGains: {
+        bed: read(active?.bedGain),
+        vox: read(active?.voxGain),
+      },
+    };
   }
 
   /**
@@ -201,9 +284,17 @@ export class InteractiveAudioEngine {
     this.buildProceduralBedLoops();
 
     // Per-beat intensity + progression decay; ramp the reactive surfaces.
+    // Decay is GENTLE and only starts after a short grace window since the last
+    // clear, so a normal (sparse) clear cadence still ACCUMULATES the song
+    // instead of bleeding out between clears. `decayPerBeat` is per quarter-note.
     const decay = new Tone.Loop((time) => {
       this.intensity = Math.max(0, this.intensity - 0.06);
-      this.progression = Math.max(0, this.progression - this.preset.curve.decayPerBeat);
+      // Grace: hold progression steady for ~GRACE_BEATS after the last clear, so
+      // the build doesn't evaporate while the player sets up the next clear.
+      this.beatsSinceClear += 1;
+      if (this.beatsSinceClear > GRACE_BEATS) {
+        this.progression = Math.max(0, this.progression - this.preset.curve.decayPerBeat);
+      }
       this.applyIntensity(time);
       this.applyProgression(time);
     }, "4n").start(0);
@@ -211,50 +302,57 @@ export class InteractiveAudioEngine {
   }
 
   /**
-   * Load the recorded stem layers + ad-lib SFX. On success, the recorded base
-   * bed takes over from the procedural fallback (which is faded out). Fully
-   * guarded; a partial failure simply leaves the missing pieces synthesised.
+   * Load the ordered song segments (bed + vox each) + ad-lib SFX. On success the
+   * recorded bed takes over from the procedural fallback. Every segment loop is
+   * synced to transport time 0 so all stay in phase; only segment 0's bed starts
+   * audible. Fully guarded; a partial failure leaves the missing pieces silent or
+   * synthesised.
    */
   private async loadRecorded(): Promise<void> {
     const master = this.master;
-    const filter = this.filter;
-    if (!master || !filter) return;
+    if (!master) return;
 
-    // --- stem layers ---
-    try {
-      const baseGain = new Tone.Gain(1).connect(master); // base goes direct to master (full, un-ducked)
-      const base = await this.loadPlayer(LAYER_FILES.base);
-      if (base) {
-        base.loop = true;
-        base.connect(baseGain);
-        base.sync().start(0);
-        this.layerPlayers.base = base;
-        this.recordedBedActive = true;
-        // Fade the procedural fallback bed out now the real bed is in.
-        this.fadeProceduralBed(0);
+    for (let i = 0; i < SEGMENT_COUNT; i++) {
+      const seg: Segment = {};
+      try {
+        const bedGain = new Tone.Gain(i === 0 ? 1 : 0).connect(master);
+        const bed = await this.loadPlayer(segBed(i));
+        if (bed) {
+          bed.loop = true;
+          bed.connect(bedGain);
+          bed.sync().start(0);
+          seg.bedPlayer = bed;
+          seg.bedGain = bedGain;
+          if (i === 0 && !this.recordedBedActive) {
+            this.recordedBedActive = true;
+            // Fade the procedural fallback bed out now the real bed is in.
+            this.fadeProceduralBed(0);
+          }
+        } else {
+          bedGain.dispose();
+        }
+      } catch {
+        // segment bed missing — that index just won't play
       }
-    } catch {
-      // keep the procedural bed
+      try {
+        const voxGain = new Tone.Gain(0).connect(master); // revealed by progression
+        const vox = await this.loadPlayer(segVox(i));
+        if (vox) {
+          vox.loop = true;
+          vox.connect(voxGain);
+          vox.sync().start(0);
+          seg.voxPlayer = vox;
+          seg.voxGain = voxGain;
+        } else {
+          voxGain.dispose();
+        }
+      } catch {
+        // segment vox missing — vertical reveal just won't fire for it
+      }
+      this.segments[i] = seg;
     }
 
     if (this.recordedBedActive) {
-      for (const layer of ["melody", "guitar", "vocal"] as UpperLayer[]) {
-        try {
-          const g = new Tone.Gain(0).connect(master); // starts silent, clear-gated
-          const p = await this.loadPlayer(LAYER_FILES[layer]);
-          if (p) {
-            p.loop = true;
-            p.connect(g);
-            p.sync().start(0);
-            this.layerPlayers[layer] = p;
-            this.layerGains[layer] = g;
-          } else {
-            g.dispose();
-          }
-        } catch {
-          // missing layer just never reveals — bed still plays
-        }
-      }
       this.applyProgression();
     }
 
@@ -538,16 +636,81 @@ export class InteractiveAudioEngine {
     const wantBlip = route.blip === true || (route.sfx != null && !sfxFired);
     if (wantBlip) this.playBlip(ev, time);
 
-    // Progression + intensity bumps on clears (advance the song).
+    // Progression + intensity bumps on clears (advance the song). A clear also
+    // resets the decay grace window so the build HOLDS while the player lines up
+    // the next clear (clears are sparse; without this, decay outran them and the
+    // song never progressed — the reported bug).
     const c = this.preset.curve;
     if (ev.type === "lineClear") {
-      this.bumpProgression(ev.squares * c.perSquare + ev.combo * c.perCombo);
+      // `perClear` is a per-clear floor so EVERY clear makes a clearly audible
+      // step, even a single-square clear (which the deriver reports as squares=1).
+      this.beatsSinceClear = 0;
+      const weight = 1 + ev.squares + ev.combo; // clearing activity for this event
+      this.bumpProgression(c.perClear + ev.squares * c.perSquare + ev.combo * c.perCombo);
       this.bumpIntensity(0.25 + ev.squares * 0.05 + ev.combo * 0.08);
+      this.advanceSong(weight, time);
     } else if (ev.type === "chain") {
-      this.bumpProgression(Math.min(8, ev.size) * c.perChain);
+      this.beatsSinceClear = 0;
+      const weight = 2 + Math.min(8, ev.size); // chains advance the song faster
+      this.bumpProgression(c.perClear + Math.min(8, ev.size) * c.perChain);
       this.bumpIntensity(0.6);
       if (route.riser) this.riser(time);
+      this.advanceSong(weight, time);
     }
+  }
+
+  /**
+   * HORIZONTAL advance: accumulate clearing weight; each time `clearProgress`
+   * crosses the preset's `clearsPerSegment` threshold, step to the NEXT segment
+   * so new song material plays. Crossfades active↔next segment beds on a bar
+   * boundary (`@1m`) so the section change is seamless. Monotonic — the song only
+   * moves forward.
+   */
+  private advanceSong(weight: number, time: number): void {
+    this.clearProgress += weight;
+    const per = this.preset.curve.clearsPerSegment;
+    const targetIndex = Math.min(
+      this.segments.length - 1 || SEGMENT_COUNT - 1,
+      Math.floor(this.clearProgress / per),
+    );
+    if (targetIndex > this.segmentIndex) {
+      this.gotoSegment(targetIndex, time);
+    }
+  }
+
+  /** Crossfade the active segment's bed out and the target segment's bed in. */
+  private gotoSegment(index: number, time: number): void {
+    const from = this.segments[this.segmentIndex];
+    const to = this.segments[index];
+    const prevIndex = this.segmentIndex;
+    this.segmentIndex = index;
+    this.maxSegmentReached = Math.max(this.maxSegmentReached, index);
+    // Carry the current vertical reveal into the new segment's vox immediately so
+    // the build doesn't reset when the section changes.
+    try {
+      // Crossfade beds on the next bar boundary so the section change lands
+      // musically. rampTo with a 3rd "startTime" arg schedules it; we add a small
+      // ramp so it's a quick blend, not a hard cut.
+      const at = Tone.getTransport().nextSubdivision("1m");
+      from?.bedGain?.gain.rampTo(0, 0.4, at);
+      // also pull the OLD segment's vox down (its reveal belongs to the section)
+      from?.voxGain?.gain.rampTo(0, 0.4, at);
+      to?.bedGain?.gain.rampTo(1, 0.4, at);
+      // new segment's vox tracks current progression
+      void prevIndex;
+      this.applyProgression(at);
+    } catch {
+      // best-effort — fall back to immediate
+      try {
+        from?.bedGain?.gain.rampTo(0, 0.4);
+        from?.voxGain?.gain.rampTo(0, 0.4);
+        to?.bedGain?.gain.rampTo(1, 0.4);
+        this.applyProgression();
+      } catch {
+        // ignore
+      }
+    }
+    void time;
   }
 
   /** The procedural synth voice for an action (blip / thud / lead run). */
@@ -617,25 +780,22 @@ export class InteractiveAudioEngine {
   }
 
   /**
-   * Map progression -> per-layer gains (recorded bed) using the active preset's
-   * reveal bands. Smooth ramps (~a bar) so layers swell/recede, never hard-cut.
-   * When the recorded bed isn't loaded this is a harmless no-op (no layer gains).
+   * VERTICAL reveal: map `progression` -> the ACTIVE segment's VOX gain using the
+   * preset's reveal band. Smooth ramp so the vocal swells/recedes, never hard-cut.
+   * Non-active segments' vox stay at 0. Harmless no-op before the bed loads.
    */
   private applyProgression(time?: number): void {
-    const bands = this.preset.curve.bands;
-    const ramp = (g: Tone.Gain | undefined, band: [number, number]) => {
-      if (!g) return;
-      const target = layerGain(this.progression, band);
-      try {
-        if (time != null) g.gain.rampTo(target, 1.2, time);
-        else g.gain.rampTo(target, 1.2);
-      } catch {
-        // ignore
-      }
-    };
-    ramp(this.layerGains.melody, bands.melody);
-    ramp(this.layerGains.guitar, bands.guitar);
-    ramp(this.layerGains.vocal, bands.vocal);
+    const band = this.preset.curve.vocalBand;
+    const target = layerGain(this.progression, band);
+    const active = this.segments[this.segmentIndex];
+    const g = active?.voxGain;
+    if (!g) return;
+    try {
+      if (time != null) g.gain.rampTo(target, LAYER_RAMP_S, time);
+      else g.gain.rampTo(target, LAYER_RAMP_S);
+    } catch {
+      // ignore
+    }
   }
 
   /** Map intensity -> filter brightness + (procedural) pad presence. */
@@ -706,9 +866,12 @@ export class InteractiveAudioEngine {
     } catch {
       // ignore
     }
+    const segmentNodes: (Tone.ToneAudioNode | undefined)[] = [];
+    for (const seg of this.segments) {
+      segmentNodes.push(seg.bedPlayer, seg.voxPlayer, seg.bedGain, seg.voxGain);
+    }
     const nodes: (Tone.ToneAudioNode | undefined)[] = [
-      ...Object.values(this.layerPlayers),
-      ...Object.values(this.layerGains),
+      ...segmentNodes,
       ...Object.values(this.sfxPlayers),
       this.kick,
       this.snare,
@@ -730,11 +893,13 @@ export class InteractiveAudioEngine {
         // ignore
       }
     }
-    this.layerPlayers = {};
-    this.layerGains = {};
+    this.segments = [];
     this.sfxPlayers = {};
     this.recordedBedActive = false;
     this.progression = 0;
+    this.segmentIndex = 0;
+    this.maxSegmentReached = 0;
+    this.clearProgress = 0;
     this.started = false;
   }
 }
