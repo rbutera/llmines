@@ -109,6 +109,11 @@ export function useVisualSettings(): VisualSettings {
     Preview: folder({
       previewEnabled: { value: initial.previewEnabled },
     }),
+    "Chain wavefront": folder({
+      chainEnabled: { value: initial.chainEnabled },
+      chainSpeed: { value: initial.chainSpeed, min: 10, max: 300, step: 5 },
+      chainIntensity: { value: initial.chainIntensity, min: 0, max: 5, step: 0.05 },
+    }),
   });
 
   // `values` is the flat, typed leva values object (folders flattened). Build
@@ -142,6 +147,9 @@ export function useVisualSettings(): VisualSettings {
     gemEnabled: values.gemEnabled ?? DEFAULT_SETTINGS.gemEnabled,
     gemIntensity: values.gemIntensity ?? DEFAULT_SETTINGS.gemIntensity,
     previewEnabled: values.previewEnabled ?? DEFAULT_SETTINGS.previewEnabled,
+    chainEnabled: values.chainEnabled ?? DEFAULT_SETTINGS.chainEnabled,
+    chainSpeed: values.chainSpeed ?? DEFAULT_SETTINGS.chainSpeed,
+    chainIntensity: values.chainIntensity ?? DEFAULT_SETTINGS.chainIntensity,
   };
 
   // Persist on every change so tweaks survive reload.
@@ -175,6 +183,9 @@ export function useVisualSettings(): VisualSettings {
     settings.gemEnabled,
     settings.gemIntensity,
     settings.previewEnabled,
+    settings.chainEnabled,
+    settings.chainSpeed,
+    settings.chainIntensity,
   ]);
 
   return settings;

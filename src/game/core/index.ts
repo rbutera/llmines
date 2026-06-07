@@ -6,6 +6,7 @@ import type {
   GeneratedPiece,
   Grid,
   HoldState,
+  OrderedCell,
 } from "./types";
 
 export * from "./types";
@@ -54,6 +55,14 @@ export interface PublicState {
   skinIndex: number;
   /** Additive: active BPM, derived from the current skin. Drives sweep speed. */
   bpm: number;
+  /**
+   * Additive (record-only, Phase 3): the most recent chain-flood clear — origin
+   * chain cell, the ordered cleared component (each cell + its BFS distance from
+   * the origin), and a monotonic `id`. Exposed via the seam so a test can assert
+   * the ordered payload after triggering a chain. `undefined` until the first
+   * chain clear. Render-only: never feeds gameplay/scoring/timing.
+   */
+  lastChainClear?: { origin: number; cells: OrderedCell[]; id: number };
 }
 
 /** Project internal state to the public `state()` shape (composites the piece). */
@@ -75,5 +84,16 @@ export function publicState(state: GameState): PublicState {
     })),
     skinIndex: state.skinIndex,
     bpm: skinBpm(state.skinIndex),
+    // Record-only chain-clear event passthrough (Phase 3). Copied (not aliased)
+    // so the public projection never shares the internal cells array reference.
+    ...(state.lastChainClear
+      ? {
+          lastChainClear: {
+            origin: state.lastChainClear.origin,
+            cells: state.lastChainClear.cells.map((c) => ({ ...c })),
+            id: state.lastChainClear.id,
+          },
+        }
+      : {}),
   };
 }

@@ -1,4 +1,4 @@
-import { chainFlood } from "./chain-clear";
+import { chainFlood, type ChainClearRecord } from "./chain-clear";
 import { COLS, ROWS, SKIN_ADVANCE_THRESHOLD } from "./constants";
 import { computeMarked } from "./detect";
 import { cloneGrid, settle, settleColumnWithMarks } from "./grid";
@@ -58,6 +58,7 @@ function deleteColumn(
   pass: SweepPass,
   col: number,
   specials: Set<number>,
+  record?: ChainClearRecord[],
 ): boolean {
   let flooded = false;
   for (let row = 0; row < ROWS; row++) {
@@ -73,9 +74,10 @@ function deleteColumn(
     // Chain activation (PSP-faithful): a chain cell is part of a cleared square
     // (it was marked), so it activates. Flood its connected same-colour region
     // in this same step; extras score nothing. Only chain cells flood; ordinary
-    // square cells just clear.
+    // square cells just clear. The optional `record` sink is RECORD-ONLY (render
+    // wavefront) and does not affect the deletion.
     if (isChain) {
-      chainFlood(grid, coord, colour, specials, pass.marks);
+      chainFlood(grid, coord, colour, specials, pass.marks, record);
       flooded = true;
     }
   }
@@ -97,8 +99,9 @@ function processColumn(
   pass: SweepPass,
   col: number,
   specials: Set<number>,
+  record?: ChainClearRecord[],
 ): void {
-  const flooded = deleteColumn(grid, pass, col, specials);
+  const flooded = deleteColumn(grid, pass, col, specials, record);
   if (flooded) {
     // A chain flood can empty cells in any column (including ahead of the bar),
     // so settle the whole grid. Per-column gravity is independent, so this is
@@ -155,6 +158,9 @@ export function advanceSweep(state: GameState, columns: number): GameState {
   let combo = state.combo;
   let skinIndex = state.skinIndex;
   let clearsInSkin = state.clearsInSkin;
+  // RECORD-ONLY sink for chain-flood clears this call (render wavefront). Does
+  // not influence deletion/scoring/timing.
+  const chainRecords: ChainClearRecord[] = [];
   let pass: SweepPass = state.sweepPass
     ? clonePass(state.sweepPass)
     : startPass(grid);
@@ -168,7 +174,7 @@ export function advanceSweep(state: GameState, columns: number): GameState {
 
     const passedCols = Math.min(COLS, Math.floor(sweepX));
     for (let col = pass.processedCols; col < passedCols; col++) {
-      processColumn(grid, pass, col, specials);
+      processColumn(grid, pass, col, specials, chainRecords);
     }
     pass.processedCols = passedCols;
 
@@ -201,7 +207,30 @@ export function advanceSweep(state: GameState, columns: number): GameState {
     skinIndex,
     clearsInSkin,
     sweepPass: pass,
+    lastChainClear: nextChainClear(state.lastChainClear, chainRecords),
   };
+}
+
+/**
+ * RECORD-ONLY: fold this call's chain-flood records into the `lastChainClear`
+ * field. If none occurred, the prior value is carried forward unchanged (the
+ * renderer keys off the monotonic `id`, so an unchanged value never re-fires).
+ * If one or more occurred, the LARGEST component (most cells) is chosen as the
+ * representative event and the `id` is bumped past the prior so the renderer
+ * fires exactly once. Choosing the largest keeps a single visible wavefront for
+ * the most dramatic clear; ties keep the first (earliest in sweep order). Pure.
+ */
+function nextChainClear(
+  prev: GameState["lastChainClear"],
+  records: ChainClearRecord[],
+): GameState["lastChainClear"] {
+  if (records.length === 0) return prev;
+  let best = records[0]!;
+  for (let i = 1; i < records.length; i++) {
+    if (records[i]!.cells.length > best.cells.length) best = records[i]!;
+  }
+  const id = (prev?.id ?? 0) + 1;
+  return { origin: best.origin, cells: best.cells, id };
 }
 
 /**
@@ -212,9 +241,10 @@ export function advanceSweep(state: GameState, columns: number): GameState {
 export function runFullSweep(state: GameState): GameState {
   const grid = cloneGrid(state.grid);
   const specials = new Set(state.specials);
+  const chainRecords: ChainClearRecord[] = [];
   const pass = startPass(grid);
   for (let col = 0; col < COLS; col++) {
-    deleteColumn(grid, pass, col, specials);
+    deleteColumn(grid, pass, col, specials, chainRecords);
   }
   const squares = pass.distinctSquares;
   const settled = settle(grid);
@@ -238,5 +268,6 @@ export function runFullSweep(state: GameState): GameState {
     clearsInSkin,
     sweepX: 0,
     sweepPass: null,
+    lastChainClear: nextChainClear(state.lastChainClear, chainRecords),
   };
 }

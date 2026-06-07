@@ -70,6 +70,17 @@ export interface VisualSettings {
   gemIntensity: number;
   /** In-canvas 3D next-piece preview dock. Default ON. */
   previewEnabled: boolean;
+
+  // --- Phase 3: chain-clear travelling wavefront (render-only, tunable) ---
+  /** Travelling chain-clear wavefront flash. Default ON. */
+  chainEnabled: boolean;
+  /**
+   * Wavefront travel speed: ms per BFS-distance ring. Lower = faster snap;
+   * higher = a slower, more dramatic spread. Tuned ~60ms/ring by default.
+   */
+  chainSpeed: number;
+  /** Peak brightness of each cell's chain-flash. */
+  chainIntensity: number;
 }
 
 /**
@@ -104,6 +115,12 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   gemEnabled: true,
   gemIntensity: 1.4,
   previewEnabled: true,
+
+  // Phase 3 — chain wavefront. Fast-ish travel (60ms/ring) so a big chain reads
+  // as a clear sweeping across the shape without dragging.
+  chainEnabled: true,
+  chainSpeed: 60,
+  chainIntensity: 1.8,
 };
 
 /** localStorage key for persisted visual settings. */

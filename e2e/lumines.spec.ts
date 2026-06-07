@@ -19,6 +19,15 @@ interface State {
   hold: { active: boolean; remainingMs: number };
   /** Additive (lumines-grid-and-sweep): distinct completed 2x2 squares. */
   distinctSquares: number;
+  /**
+   * Additive (Phase 3, render-only): the most recent chain-flood clear — origin
+   * chain cell, ordered cleared component (cell + BFS distance), monotonic id.
+   */
+  lastChainClear?: {
+    origin: number;
+    cells: { cell: number; dist: number }[];
+    id: number;
+  };
 }
 
 declare global {
@@ -234,6 +243,65 @@ test("game over on stack overflow, restart resets", async ({ page }) => {
   const s = await getState(page);
   expect(s.gameOver).toBe(false);
   expect(s.grid.flat().every((c) => c === null)).toBe(true);
+});
+
+test("chain clear emits an ordered lastChainClear wavefront payload (Phase 3)", async ({
+  page,
+}) => {
+  const COLS = 16;
+  const consoleErrors: string[] = [];
+  page.on("console", (m) => {
+    if (m.type() === "error") consoleErrors.push(m.text());
+  });
+  page.on("pageerror", (e) => consoleErrors.push(e.message));
+
+  await page.getByTestId("start-button").click();
+
+  // Build a mono-A 2x2 square at the centre (cols 7-8, rows 8-9).
+  await api(page, "spawn", MONO_A);
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+  // Extend the connected mono-A region one square to the right (cols 9-10).
+  await api(page, "spawn", MONO_A);
+  await page.keyboard.press("l"); // cols 8-9
+  await page.keyboard.press("l"); // cols 9-10
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+
+  // Mark a chain special on the left square's bottom-left cell. When the sweep
+  // clears that square, the chain floods the whole connected mono-A region.
+  await api(page, "setSpecial", 9, 7);
+
+  // Sanity: the connected mono-A strip spans cols 7..10 on the floor.
+  let pre = await getState(page);
+  for (let c = 7; c <= 10; c++) expect(pre.grid[9]![c]).toBe(0);
+
+  await api(page, "sweepNow");
+  const s = await getState(page);
+
+  // The record-only payload is present and describes the cleared component.
+  expect(s.lastChainClear).toBeDefined();
+  const rec = s.lastChainClear!;
+  expect(rec.id).toBeGreaterThanOrEqual(1);
+  expect(rec.origin).toBe(9 * COLS + 7); // the chain cell, row 9 col 7
+
+  const distByCell = new Map(rec.cells.map((o) => [o.cell, o.dist]));
+  // Origin reported at dist 0.
+  expect(distByCell.get(9 * COLS + 7)).toBe(0);
+  // The floor cells radiate outward by BFS distance from the origin.
+  expect(distByCell.get(9 * COLS + 8)).toBe(1);
+  expect(distByCell.get(9 * COLS + 9)).toBe(2);
+  expect(distByCell.get(9 * COLS + 10)).toBe(3);
+  // Distances are nondecreasing (BFS visit order).
+  for (let i = 1; i < rec.cells.length; i++) {
+    expect(rec.cells[i]!.dist).toBeGreaterThanOrEqual(rec.cells[i - 1]!.dist);
+  }
+
+  // The flood actually cleared the connected mono-A region (deletion unchanged).
+  for (let c = 7; c <= 10; c++) expect(s.grid[9]![c]).toBe(null);
+
+  // The wavefront renders without console errors over the animated flash window
+  // (the ChainWavefront useFrame loop runs while the flash travels + fades).
+  await page.waitForTimeout(300);
+  expect(consoleErrors).toEqual([]);
 });
 
 test("audio source exists, loops, and points to /backing-track.mp3", async ({

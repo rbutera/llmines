@@ -73,6 +73,16 @@ export interface RenderState {
    * descending piece. No core/game-state mutation; defaults false.
    */
   softDropping: boolean;
+  /**
+   * Additive (render-only, Phase 3): the most recent chain-flood clear, copied
+   * straight from the core's RECORD-ONLY `state.lastChainClear`. Carries the
+   * origin chain cell, the ordered cleared component (each cell tagged with its
+   * BFS distance from the origin), and a monotonic `id`. The renderer fires the
+   * travelling-wavefront effect once per new `id`. Pure projection — no logic
+   * change; the deletion result is identical with or without it. `undefined`
+   * until the first chain clear.
+   */
+  lastChainClear?: { origin: number; cells: { cell: number; dist: number }[]; id: number };
 }
 
 export interface ControllerOptions {
@@ -473,6 +483,9 @@ export class GameController {
       // coords copied straight from the core set, and the soft-drop heat flag.
       specials: Array.from(this.state.specials),
       softDropping: this.softDropEngaged,
+      // Phase 3 render-only projection: the core's record-only chain-clear event
+      // (with its monotonic id) passed straight through for the wavefront effect.
+      lastChainClear: this.state.lastChainClear,
     };
   }
 

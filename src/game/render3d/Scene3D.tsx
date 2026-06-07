@@ -14,6 +14,7 @@ import { CellGrid } from "./CellGrid";
 import { SweepBar } from "./SweepBar";
 import { BackgroundField } from "./BackgroundField";
 import { Bursts, type BurstHandle } from "./Bursts";
+import { ChainWavefront, type ChainWavefrontHandle } from "./ChainWavefront";
 import { PreviewDock } from "./PreviewDock";
 import { BOARD_H, BOARD_W, CELL, cellX, cellY } from "./layout";
 
@@ -76,6 +77,14 @@ export function Scene3D({
   const heatRef = useRef<number>(0);
   const activeGroupRef = useRef<THREE.Group>(null);
   const burstsRef = useRef<BurstHandle>(null);
+  const wavefrontRef = useRef<ChainWavefrontHandle>(null);
+  // Phase 3: the last chain-clear id we already fired a wavefront for, so a new
+  // `lastChainClear.id` fires exactly once. -1 = none fired yet.
+  const lastChainIdRef = useRef<number>(-1);
+  // Queue of wavefronts to seed on the next R3F frame (mirrors the burst queue).
+  const pendingWavefrontsRef = useRef<
+    { cells: { position: [number, number, number]; dist: number }[] }[]
+  >([]);
 
   // Clear-detection bookkeeping (render-only): the previous grid + a queue of
   // clear events to flush into bursts on the next frame inside the R3F loop.
@@ -122,6 +131,24 @@ export function Scene3D({
         }
       }
       prevGridRef.current = rs.grid;
+
+      // --- Chain wavefront: queue a travelling flash on each NEW chain-clear
+      // event (keyed by the core's monotonic id so it fires exactly once). The
+      // cleared cells + their BFS distances come straight from the record-only
+      // lastChainClear payload; map each cell to its world position. ---
+      const chain = rs.lastChainClear;
+      if (chain && chain.id !== lastChainIdRef.current) {
+        lastChainIdRef.current = chain.id;
+        const cells = chain.cells.map((oc) => {
+          const row = Math.floor(oc.cell / COLS);
+          const col = oc.cell % COLS;
+          return {
+            position: [cellX(col), cellY(row), 0] as [number, number, number],
+            dist: oc.dist,
+          };
+        });
+        if (cells.length > 0) pendingWavefrontsRef.current.push({ cells });
+      }
 
       // --- Settled cells (with gem flag from the additive specials set). ---
       const specialSet = new Set(rs.specials);
@@ -171,6 +198,19 @@ export function Scene3D({
       for (const b of pending) burstsRef.current.spawn(b.positions, b.count);
     }
     pendingBurstsRef.current.length = 0;
+
+    // Flush any queued chain wavefronts (Phase 3). Each travels at the configured
+    // ms/ring with the configured peak intensity; pool retires the slots.
+    if (settings.chainEnabled && wavefrontRef.current) {
+      const pending = pendingWavefrontsRef.current;
+      for (const w of pending)
+        wavefrontRef.current.seed(
+          w.cells,
+          settings.chainSpeed,
+          settings.chainIntensity,
+        );
+    }
+    pendingWavefrontsRef.current.length = 0;
 
     // --- Heat: measure descent velocity (rows/sec) from fallProgress, gated by
     // the render-only softDropping flag so only a deliberate fast drop heats up. ---
@@ -282,6 +322,10 @@ export function Scene3D({
 
       {/* Particle bursts on clears (pooled; gated on real clear events). */}
       {settings.burstEnabled && <Bursts ref={burstsRef} />}
+
+      {/* Chain-clear travelling wavefront (Phase 3; pooled; fires once per
+          new lastChainClear.id, radiating outward by BFS distance). */}
+      {settings.chainEnabled && <ChainWavefront ref={wavefrontRef} />}
 
       {/* In-canvas next-piece preview dock (top-left gutter). */}
       {settings.previewEnabled && <PreviewDock queue={queue} settings={settings} />}

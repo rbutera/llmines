@@ -1,5 +1,5 @@
 import { COLS, ROWS } from "./constants";
-import type { Color, Grid } from "./types";
+import type { Color, Grid, OrderedCell } from "./types";
 
 /**
  * 4-connected flood fill from a starting coordinate over same-colour cells.
@@ -47,4 +47,75 @@ export function floodFill(grid: Grid, coord: number, colour: Color): Set<number>
     }
   }
   return result;
+}
+
+export type { OrderedCell } from "./types";
+
+/**
+ * RECORD-ONLY companion to {@link floodFill}: a pure, deterministic BFS that
+ * returns each cell of the same-colour 4-connected component reachable from
+ * `origin`, paired with its BFS distance from `origin`. The origin is reported
+ * at `dist: 0`; its same-colour orthogonal neighbours at `dist: 1`; and so on.
+ *
+ * Semantics vs {@link floodFill}: the SET of cells returned (their `cell`
+ * values) is exactly the connected component {@link floodFill} would return from
+ * the SAME origin with the SAME colour — this function only additionally tags
+ * each cell with the graph distance. So `new Set(floodFillOrdered(g,o,c).map(x
+ * => x.cell))` equals `floodFill(g,o,c)`. Used purely to RECORD the order a
+ * chain flood cleared cells in, for a render-only travelling-wavefront effect.
+ * It performs NO mutation and feeds NO gameplay/scoring/timing decision.
+ *
+ * The origin must itself be of `colour` and in bounds (callers chain-flood from
+ * a cell that has already been confirmed of that colour). If the origin is empty
+ * / a different colour / out of bounds, an empty array is returned.
+ *
+ * The result is returned in nondecreasing `dist` order (a BFS visit order); ties
+ * within a distance ring follow the deterministic neighbour-enumeration order
+ * (up, down, left, right), so the output is stable for a given grid + origin.
+ */
+export function floodFillOrdered(
+  grid: Grid,
+  origin: number,
+  colour: Color,
+): OrderedCell[] {
+  const startRow = Math.floor(origin / COLS);
+  const startCol = origin % COLS;
+  if (
+    startRow < 0 ||
+    startRow >= ROWS ||
+    startCol < 0 ||
+    startCol >= COLS ||
+    grid[startRow]![startCol] !== colour
+  ) {
+    return [];
+  }
+
+  const ordered: OrderedCell[] = [];
+  const seen = new Set<number>([origin]);
+  // BFS queue of [coord, dist]; FIFO via a moving cursor (no shift cost). The
+  // queue grows during iteration, so this is a while loop, not a for-of.
+  const queue: Array<[number, number]> = [[origin, 0]];
+  let head = 0;
+  while (head < queue.length) {
+    const [c, dist] = queue[head]!;
+    head++;
+    ordered.push({ cell: c, dist });
+    const row = Math.floor(c / COLS);
+    const col = c % COLS;
+    const neighbours = [
+      [row - 1, col],
+      [row + 1, col],
+      [row, col - 1],
+      [row, col + 1],
+    ];
+    for (const [nr, nc] of neighbours) {
+      if (nr! < 0 || nr! >= ROWS || nc! < 0 || nc! >= COLS) continue;
+      if (grid[nr!]![nc!] !== colour) continue;
+      const ncoord = nr! * COLS + nc!;
+      if (seen.has(ncoord)) continue;
+      seen.add(ncoord);
+      queue.push([ncoord, dist + 1]);
+    }
+  }
+  return ordered;
 }

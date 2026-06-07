@@ -7,6 +7,19 @@
 /** The two block colours: A = 0, B = 1. */
 export type Color = 0 | 1;
 
+/**
+ * A cell of an ordered chain-flood component paired with its BFS distance from
+ * the origin chain cell (re-exported shape, used by the render-only
+ * `lastChainClear` record). Defined here to keep `types.ts` the single source of
+ * truth for state shapes; `chain.ts` exports the canonical {@link OrderedCell}.
+ */
+export interface OrderedCell {
+  /** Row-major index (`row * COLS + col`). */
+  cell: number;
+  /** BFS distance (orthogonal steps) from the origin cell; origin is 0. */
+  dist: number;
+}
+
 /** A grid cell: a colour, or null when empty. */
 export type Cell = Color | null;
 
@@ -125,6 +138,16 @@ export interface GameState {
   skinIndex: number;
   /** Squares cleared within the current skin (drives skin advancement). */
   clearsInSkin: number;
+  /**
+   * RECORD-ONLY (render-only), additive: the most recent chain-flood clear,
+   * carrying the ordered component (origin + each cleared cell's BFS distance)
+   * and a monotonic `id` so the renderer fires the travelling-wavefront effect
+   * exactly once per event. Set by the sweep when a chain flood occurs; carried
+   * forward unchanged on subsequent states until the next chain clear. Never read
+   * by gameplay/scoring/timing — the deletion result is identical with or without
+   * it. `undefined` until the first chain clear of the game.
+   */
+  lastChainClear?: { origin: number; cells: OrderedCell[]; id: number };
   /**
    * Soft-drop points accrued for the CURRENT piece but not yet banked. Real
    * Lumines awards soft-drop points only when the piece settles (locks), as a

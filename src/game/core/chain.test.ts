@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { floodFill } from "./chain";
+import { floodFill, floodFillOrdered } from "./chain";
 import { ALL_CLEAR_BONUS, COLS, ROWS, SINGLE_COLOUR_BONUS } from "./constants";
 import { createGame } from "./grid";
 import { advanceSweep, runFullSweep } from "./sweep";
@@ -35,6 +35,137 @@ describe("floodFill (4-connected, order-independent)", () => {
     g[ROWS - 1]![2] = 0;
     const comp = floodFill(g, (ROWS - 1) * COLS + 0, 0);
     expect(comp.size).toBe(1);
+  });
+});
+
+describe("floodFillOrdered (BFS-distance-tagged component, record-only)", () => {
+  it("tags the origin dist 0 and each step out by graph distance", () => {
+    const g = emptyGrid();
+    // A horizontal run of colour 0 on the floor: cols 0..3 in the last row.
+    for (let c = 0; c <= 3; c++) g[ROWS - 1]![c] = 0;
+    const origin = (ROWS - 1) * COLS + 0;
+    const ordered = floodFillOrdered(g, origin, 0);
+    const distByCell = new Map(ordered.map((o) => [o.cell, o.dist]));
+    expect(distByCell.get((ROWS - 1) * COLS + 0)).toBe(0);
+    expect(distByCell.get((ROWS - 1) * COLS + 1)).toBe(1);
+    expect(distByCell.get((ROWS - 1) * COLS + 2)).toBe(2);
+    expect(distByCell.get((ROWS - 1) * COLS + 3)).toBe(3);
+  });
+
+  it("computes shortest-path (BFS) distance around an L-bend", () => {
+    const g = emptyGrid();
+    // L of colour 0: (9,0),(9,1),(8,1). From (9,0): (9,1) is 1, (8,1) is 2.
+    g[ROWS - 1]![0] = 0;
+    g[ROWS - 1]![1] = 0;
+    g[ROWS - 2]![1] = 0;
+    const origin = (ROWS - 1) * COLS + 0;
+    const ordered = floodFillOrdered(g, origin, 0);
+    const distByCell = new Map(ordered.map((o) => [o.cell, o.dist]));
+    expect(distByCell.get((ROWS - 1) * COLS + 0)).toBe(0);
+    expect(distByCell.get((ROWS - 1) * COLS + 1)).toBe(1);
+    expect(distByCell.get((ROWS - 2) * COLS + 1)).toBe(2);
+  });
+
+  it("is emitted in nondecreasing distance (BFS visit) order", () => {
+    const g = emptyGrid();
+    for (let c = 0; c <= 4; c++) g[ROWS - 1]![c] = 0;
+    g[ROWS - 2]![2] = 0; // a branch up from the middle
+    const ordered = floodFillOrdered(g, (ROWS - 1) * COLS + 0, 0);
+    for (let i = 1; i < ordered.length; i++) {
+      expect(ordered[i]!.dist).toBeGreaterThanOrEqual(ordered[i - 1]!.dist);
+    }
+  });
+
+  it("membership equals floodFill from the same origin (only adds distance)", () => {
+    const g = emptyGrid();
+    // A blob of colour 0 plus a disconnected 0 and a colour boundary.
+    g[ROWS - 1]![0] = 0;
+    g[ROWS - 1]![1] = 0;
+    g[ROWS - 2]![0] = 0;
+    g[ROWS - 2]![1] = 0;
+    g[ROWS - 1]![2] = 1; // boundary
+    g[ROWS - 1]![5] = 0; // disconnected
+    const origin = (ROWS - 1) * COLS + 0;
+    const orderedSet = new Set(floodFillOrdered(g, origin, 0).map((o) => o.cell));
+    const flood = floodFill(g, origin, 0);
+    expect(orderedSet).toEqual(flood);
+    expect(orderedSet.has((ROWS - 1) * COLS + 5)).toBe(false);
+  });
+
+  it("does not cross colour boundaries", () => {
+    const g = emptyGrid();
+    g[ROWS - 1]![0] = 0;
+    g[ROWS - 1]![1] = 1;
+    g[ROWS - 1]![2] = 0;
+    const ordered = floodFillOrdered(g, (ROWS - 1) * COLS + 0, 0);
+    expect(ordered).toHaveLength(1);
+    expect(ordered[0]).toEqual({ cell: (ROWS - 1) * COLS + 0, dist: 0 });
+  });
+
+  it("returns empty for an origin that is empty or the wrong colour", () => {
+    const g = emptyGrid();
+    g[ROWS - 1]![0] = 0;
+    // origin is empty
+    expect(floodFillOrdered(g, (ROWS - 2) * COLS + 0, 0)).toEqual([]);
+    // origin is the wrong colour
+    expect(floodFillOrdered(g, (ROWS - 1) * COLS + 0, 1)).toEqual([]);
+  });
+});
+
+describe("chain-clear record-only payload (lastChainClear)", () => {
+  it("records the cleared component with origin-rooted BFS distances", () => {
+    // mono-0 strip cols 0..4 on the floor; chain special at the left end.
+    const base = createGame();
+    for (let c = 0; c <= 4; c++) base.grid[ROWS - 1]![c] = 0;
+    // make it a real 2x2 square so the chain actually fires (cols 0-1, rows 8-9).
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    const origin = (ROWS - 1) * COLS + 0;
+    base.specials = new Set([origin]);
+
+    const s = runFullSweep(base);
+    expect(s.lastChainClear).toBeDefined();
+    expect(s.lastChainClear!.origin).toBe(origin);
+    // origin reported at dist 0.
+    const distByCell = new Map(
+      s.lastChainClear!.cells.map((o) => [o.cell, o.dist]),
+    );
+    expect(distByCell.get(origin)).toBe(0);
+    // the far-right floor cell is the deepest in the component.
+    expect(distByCell.get((ROWS - 1) * COLS + 4)).toBe(4);
+    // every cleared cell is present in the record.
+    expect(s.lastChainClear!.cells.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("bumps the monotonic id on each new chain clear; carries forward when none", () => {
+    const mk = (): GameState => {
+      const base = createGame();
+      for (let c = 0; c <= 3; c++) base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![0] = 0;
+      base.grid[ROWS - 2]![1] = 0;
+      base.specials = new Set([(ROWS - 1) * COLS + 0]);
+      return base;
+    };
+    const s1 = runFullSweep(mk());
+    expect(s1.lastChainClear!.id).toBe(1);
+    // A second chain clear from s1 (rebuild a clearable board on top of s1's id).
+    const s2base: GameState = { ...mk(), lastChainClear: s1.lastChainClear };
+    const s2 = runFullSweep(s2base);
+    expect(s2.lastChainClear!.id).toBe(2);
+    // A sweep with NO chain clear carries the prior record forward unchanged.
+    const s3 = advanceSweep({ ...createGame(), lastChainClear: s2.lastChainClear }, COLS);
+    expect(s3.lastChainClear).toEqual(s2.lastChainClear);
+  });
+
+  it("leaves lastChainClear undefined when no chain fires", () => {
+    const base = createGame();
+    // a 2x2 square but NO chain special -> ordinary clear, no record.
+    base.grid[ROWS - 1]![0] = 0;
+    base.grid[ROWS - 1]![1] = 0;
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    const s = runFullSweep(base);
+    expect(s.lastChainClear).toBeUndefined();
   });
 });
 
