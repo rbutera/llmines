@@ -1,5 +1,6 @@
 import {
   advanceSweep,
+  canPlace,
   COLS,
   COLS_PER_BEAT,
   computeMarked,
@@ -17,6 +18,7 @@ import {
   rotateCW,
   runFullSweep,
   seedState,
+  setForceGem,
   skinBpm,
   softDrop,
   spawnFromQueue,
@@ -83,6 +85,23 @@ export interface RenderState {
    * until the first chain clear.
    */
   lastChainClear?: { origin: number; cells: { cell: number; dist: number }[]; id: number };
+  /**
+   * Additive (render-only): a monotonic counter incremented on EVERY soft-drop
+   * step. The renderer diffs it frame-to-frame to detect "a soft-drop step
+   * happened recently" independent of the per-row `fallProgress` velocity (which
+   * is coarse for the one-row soft-drop). Drives the warm motion-smear / speed
+   * lines on the descending piece. 0 until the first soft drop.
+   */
+  softDropPulses: number;
+  /**
+   * Additive (render-only): the most recent HARD drop, for the slam impact FX.
+   * `id` is monotonic so the renderer fires the slam exactly once per drop;
+   * `cols` are the (1-2) board columns the piece occupied; `row` is the impact
+   * row (the lowest cell's resting row); `distance` is how many rows the piece
+   * fell (drives screen-shake + spark intensity — a long slam hits harder).
+   * `undefined` until the first hard drop. Pure projection; no logic change.
+   */
+  lastHardDrop?: { id: number; cols: number[]; row: number; distance: number };
 }
 
 export interface ControllerOptions {
@@ -156,6 +175,24 @@ export class GameController {
    * that leave it false, so determinism + existing tests are untouched.
    */
   private softDropEngaged = false;
+  /**
+   * Render-only: monotonic count of soft-drop STEPS, surfaced through
+   * {@link RenderState.softDropPulses}. The renderer diffs it to detect a recent
+   * soft-drop step (drives the motion-smear / speed lines) without relying on the
+   * coarse per-row fall velocity. Production-only writes, like
+   * {@link softDropEngaged} — test paths leave it untouched.
+   */
+  private softDropPulses = 0;
+  /**
+   * Render-only: the most recent hard-drop event (slam FX), surfaced through
+   * {@link RenderState.lastHardDrop}. `id` is monotonic so the renderer fires the
+   * slam exactly once. Captured in {@link hardDropStep} from the active piece's
+   * pre-drop position. Production-only; test paths never populate it.
+   */
+  private lastHardDrop:
+    | { id: number; cols: number[]; row: number; distance: number }
+    | undefined = undefined;
+  private hardDropSeq = 0;
   /**
    * The BPM the sweep is currently advancing at. Sourced from the active skin,
    * but only re-read at a bar/pass boundary (when `sweepX` wraps) so a mid-pass
@@ -417,7 +454,12 @@ export class GameController {
     // Render-only heat signal: a soft-drop step engages the glow. Cleared again
     // on lock/spawn below (and on hard drop). Production-only so test runs that
     // call softDropStep stay observationally identical.
-    if (!this.testMode) this.softDropEngaged = true;
+    if (!this.testMode) {
+      this.softDropEngaged = true;
+      // Render-only: tick the soft-drop pulse counter so the renderer can read
+      // "a soft-drop step just happened" for the motion-smear / speed lines.
+      this.softDropPulses++;
+    }
     const { state, locked } = softDrop(this.state);
     this.state = state;
     if (locked && !this.testMode) {
@@ -430,6 +472,29 @@ export class GameController {
   /** Hard-drop to the floor + lock; production auto-spawns from the preview queue. */
   private hardDropStep(): void {
     this.softDropEngaged = false;
+    // Render-only: capture the slam BEFORE the drop+spawn mutates state, so the
+    // FX layer knows where (and how hard) the piece landed. The lowest piece row
+    // after the fall is computed the same way `hardDrop` descends: walk down
+    // until the piece can no longer place. Production-only — test paths skip it
+    // so `lastHardDrop` stays undefined and existing assertions are unaffected.
+    if (!this.testMode && this.state.active && !this.state.gameOver) {
+      const a = this.state.active;
+      const cols = [a.pos.col, a.pos.col + 1];
+      let landedRow = a.pos.row;
+      while (
+        canPlace(this.state.grid, a.cells, { row: landedRow + 1, col: a.pos.col })
+      ) {
+        landedRow++;
+      }
+      const distance = landedRow - a.pos.row;
+      this.hardDropSeq++;
+      this.lastHardDrop = {
+        id: this.hardDropSeq,
+        cols,
+        row: landedRow + 1, // impact row = the piece's LOWEST cell's resting row
+        distance,
+      };
+    }
     this.state = hardDrop(this.state);
     if (!this.testMode) {
       this.gravityAccumMs = 0;
@@ -486,6 +551,10 @@ export class GameController {
       // Phase 3 render-only projection: the core's record-only chain-clear event
       // (with its monotonic id) passed straight through for the wavefront effect.
       lastChainClear: this.state.lastChainClear,
+      // Drop-feedback render-only projections (no logic change): the soft-drop
+      // step pulse counter and the most recent hard-drop slam event.
+      softDropPulses: this.softDropPulses,
+      lastHardDrop: this.lastHardDrop,
     };
   }
 
@@ -638,6 +707,17 @@ export class GameController {
    */
   testProductionFrame(): void {
     this.runFrame();
+  }
+
+  /**
+   * Dev/test-only: toggle the core force-gem flag so every subsequently spawned
+   * piece carries a chain special. Lets the gem cascade be exercised on demand
+   * (the natural rate is too sparse to reliably observe). Off by default; flipping
+   * it does not alter the RNG draw order, only the special verdict (see
+   * {@link setForceGem}). Production never calls this.
+   */
+  setForceGem(on: boolean): void {
+    setForceGem(on);
   }
 
   testClockAdvance(dtMs: number): void {

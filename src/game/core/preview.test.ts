@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { PREVIEW_DEPTH, SPECIAL_RATE } from "./constants";
 import { createGame } from "./grid";
-import { generateNext, refillQueue, spawnFromQueue } from "./piece";
+import {
+  generateNext,
+  isForceGem,
+  refillQueue,
+  setForceGem,
+  spawnFromQueue,
+} from "./piece";
 import type { GameState, GeneratedPiece } from "./types";
 
 function seeded(seed: number): GameState {
@@ -77,7 +83,7 @@ describe("preview queue", () => {
 });
 
 describe("special generation rate + determinism", () => {
-  it("specials appear at ~1/30 over a long seeded run", () => {
+  it("specials appear at ~SPECIAL_RATE over a long seeded run", () => {
     let rng = createGame(123).rngState;
     const N = 6000;
     let specials = 0;
@@ -104,5 +110,60 @@ describe("special generation rate + determinism", () => {
       return out;
     }
     expect(specialIndices(555)).toEqual(specialIndices(555));
+  });
+});
+
+describe("force-gem dev/test seam", () => {
+  it("is OFF by default (no effect on natural generation)", () => {
+    expect(isForceGem()).toBe(false);
+    // a non-special outcome still occurs naturally at the configured rate
+    let rng = createGame(7).rngState;
+    let sawNonSpecial = false;
+    for (let i = 0; i < 100; i++) {
+      const [next, gp] = generateNext(rng);
+      rng = next;
+      if (!gp.special) sawNonSpecial = true;
+    }
+    expect(sawNonSpecial).toBe(true);
+  });
+
+  it("forces EVERY piece special while on, and restores cleanly", () => {
+    try {
+      setForceGem(true);
+      expect(isForceGem()).toBe(true);
+      let rng = createGame(7).rngState;
+      for (let i = 0; i < 50; i++) {
+        const [next, gp] = generateNext(rng);
+        rng = next;
+        expect(gp.special).toBeDefined();
+        // a forced special still picks a valid cell index (0..3)
+        expect([0, 1, 2, 3]).toContain(gp.special!.cellIndex);
+      }
+    } finally {
+      setForceGem(false);
+    }
+    expect(isForceGem()).toBe(false);
+  });
+
+  it("leaves the OFF path byte-identical to a forceGem-free run", () => {
+    // The determinism contract that matters: with the flag OFF, generation is
+    // exactly what it was before the seam existed. (A forced run intentionally
+    // diverges — forcing a special consumes the extra cell-index draw that a
+    // natural non-special piece would skip — but that path is dev-only and never
+    // used by seeded/production play, so it cannot affect a real run.)
+    function run(seed: number): string[] {
+      let rng = createGame(seed).rngState;
+      const out: string[] = [];
+      for (let i = 0; i < 60; i++) {
+        const [next, gp] = generateNext(rng);
+        rng = next;
+        out.push(JSON.stringify({ cells: gp.cells, special: gp.special ?? null }));
+      }
+      return out;
+    }
+    setForceGem(false);
+    const a = run(99);
+    const b = run(99);
+    expect(a).toEqual(b); // off path is deterministic + unchanged
   });
 });

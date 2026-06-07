@@ -1,10 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrthographicCamera } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
-import { Leva } from "leva";
+import { Leva, useControls } from "leva";
 import { BOARD_ASPECT } from "../core";
 import type { GameController } from "../engine/controller";
 import { Scene3D } from "./Scene3D";
@@ -73,6 +73,20 @@ function AutoFitCamera({
 export function ThreeRenderer({ controller }: { controller: GameController }) {
   const settings = useVisualSettings();
   const [panelOpen, setPanelOpen] = useState(false);
+
+  // DEV toggle — force every spawned piece to carry a gem so the chain-clear
+  // cascade is observable on demand (the natural rate is too sparse to reliably
+  // see). This is the ONE control that intentionally touches the core (via the
+  // controller's setForceGem seam), kept OUT of useVisualSettings so that hook
+  // stays purely cosmetic. Off by default; not persisted (a dev affordance, not
+  // a saved look). Restores natural generation when switched off.
+  const { forceGem } = useControls("Dev (force gem)", {
+    forceGem: { value: false, label: "force gem" },
+  });
+  useEffect(() => {
+    controller.setForceGem(forceGem);
+    return () => controller.setForceGem(false);
+  }, [controller, forceGem]);
   // Shared beat phase (0..1), written once per frame by Scene3D from sweepX and
   // read by the cubes so all emissive breathing pulses together.
   const beatPhaseRef = useRef<number>(0);

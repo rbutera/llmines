@@ -74,9 +74,11 @@ export const ALL_CLEAR_BONUS = 10000;
 
 /**
  * Chain-special spawn rate: per-piece probability, decided at generation time
- * off the single in-state RNG. ~1 special per 30 pieces.
+ * off the single in-state RNG. ~1 special per 14 pieces — raised from 1/30 so
+ * gems are actually PRESENT in normal play (at 1/30 a several-minute session
+ * saw almost none). Single source of truth; the renderer never duplicates it.
  */
-export const SPECIAL_RATE = 1 / 30;
+export const SPECIAL_RATE = 1 / 14;
 
 /** Preview depth: the UI shows the next 3 pieces. */
 export const PREVIEW_DEPTH = 3;

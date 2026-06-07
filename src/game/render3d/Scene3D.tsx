@@ -16,7 +16,20 @@ import { BackgroundField } from "./BackgroundField";
 import { Bursts, type BurstHandle } from "./Bursts";
 import { ChainWavefront, type ChainWavefrontHandle } from "./ChainWavefront";
 import { PreviewDock } from "./PreviewDock";
+import { SpeedLines } from "./SpeedLines";
+import { surgeStyleForSkin } from "./surgeStyles";
 import { BOARD_H, BOARD_W, CELL, cellX, cellY } from "./layout";
+
+/**
+ * Super-saturated corona RGB (0..1, additive-ready) for a cleared cell's own
+ * colour. Bright cells (A/0) leave a near-white corona; dark cells (B/1) leave a
+ * violet one. Pushed bright so the trail blooms.
+ */
+function cellCoronaRgb(cell: Cell): readonly [number, number, number] {
+  return isBright(cell)
+    ? [2.4, 2.9, 3.0] // icy white-blue
+    : [2.2, 0.9, 3.0]; // violet/magenta
+}
 
 /**
  * Map a game block colour to the bright/dark aesthetic. The game has two block
@@ -88,15 +101,36 @@ export function Scene3D({
   const skinIndexRef = useRef<number>(0);
   const heatRef = useRef<number>(0);
   const activeGroupRef = useRef<THREE.Group>(null);
+  // Scene root — screen-shake on a hard-drop landing jitters this whole group.
+  const rootGroupRef = useRef<THREE.Group>(null);
   const burstsRef = useRef<BurstHandle>(null);
   const wavefrontRef = useRef<ChainWavefrontHandle>(null);
   // Phase 3: the last chain-clear id we already fired a wavefront for, so a new
   // `lastChainClear.id` fires exactly once. -1 = none fired yet.
   const lastChainIdRef = useRef<number>(-1);
-  // Queue of wavefronts to seed on the next R3F frame (mirrors the burst queue).
+  // Queue of cascades to seed on the next R3F frame (mirrors the burst queue).
   const pendingWavefrontsRef = useRef<
-    { cells: { position: [number, number, number]; dist: number }[] }[]
+    {
+      cells: {
+        position: [number, number, number];
+        dist: number;
+        colour: readonly [number, number, number];
+      }[];
+      origin: [number, number, number];
+    }[]
   >([]);
+  // Hard-drop slam: the last hard-drop id we already fired a slam for, and a
+  // queue of slams to flush on the next frame. Screen-shake amplitude + decay
+  // ride a ref read in useFrame against the camera/group.
+  const lastHardDropIdRef = useRef<number>(-1);
+  const pendingSlamsRef = useRef<{ cols: number[]; row: number; mag: number }[]>(
+    [],
+  );
+  const shakeRef = useRef<number>(0);
+  // Soft-drop trail: last pulse count we observed, and a 0..1 trail energy that
+  // rises while soft-drop steps keep arriving and decays when they stop.
+  const lastSoftPulseRef = useRef<number>(0);
+  const trailRef = useRef<number>(0);
 
   // Clear-detection bookkeeping (render-only): the previous grid + a queue of
   // clear events to flush into bursts on the next frame inside the R3F loop.
@@ -144,22 +178,55 @@ export function Scene3D({
       }
       prevGridRef.current = rs.grid;
 
-      // --- Chain wavefront: queue a travelling flash on each NEW chain-clear
+      // --- Chain CASCADE: queue a full gem-clear cascade on each NEW chain-clear
       // event (keyed by the core's monotonic id so it fires exactly once). The
       // cleared cells + their BFS distances come straight from the record-only
-      // lastChainClear payload; map each cell to its world position. ---
+      // lastChainClear payload; map each cell to its world position + its own
+      // colour (read from prevGrid, which still holds the about-to-clear cells)
+      // for the trailing corona. ---
       const chain = rs.lastChainClear;
       if (chain && chain.id !== lastChainIdRef.current) {
         lastChainIdRef.current = chain.id;
         const cells = chain.cells.map((oc) => {
           const row = Math.floor(oc.cell / COLS);
           const col = oc.cell % COLS;
+          // colour of the cleared cell: prefer the pre-clear grid; the origin gem
+          // cell may already be null, so fall back to a bright corona.
+          const wasColour = prevGrid?.[row]?.[col] ?? null;
+          const colour =
+            wasColour === null ? cellCoronaRgb(0) : cellCoronaRgb(wasColour);
           return {
             position: [cellX(col), cellY(row), 0] as [number, number, number],
             dist: oc.dist,
+            colour,
           };
         });
-        if (cells.length > 0) pendingWavefrontsRef.current.push({ cells });
+        if (cells.length > 0) {
+          const originRow = Math.floor(chain.origin / COLS);
+          const originCol = chain.origin % COLS;
+          pendingWavefrontsRef.current.push({
+            cells,
+            origin: [cellX(originCol), cellY(originRow), 0],
+          });
+        }
+      }
+
+      // --- Hard-drop SLAM: queue an impact (spark puff at the landing row +
+      // screen-shake) on each NEW hard-drop event. Intensity scales with the
+      // fall distance, so a long slam hits harder than a tap. ---
+      const slam = rs.lastHardDrop;
+      if (slam && slam.id !== lastHardDropIdRef.current) {
+        lastHardDropIdRef.current = slam.id;
+        // normalise fall distance to 0..1 over the well height (ROWS).
+        const mag = Math.max(0.15, Math.min(1, slam.distance / ROWS));
+        pendingSlamsRef.current.push({ cols: slam.cols, row: slam.row, mag });
+      }
+
+      // --- Soft-drop pulse: bump the trail energy when a soft-drop step lands
+      // (detected by the monotonic pulse counter advancing). ---
+      if (rs.softDropPulses > lastSoftPulseRef.current) {
+        lastSoftPulseRef.current = rs.softDropPulses;
+        trailRef.current = Math.min(1, trailRef.current + 0.6);
       }
 
       // --- Settled cells (gem flag from the additive specials set; marked flag
@@ -208,7 +275,7 @@ export function Scene3D({
   }, [controller, settings.burstPerCell, settings.burstCap]);
 
   // Animate the active piece's descent + drive beat-phase + heat + bursts.
-  useFrame((s) => {
+  useFrame((s, frameDelta) => {
     const rs = snapRef.current;
 
     // Shared beat phase (pure function of the sweep position) for cubes + bloom.
@@ -221,33 +288,86 @@ export function Scene3D({
     }
     pendingBurstsRef.current.length = 0;
 
-    // Flush any queued chain wavefronts (Phase 3). Each travels at the configured
-    // ms/ring with the configured peak intensity; pool retires the slots.
+    // Flush any queued gem CASCADES (PART 1). Each travels at the configured
+    // ms/ring with the configured peak intensity, in the live skin's surge style;
+    // the pool retires the slots. EVERY cleared cell gets a flash slot (we never
+    // cap the visible clear). For the per-cell SHATTER particles we DEGRADE
+    // density on big clears — distribute a capped particle budget across the
+    // cells so a 50-cell gem still sparks across the whole shape without spawning
+    // thousands of particles (coverage preserved, density degraded). ---
     if (settings.chainEnabled && wavefrontRef.current) {
-      const pending = pendingWavefrontsRef.current;
-      for (const w of pending)
-        wavefrontRef.current.seed(
-          w.cells,
-          settings.chainSpeed,
-          settings.chainIntensity,
-        );
+      const style = surgeStyleForSkin(skinIndexRef.current);
+      for (const w of pendingWavefrontsRef.current) {
+        wavefrontRef.current.seed({
+          cells: w.cells,
+          origin: w.origin,
+          msPerRing: settings.chainSpeed,
+          intensity: settings.chainIntensity,
+          style,
+          shockwave: settings.shockwaveEnabled,
+        });
+        // Per-cell shatter particles via the shared burst pool. Big clears get a
+        // bigger TOTAL budget (more payoff) but capped, then spread across the
+        // cleared cells so each one sparks. Climax scales the count up with size.
+        if (settings.burstEnabled && burstsRef.current && w.cells.length > 0) {
+          const positions = w.cells.map((c) => c.position);
+          const budget = Math.min(
+            settings.burstCap,
+            Math.max(settings.burstPerCell, Math.round(w.cells.length * 3)),
+          );
+          burstsRef.current.spawn(positions, budget);
+        }
+      }
     }
     pendingWavefrontsRef.current.length = 0;
 
+    // Flush any queued hard-drop SLAMS (PART 3). A spark/dust puff at the impact
+    // row (reusing the burst pool) plus a screen-shake kick that decays. The
+    // shake amplitude scales with the fall distance + the slam settings. ---
+    if (settings.slamEnabled) {
+      for (const slam of pendingSlamsRef.current) {
+        if (settings.burstEnabled && burstsRef.current) {
+          // dust/spark puff across the columns the piece landed in, at the
+          // impact row (clamped into the well).
+          const r = Math.min(ROWS - 1, Math.max(0, slam.row));
+          const positions = slam.cols.map(
+            (col) => [cellX(col), cellY(r), 0] as [number, number, number],
+          );
+          const count = Math.round(
+            (12 + slam.mag * 30) * settings.slamIntensity,
+          );
+          burstsRef.current.spawn(positions, count);
+        }
+        // kick the screen-shake (clamped to the configured peak amplitude).
+        shakeRef.current = Math.max(
+          shakeRef.current,
+          slam.mag * settings.slamShake * settings.slamIntensity,
+        );
+      }
+    }
+    pendingSlamsRef.current.length = 0;
+
+    // --- Soft-drop TRAIL energy (PART 3): bumped by each soft-drop step (in the
+    // subscribe handler), decays here. Drives the warm motion-smear / speed lines
+    // + heat tint so even a single soft-drop tap reads (the old velocity-only
+    // heat needed a sustained fast fall, which is why it wasn't reading). ---
+    const dtFrame = Math.min(0.05, frameDelta);
+    trailRef.current *= Math.max(0, 1 - dtFrame * 4.0);
+
     // --- Heat: measure descent velocity (rows/sec) from fallProgress, gated by
-    // the render-only softDropping flag so only a deliberate fast drop heats up. ---
+    // the render-only softDropping flag so only a deliberate fast drop heats up.
+    // Folded together with the soft-drop trail energy so the feedback is
+    // unmistakable: the heat tint rises from EITHER a measured fast descent OR a
+    // fresh soft-drop step pulse. Intensity scales with dropTrailIntensity. ---
+    const now = s.clock.elapsedTime;
     if (rs?.active && settings.heatEnabled && rs.softDropping) {
-      const now = s.clock.elapsedTime;
       const last = lastFallRef.current;
-      // fallProgress is 0..1 within a row; approximate instantaneous velocity by
-      // the per-second change, ignoring wraps (a wrap reads as a big jump we skip).
       if (last && now > last.t) {
         const dp = rs.fallProgress - last.p;
         const dt = now - last.t;
         if (dp > 0 && dt > 0) {
           const rps = dp / dt; // rows per second (within-row fraction/sec)
           const target = dropHeat(rps);
-          // ease toward target so it ramps smoothly
           heatRef.current += (target - heatRef.current) * Math.min(1, dt * 8);
         } else {
           heatRef.current += (0 - heatRef.current) * Math.min(1, dt * 8);
@@ -255,9 +375,27 @@ export function Scene3D({
       }
       lastFallRef.current = { p: rs.fallProgress, t: now };
     } else {
-      // cool down when not soft-dropping
       heatRef.current *= 0.85;
       lastFallRef.current = null;
+    }
+    // Blend the soft-drop trail energy into the heat so discrete soft-drop steps
+    // glow even without a measurable velocity. Take the max so neither path
+    // suppresses the other.
+    if (settings.dropTrailEnabled) {
+      heatRef.current = Math.max(
+        heatRef.current,
+        trailRef.current * settings.dropTrailIntensity,
+      );
+    }
+
+    // --- Screen-shake (PART 3 slam): decay each frame; apply as a small random
+    // jitter to the whole scene root so a hard-drop landing physically punches. ---
+    shakeRef.current *= Math.max(0, 1 - dtFrame * 9.0);
+    const root = rootGroupRef.current;
+    if (root) {
+      const k = shakeRef.current;
+      root.position.x = k > 0.001 ? (Math.random() - 0.5) * 2 * k : 0;
+      root.position.y = k > 0.001 ? (Math.random() - 0.5) * 2 * k : 0;
     }
 
     const grp = activeGroupRef.current;
@@ -295,7 +433,7 @@ export function Scene3D({
   const half = useMemo(() => ({ w: BOARD_W, h: BOARD_H }), []);
 
   return (
-    <group>
+    <group ref={rootGroupRef}>
       {/* Lighting — straight-on key + cool fill, ported from the sandbox. */}
       <ambientLight intensity={0.5} />
       <directionalLight position={[6, 10, 12]} intensity={1.2} />
@@ -353,6 +491,22 @@ export function Scene3D({
             marked={false}
           />
         ))}
+        {/* Soft-drop speed lines (PART 3): faint upward streaks centred on the
+            piece, energy from trailRef. Centred between the piece's two columns. */}
+        {settings.dropTrailEnabled && active.length > 0 && (
+          <group
+            position={[
+              (cellX(active[0]!.col) + cellX(active[active.length - 1]!.col)) / 2,
+              0,
+              0,
+            ]}
+          >
+            <SpeedLines
+              trailRef={trailRef}
+              intensity={settings.dropTrailIntensity}
+            />
+          </group>
+        )}
       </group>
 
       <SweepBar sweepXRef={sweepXRef} />

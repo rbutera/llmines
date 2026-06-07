@@ -123,6 +123,19 @@ export function useVisualSettings(): VisualSettings {
       chainEnabled: { value: initial.chainEnabled },
       chainSpeed: { value: initial.chainSpeed, min: 10, max: 300, step: 5 },
       chainIntensity: { value: initial.chainIntensity, min: 0, max: 5, step: 0.05 },
+      shockwaveEnabled: { value: initial.shockwaveEnabled },
+    }),
+    "Drop feedback": folder({
+      dropTrailEnabled: { value: initial.dropTrailEnabled },
+      dropTrailIntensity: {
+        value: initial.dropTrailIntensity,
+        min: 0,
+        max: 4,
+        step: 0.05,
+      },
+      slamEnabled: { value: initial.slamEnabled },
+      slamIntensity: { value: initial.slamIntensity, min: 0, max: 4, step: 0.05 },
+      slamShake: { value: initial.slamShake, min: 0, max: 0.6, step: 0.01 },
     }),
   });
 
@@ -162,6 +175,13 @@ export function useVisualSettings(): VisualSettings {
     chainEnabled: values.chainEnabled ?? DEFAULT_SETTINGS.chainEnabled,
     chainSpeed: values.chainSpeed ?? DEFAULT_SETTINGS.chainSpeed,
     chainIntensity: values.chainIntensity ?? DEFAULT_SETTINGS.chainIntensity,
+    shockwaveEnabled: values.shockwaveEnabled ?? DEFAULT_SETTINGS.shockwaveEnabled,
+    dropTrailEnabled: values.dropTrailEnabled ?? DEFAULT_SETTINGS.dropTrailEnabled,
+    dropTrailIntensity:
+      values.dropTrailIntensity ?? DEFAULT_SETTINGS.dropTrailIntensity,
+    slamEnabled: values.slamEnabled ?? DEFAULT_SETTINGS.slamEnabled,
+    slamIntensity: values.slamIntensity ?? DEFAULT_SETTINGS.slamIntensity,
+    slamShake: values.slamShake ?? DEFAULT_SETTINGS.slamShake,
   };
 
   // Persist on every change so tweaks survive reload.
@@ -200,6 +220,12 @@ export function useVisualSettings(): VisualSettings {
     settings.chainEnabled,
     settings.chainSpeed,
     settings.chainIntensity,
+    settings.shockwaveEnabled,
+    settings.dropTrailEnabled,
+    settings.dropTrailIntensity,
+    settings.slamEnabled,
+    settings.slamIntensity,
+    settings.slamShake,
   ]);
 
   return settings;

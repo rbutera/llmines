@@ -91,11 +91,30 @@ export interface VisualSettings {
   chainEnabled: boolean;
   /**
    * Wavefront travel speed: ms per BFS-distance ring. Lower = faster snap;
-   * higher = a slower, more dramatic spread. Tuned ~60ms/ring by default.
+   * higher = a slower, more dramatic spread. Tuned ~55ms/ring by default
+   * (snappy for small clears, a visible cascade for big ones).
    */
   chainSpeed: number;
   /** Peak brightness of each cell's chain-flash. */
   chainIntensity: number;
+  /**
+   * Climax SHOCKWAVE ring: a brief expanding ring across the well when the
+   * furthest cell of a chain clears. Scales with the cleared component size.
+   * Default ON.
+   */
+  shockwaveEnabled: boolean;
+
+  // --- PART 3: soft / fast drop feedback (render-only, tunable) -------------
+  /** Soft-drop motion-smear + speed-line trail on the descending piece. Default ON. */
+  dropTrailEnabled: boolean;
+  /** Peak strength of the soft-drop motion-smear / speed lines (scales with speed). */
+  dropTrailIntensity: number;
+  /** Hard-drop slam: white-hot streak + impact spark puff + screen-shake. Default ON. */
+  slamEnabled: boolean;
+  /** Peak strength of the hard-drop slam streak + impact (scales with fall distance). */
+  slamIntensity: number;
+  /** Peak screen-shake amplitude (world units) on a hard-drop landing. */
+  slamShake: number;
 }
 
 /**
@@ -139,11 +158,20 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   settledEmissive: 0.45,
   markedPulse: 2.4,
 
-  // Phase 3 — chain wavefront. Fast-ish travel (60ms/ring) so a big chain reads
+  // Phase 3 — chain wavefront. Fast-ish travel (55ms/ring) so a big chain reads
   // as a clear sweeping across the shape without dragging.
   chainEnabled: true,
-  chainSpeed: 60,
-  chainIntensity: 1.8,
+  chainSpeed: 55,
+  chainIntensity: 2.0,
+  shockwaveEnabled: true,
+
+  // PART 3 — drop feedback. Both on by default; intensities scale with speed /
+  // fall distance so a hard slam reads much harder than a gentle soft drop.
+  dropTrailEnabled: true,
+  dropTrailIntensity: 1.4,
+  slamEnabled: true,
+  slamIntensity: 1.6,
+  slamShake: 0.18,
 };
 
 /** localStorage key for persisted visual settings. */

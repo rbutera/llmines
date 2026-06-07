@@ -37,6 +37,13 @@ export interface LuminesTestApi {
   setSpecial(row: number, col: number): void;
   /** Additive: set the current skin index (active BPM follows it). */
   setSkin(index: number): void;
+  /**
+   * Dev/test-only: force every subsequently spawned piece to carry a chain
+   * special (a gem), so the clear cascade can be triggered on demand. Pass
+   * `false` (or omit) to restore natural generation. Does not affect determinism
+   * while off.
+   */
+  forceGem(on?: boolean): void;
 }
 
 declare global {
@@ -70,6 +77,7 @@ export function installTestApi(controller: GameController): () => void {
     clockAdvance: (dtMs) => controller.testClockAdvance(dtMs),
     setSpecial: (row, col) => controller.testSetSpecial(row, col),
     setSkin: (index) => controller.testSetSkin(index),
+    forceGem: (on = true) => controller.setForceGem(on),
   };
   window.__lumines = api;
   return () => {

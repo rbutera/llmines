@@ -36,6 +36,76 @@ describe("floodFill (4-connected, order-independent)", () => {
     const comp = floodFill(g, (ROWS - 1) * COLS + 0, 0);
     expect(comp.size).toBe(1);
   });
+
+  // Rai's explicit spec: the gem extends only over VERTICAL/HORIZONTAL adjacency.
+  // A same-colour cell that touches only DIAGONALLY (no H/V path) is NOT part of
+  // the component. This pins the 4-connected (NOT 8-connected) contract.
+  it("is 4-connected: a diagonal-only same-colour cell is excluded", () => {
+    const g = emptyGrid();
+    // origin at (9,0); a same-colour cell at (8,1) touches it ONLY diagonally
+    // (no orthogonal path: (9,1) and (8,0) are empty), so it must NOT be reached.
+    g[ROWS - 1]![0] = 0;
+    g[ROWS - 2]![1] = 0;
+    const comp = floodFill(g, (ROWS - 1) * COLS + 0, 0);
+    expect(comp.size).toBe(1);
+    expect(comp.has((ROWS - 1) * COLS + 0)).toBe(true);
+    expect(comp.has((ROWS - 2) * COLS + 1)).toBe(false);
+  });
+
+  it("reaches a diagonal cell only when an H/V path connects it", () => {
+    const g = emptyGrid();
+    // origin (9,0) -> (9,1) -> (8,1): the diagonal (8,1) IS included because an
+    // orthogonal path through (9,1) reaches it. (Diagonal reachable via H/V.)
+    g[ROWS - 1]![0] = 0;
+    g[ROWS - 1]![1] = 0;
+    g[ROWS - 2]![1] = 0;
+    const comp = floodFill(g, (ROWS - 1) * COLS + 0, 0);
+    expect(comp.size).toBe(3);
+    expect(comp.has((ROWS - 2) * COLS + 1)).toBe(true);
+  });
+
+  // CROWN-JEWEL / owner spec: the gem clear is UNLIMITED — it floods the ENTIRE
+  // connected same-colour component over H/V adjacency, however large. No size
+  // cap. Build a large (>10 cell) snake of same-colour cells connected only via
+  // H/V steps and assert every cell is in the component.
+  it("clears an arbitrarily LARGE connected component (no size cap)", () => {
+    const g = emptyGrid();
+    // Serpentine path of colour 0 weaving through the grid, all H/V-connected:
+    // full bottom row, up one, full row back, up one, ... (a boustrophedon).
+    const cells: number[] = [];
+    let row = ROWS - 1;
+    let goingRight = true;
+    // Lay 4 rows of the snake with vertical joins at alternating ends.
+    for (let band = 0; band < 4; band++) {
+      const cols = goingRight
+        ? Array.from({ length: COLS }, (_, c) => c)
+        : Array.from({ length: COLS }, (_, c) => COLS - 1 - c);
+      for (const c of cols) {
+        g[row]![c] = 0;
+        cells.push(row * COLS + c);
+      }
+      // vertical join into the next band at the row's far end (kept colour 0).
+      if (band < 3) {
+        const joinCol = goingRight ? COLS - 1 : 0;
+        g[row - 1]![joinCol] = 0;
+        // the join cell is the first of the next band; it's added in that band's
+        // loop, so don't double-count here.
+      }
+      row -= 1;
+      goingRight = !goingRight;
+    }
+    const expected = new Set(cells);
+    expect(expected.size).toBeGreaterThan(10);
+    const comp = floodFill(g, cells[0]!, 0);
+    // Every laid cell is reached; the component is exactly the snake.
+    expect(comp).toEqual(expected);
+    // floodFillOrdered tags the same set (membership identical), proving the
+    // render record covers every cell of a big clear too.
+    const orderedSet = new Set(
+      floodFillOrdered(g, cells[0]!, 0).map((o) => o.cell),
+    );
+    expect(orderedSet).toEqual(expected);
+  });
 });
 
 describe("floodFillOrdered (BFS-distance-tagged component, record-only)", () => {

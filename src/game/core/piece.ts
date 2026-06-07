@@ -17,6 +17,33 @@ import type {
   PiecePos,
 } from "./types";
 
+/**
+ * DEV/TEST-ONLY force-gem flag. When true, {@link generateNext} treats EVERY
+ * piece as carrying a chain special so the gem cascade can be exercised on demand
+ * (the natural {@link SPECIAL_RATE} is too rare to reliably observe). Off by
+ * default and never enabled in the deterministic test suite or by production
+ * code, so the seeded-run determinism contract is untouched while it is OFF
+ * (the OFF path is byte-identical to before the seam existed). While ON, a forced
+ * special draws the SAME way a NATURAL special would (colour bits, the special
+ * roll, then the cell-index pick) — only the roll's verdict is overridden. Note
+ * that forcing a special therefore consumes the extra cell-index draw a natural
+ * NON-special piece would skip, so a forced run intentionally diverges from the
+ * same seed's natural run; that is fine because this seam is dev-only and never
+ * drives seeded/production play. Toggled via `window.__lumines.forceGem()`
+ * (TEST_MODE) or {@link setForceGem}.
+ */
+let forceGem = false;
+
+/** Set the dev/test force-gem flag. See {@link forceGem}. */
+export function setForceGem(on: boolean): void {
+  forceGem = on;
+}
+
+/** Read the dev/test force-gem flag. */
+export function isForceGem(): boolean {
+  return forceGem;
+}
+
 /** Draw the next piece from the RNG, returning [nextState, piece]. */
 export function nextPiece(rngState: number): [number, Piece] {
   const [s1, a] = nextBit(rngState);
@@ -46,7 +73,11 @@ export function nextPiece(rngState: number): [number, Piece] {
 export function generateNext(rngState: number): [number, GeneratedPiece] {
   const [s1, cells] = nextPiece(rngState);
   const [s2, roll] = nextFloat(s1);
-  if (roll >= SPECIAL_RATE) {
+  // DEV/TEST seam: when forceGem is set, override the roll's verdict so every
+  // piece is special (the RNG still advanced through the roll above; the forced
+  // branch then draws the cell-index pick exactly as a natural special would).
+  // Off by default — no effect on a normal/seeded run.
+  if (!forceGem && roll >= SPECIAL_RATE) {
     return [s2, { cells }];
   }
   const [s3, pick] = nextFloat(s2);
