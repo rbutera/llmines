@@ -41,6 +41,7 @@
     "server-only": "^0.0.1",
     "superjson": "^2.2.1",
     "three": "0.184.0",
+    "tone": "15.1.22",
     "zod": "^3.24.2"
   },
   "devDependencies": {

@@ -10,6 +10,14 @@ import {
   PREVIEW_DEPTH,
   skinAt,
 } from "../core";
+import { InteractiveAudioEngine } from "../audio/procedural/engine";
+import { AudioEventDeriver } from "../audio/procedural/events";
+import {
+  type AudioMix,
+  asAudioMix,
+  DEFAULT_MIX,
+  PRESETS,
+} from "../audio/procedural/presets";
 import { GameController, type RenderState } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
@@ -20,6 +28,9 @@ import { GameCanvas } from "./GameCanvas";
 import { ScoreFx } from "./ScoreFx";
 
 type Phase = "start" | "playing" | "gameover";
+
+/** localStorage key for the selected audio mix preset (A/B/C). */
+const AUDIO_MIX_KEY = "llmines.audioMix";
 
 /**
  * Top-level client component: owns the single GameController, the phase
@@ -40,6 +51,13 @@ export function GameShell() {
   // renderer's Audio panel and this slider share one source of truth.
   const [musicVolume, setMusicVolume] = useState(0.5);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Interactive audio: mute toggle + the selectable mix preset (A/B/C).
+  const [muted, setMuted] = useState(false);
+  const [audioMix, setAudioMix] = useState<AudioMix>(DEFAULT_MIX);
+  // The Tone.js engine + the RenderState->event deriver. Refs so the mount-once
+  // subscription always sees them; built lazily (browser only, not in TEST_MODE).
+  const audioEngineRef = useRef<InteractiveAudioEngine | null>(null);
+  const audioDeriverRef = useRef<AudioEventDeriver | null>(null);
   const phaseRef = useRef<Phase>("start");
   phaseRef.current = phase;
 
@@ -57,6 +75,22 @@ export function GameShell() {
   useEffect(() => {
     const c = new GameController({ testMode: TEST_MODE, seed: 1 });
     setController(c);
+    // Build the interactive-audio engine + the RenderState->event deriver.
+    // Silent until unlock() runs on the Start gesture; skipped entirely in
+    // TEST_MODE so the deterministic suite stays observationally identical.
+    if (!TEST_MODE && typeof window !== "undefined") {
+      const engine = new InteractiveAudioEngine();
+      audioEngineRef.current = engine;
+      audioDeriverRef.current = new AudioEventDeriver();
+      // Opt-in dev hook (URL `?audiodev=1` only): expose a handle to drive audio
+      // events directly, so "clearing advances the song" is verifiable live
+      // without having to skilfully clear squares headlessly. Absent in normal
+      // use (no query param) so production stays clean.
+      if (window.location.search.includes("audiodev=1")) {
+        (window as unknown as { __luminesAudioDev?: InteractiveAudioEngine }).__luminesAudioDev =
+          engine;
+      }
+    }
     const unsubscribe = c.subscribe((rs: RenderState) => {
       // Production-start acceptance probe (read-only). Surfaces the few fields the
       // non-TEST_MODE e2e guard asserts on — sweep position, whether a piece is in
@@ -64,19 +98,33 @@ export function GameShell() {
       // (frozen sweep / no spawn) fails CI. It mirrors the latest RenderState and
       // mutates nothing. Distinct from window.__lumines (the deterministic
       // TEST_MODE control seam), which is intentionally absent in production.
+      // Derive musical events from the RenderState diff and fire them (in-key,
+      // quantised to the next 1/16). Pure subscriber — never touches game logic.
+      // No-op before the Start gesture unlocks the engine.
+      const engine = audioEngineRef.current;
+      const deriver = audioDeriverRef.current;
+      if (engine && deriver) {
+        for (const ev of deriver.derive(rs)) engine.fire(ev);
+      }
       if (typeof window !== "undefined") {
+        // Read-only acceptance probe. Surfaces the e2e-guarded fields PLUS the
+        // live audio state, so "clearing advances the song" (segment index +
+        // vox gain) is HEADLESS-VERIFIABLE — a verification can drive real
+        // clears and assert the segment steps forward + the vox gain rises.
         (
           window as unknown as {
             __luminesProbe?: {
               sweepX: number;
               hasActive: boolean;
               gameOver: boolean;
+              audio?: ReturnType<InteractiveAudioEngine["getAudioState"]>;
             };
           }
         ).__luminesProbe = {
           sweepX: rs.sweepX,
           hasActive: rs.active != null,
           gameOver: rs.gameOver,
+          audio: engine?.getAudioState(),
         };
       }
       setScore(rs.score);
@@ -100,6 +148,9 @@ export function GameShell() {
       unsubscribe();
       uninstall?.();
       c.stop();
+      audioEngineRef.current?.dispose();
+      audioEngineRef.current = null;
+      audioDeriverRef.current = null;
     };
   }, []);
 
@@ -148,17 +199,35 @@ export function GameShell() {
     };
   }, [phase, controller]);
 
-  // Load the persisted music volume once on mount (shares storage with the
-  // renderer's Audio panel). Defaults to 0.5 when nothing is stored.
+  // Load the persisted music volume + audio mix once on mount. Volume shares
+  // storage with the renderer's Audio panel; the mix has its own key.
   useEffect(() => {
     setMusicVolume(loadSettings().musicVolume);
+    if (typeof window !== "undefined") {
+      setAudioMix(asAudioMix(window.localStorage.getItem(AUDIO_MIX_KEY)));
+    }
   }, []);
 
-  // Apply the volume to the backing-track element whenever it changes (the
-  // <audio> element's volume IS the music output gain).
+  // Apply the volume to the interactive engine. The leftover full-song
+  // backing-track.mp3 stays muted (volume 0) so ONLY the interactive layer is
+  // heard; the slider now drives the engine's master gain.
   useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = musicVolume;
+    if (audioRef.current) audioRef.current.volume = 0;
+    audioEngineRef.current?.setVolume(musicVolume);
   }, [musicVolume]);
+
+  // Apply the mute toggle to the engine.
+  useEffect(() => {
+    audioEngineRef.current?.setMuted(muted);
+  }, [muted]);
+
+  // Apply the selected mix preset to the engine + persist it.
+  useEffect(() => {
+    audioEngineRef.current?.setPreset(audioMix);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(AUDIO_MIX_KEY, audioMix);
+    }
+  }, [audioMix]);
 
   const handleVolumeChange = useCallback((v: number) => {
     const clamped = Math.max(0, Math.min(1, v));
@@ -172,10 +241,18 @@ export function GameShell() {
     setScore(0);
     setPaused(false);
     gameOverSubmittedRef.current = false;
+    // The Start click IS the user gesture — unlock the AudioContext and start
+    // the bed here. Fire-and-forget + self-guarded so a blocked/failed audio
+    // start can never break the game start path.
+    audioDeriverRef.current?.reset();
+    void audioEngineRef.current?.unlock().then(() => {
+      audioEngineRef.current?.setVolume(musicVolume);
+      audioEngineRef.current?.setMuted(muted);
+      audioEngineRef.current?.setPreset(audioMix);
+    });
     controller.start();
-    audioRef.current?.play().catch(() => undefined);
     setPhase("playing");
-  }, [controller]);
+  }, [controller, musicVolume, muted, audioMix]);
 
   const handleRestart = useCallback(() => {
     if (!controller) return;
@@ -183,10 +260,10 @@ export function GameShell() {
     setScore(0);
     setPaused(false);
     gameOverSubmittedRef.current = false;
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => undefined);
-    }
+    // Reset the deriver so the fresh game does not fire spurious events off the
+    // previous game's last state, and (re)unlock if needed.
+    audioDeriverRef.current?.reset();
+    void audioEngineRef.current?.unlock();
     setPhase("playing");
   }, [controller]);
 
@@ -199,9 +276,38 @@ export function GameShell() {
       }`}
     >
       <BackdropGlow />
-      {/* Looping backing track — present in the DOM so its loop/src are
-          inspectable. Live autoplay is not required. */}
+      {/* Legacy full-song backing track — kept in the DOM (loop/src inspectable)
+          but SILENCED (volume 0); the interactive engine is the live audio now. */}
       <audio ref={audioRef} src={BACKING_TRACK_URL} loop preload="auto" />
+
+      {/* Interactive-audio controls: mute toggle + mix preset (A/B/C).
+          Always-visible, top-right of the page, so the bed + action SFX can be
+          silenced or the mix switched without hunting for the slider. */}
+      <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
+        <select
+          data-testid="audio-mix"
+          aria-label="Audio mix preset"
+          value={audioMix}
+          onChange={(e) => setAudioMix(asAudioMix(e.target.value))}
+          className="rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-sm font-semibold text-white/80 backdrop-blur transition hover:bg-black/60 focus:ring-2 focus:ring-[#37e0c9]/40 focus:outline-none"
+        >
+          {(["A", "B", "C"] as AudioMix[]).map((m) => (
+            <option key={m} value={m} className="bg-[#0b0e1a] text-white">
+              {PRESETS[m].label}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          data-testid="audio-mute"
+          aria-pressed={muted}
+          aria-label={muted ? "Unmute audio" : "Mute audio"}
+          onClick={() => setMuted((m) => !m)}
+          className="rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-sm font-semibold text-white/80 backdrop-blur transition hover:bg-black/60"
+        >
+          {muted ? "🔇" : "🔊"}
+        </button>
+      </div>
 
       {/* Start / game-over keep a narrow reading column. While PLAYING the board
           fills ~90% of the viewport width (the inner PlayingScreen sets w-[90vw]),
