@@ -4,46 +4,52 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BACKING_TRACK_URL } from "../core";
 import { GameController } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
+import { LeaderboardProvider, useLeaderboard } from "../leaderboard/context";
 import { TEST_MODE } from "../test-api/flag";
 import { installTestApi } from "../test-api/install";
+import { AuthPanel } from "./AuthPanel";
 import { ControlsCheatsheet } from "./ControlsCheatsheet";
 import { GameCanvas } from "./GameCanvas";
+import { Leaderboard } from "./Leaderboard";
 import { ScoreOverlay } from "./ScoreOverlay";
 
 type Phase = "start" | "playing" | "gameover";
 
 /**
  * Top-level client component: owns the single GameController, the phase
- * machine (start / playing / gameover), the HUD, audio, keyboard, and (only in
- * test mode) the window.__lumines interface. Renders the single <main> landmark.
+ * machine (start / playing / gameover), the HUD, audio, keyboard, the auth +
+ * leaderboard seam, and (only in test mode) the window.__lumines interface.
  */
 export function GameShell() {
   const [phase, setPhase] = useState<Phase>("start");
   const [score, setScore] = useState(0);
-  const [controller, setController] = useState<GameController | null>(null);
+  // Created eagerly (pure constructor) so the leaderboard provider always has it.
+  const [controller] = useState(
+    () => new GameController({ testMode: TEST_MODE, seed: 1 }),
+  );
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const phaseRef = useRef<Phase>("start");
   phaseRef.current = phase;
 
-  // Create the controller on the client; wire subscription + test interface.
+  // Wire subscription + (test mode) the window.__lumines interface.
   useEffect(() => {
-    const c = new GameController({ testMode: TEST_MODE, seed: 1 });
-    setController(c);
-    const unsubscribe = c.subscribe((rs) => {
+    const unsubscribe = controller.subscribe((rs) => {
       setScore(rs.score);
-      if (rs.gameOver && phaseRef.current === "playing") setPhase("gameover");
+      // Allow the game-over transition from any non-gameover phase so the
+      // deterministic endGame() hook works even before a manual start.
+      if (rs.gameOver && phaseRef.current !== "gameover") setPhase("gameover");
     });
-    const uninstall = TEST_MODE ? installTestApi(c) : undefined;
+    const uninstall = TEST_MODE ? installTestApi(controller) : undefined;
     return () => {
       unsubscribe();
       uninstall?.();
-      c.stop();
+      controller.stop();
     };
-  }, []);
+  }, [controller]);
 
   // Keyboard controls — active only while playing.
   useEffect(() => {
-    if (phase !== "playing" || !controller) return;
+    if (phase !== "playing") return;
     const onKey = (e: KeyboardEvent) => {
       const action = keyToAction(e);
       if (!action) return;
@@ -74,7 +80,6 @@ export function GameShell() {
   }, [phase, controller]);
 
   const handleStart = useCallback(() => {
-    if (!controller) return;
     setScore(0);
     controller.start();
     audioRef.current?.play().catch(() => undefined);
@@ -82,7 +87,6 @@ export function GameShell() {
   }, [controller]);
 
   const handleRestart = useCallback(() => {
-    if (!controller) return;
     controller.restart(1);
     setScore(0);
     if (audioRef.current) {
@@ -99,32 +103,37 @@ export function GameShell() {
           inspectable. Live autoplay is not required. */}
       <audio ref={audioRef} src={BACKING_TRACK_URL} loop preload="auto" />
 
-      <div className="relative z-10 w-full max-w-5xl">
-        <Header />
+      <LeaderboardProvider controller={controller}>
+        <div className="relative z-10 w-full max-w-5xl">
+          <Header />
 
-        {phase === "start" && <StartScreen onStart={handleStart} />}
+          {phase === "start" && <StartScreen onStart={handleStart} />}
 
-        {phase === "playing" && controller && (
-          <PlayingScreen controller={controller} score={score} />
-        )}
+          {phase === "playing" && (
+            <PlayingScreen controller={controller} score={score} />
+          )}
 
-        {phase === "gameover" && (
-          <GameOverScreen score={score} onRestart={handleRestart} />
-        )}
-      </div>
+          {phase === "gameover" && (
+            <GameOverScreen score={score} onRestart={handleRestart} />
+          )}
+        </div>
+      </LeaderboardProvider>
     </main>
   );
 }
 
 function Header() {
   return (
-    <div className="mb-6 flex items-end justify-between">
-      <h1 className="bg-gradient-to-r from-[#37e0c9] to-[#ff5fb0] bg-clip-text text-3xl font-black tracking-tight text-transparent sm:text-4xl">
-        LLMines
-      </h1>
-      <span className="text-xs tracking-widest text-white/40 uppercase">
-        a lumines-like
-      </span>
+    <div className="mb-6 flex items-center justify-between gap-4">
+      <div className="flex items-end gap-3">
+        <h1 className="bg-gradient-to-r from-[#37e0c9] to-[#ff5fb0] bg-clip-text text-3xl font-black tracking-tight text-transparent sm:text-4xl">
+          LLMines
+        </h1>
+        <span className="hidden text-xs tracking-widest text-white/40 uppercase sm:inline">
+          a lumines-like
+        </span>
+      </div>
+      <AuthPanel />
     </div>
   );
 }
@@ -133,7 +142,7 @@ function StartScreen({ onStart }: { onStart: () => void }) {
   return (
     <section
       aria-label="Start"
-      className="grid items-start gap-6 md:grid-cols-[1fr_280px]"
+      className="grid items-start gap-6 md:grid-cols-[1fr_300px]"
     >
       <div className="rounded-2xl border border-white/10 bg-white/5 p-8 backdrop-blur">
         <h2 className="text-2xl font-bold">How to play</h2>
@@ -153,7 +162,10 @@ function StartScreen({ onStart }: { onStart: () => void }) {
           Start game
         </button>
       </div>
-      <ControlsCheatsheet />
+      <div className="flex flex-col gap-6">
+        <Leaderboard />
+        <ControlsCheatsheet />
+      </div>
     </section>
   );
 }
@@ -188,27 +200,48 @@ function GameOverScreen({
   score: number;
   onRestart: () => void;
 }) {
+  const { user, submitScore } = useLeaderboard();
+  const submittedRef = useRef(false);
+
+  // The REAL game-over path: submit the final score once when signed in.
+  // Signed-out runs are never written (the unauthenticated rule).
+  useEffect(() => {
+    if (submittedRef.current) return;
+    submittedRef.current = true;
+    if (user) submitScore(score);
+  }, [user, score, submitScore]);
+
   return (
     <section
       data-testid="game-over"
       aria-label="Game over"
-      className="mx-auto max-w-md rounded-2xl border border-white/10 bg-white/5 p-10 text-center backdrop-blur"
+      className="grid items-start gap-6 md:grid-cols-[1fr_320px]"
     >
-      <h2 className="text-3xl font-black tracking-tight text-[#ff5fb0]">
-        Game over
-      </h2>
-      <div className="mt-6 text-xs tracking-widest text-white/50 uppercase">
-        Final score
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-10 text-center backdrop-blur">
+        <h2 className="text-3xl font-black tracking-tight text-[#ff5fb0]">
+          Game over
+        </h2>
+        <div className="mt-6 text-xs tracking-widest text-white/50 uppercase">
+          Final score
+        </div>
+        <div className="font-mono text-6xl font-black tabular-nums">
+          {score}
+        </div>
+        {!user && (
+          <p className="mt-4 text-sm text-white/50">
+            Sign in to save your score to the global leaderboard.
+          </p>
+        )}
+        <button
+          data-testid="restart"
+          onClick={onRestart}
+          autoFocus
+          className="mt-8 rounded-xl bg-gradient-to-r from-[#ff5fb0] to-[#c93f87] px-8 py-3 text-lg font-bold text-white shadow-lg transition hover:brightness-110 focus:ring-4 focus:ring-[#ff5fb0]/40 focus:outline-none"
+        >
+          Play again
+        </button>
       </div>
-      <div className="font-mono text-6xl font-black tabular-nums">{score}</div>
-      <button
-        data-testid="restart"
-        onClick={onRestart}
-        autoFocus
-        className="mt-8 rounded-xl bg-gradient-to-r from-[#ff5fb0] to-[#c93f87] px-8 py-3 text-lg font-bold text-white shadow-lg transition hover:brightness-110 focus:ring-4 focus:ring-[#ff5fb0]/40 focus:outline-none"
-      >
-        Play again
-      </button>
+      <Leaderboard />
     </section>
   );
 }

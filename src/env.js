@@ -8,6 +8,10 @@ export const env = createEnv({
    */
   server: {
     NODE_ENV: z.enum(["development", "test", "production"]),
+    /** NextAuth (Google SSO). Optional so mock/eval builds don't require them. */
+    AUTH_SECRET: z.string().optional(),
+    AUTH_GOOGLE_ID: z.string().optional(),
+    AUTH_GOOGLE_SECRET: z.string().optional(),
   },
 
   /**
@@ -22,6 +26,11 @@ export const env = createEnv({
      * normal/production builds — no test hooks are exposed.
      */
     NEXT_PUBLIC_TEST_MODE: z.enum(["0", "1"]).optional(),
+    /**
+     * Convex deployment URL for the REAL data layer. Optional: in
+     * NEXT_PUBLIC_TEST_MODE the app uses the in-memory mock and never reads it.
+     */
+    NEXT_PUBLIC_CONVEX_URL: z.string().optional(),
   },
 
   /**
@@ -31,6 +40,10 @@ export const env = createEnv({
   runtimeEnv: {
     NODE_ENV: process.env.NODE_ENV,
     NEXT_PUBLIC_TEST_MODE: process.env.NEXT_PUBLIC_TEST_MODE,
+    NEXT_PUBLIC_CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
+    AUTH_SECRET: process.env.AUTH_SECRET,
+    AUTH_GOOGLE_ID: process.env.AUTH_GOOGLE_ID,
+    AUTH_GOOGLE_SECRET: process.env.AUTH_GOOGLE_SECRET,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

@@ -343,4 +343,26 @@ export class GameController {
     this.state = advanceSweep(this.state, dtMs / SWEEP_MS_PER_COL);
     this.emit();
   }
+
+  /**
+   * Deterministically end the current game with EXACTLY `score` as the final
+   * score, driving the REAL game-over path: set the score, mark gameOver, stop
+   * the loop, and emit so GameShell transitions to the game-over phase (where
+   * the score-submit effect fires for an authenticated user).
+   */
+  testEndGame(score: number): void {
+    this.started = true;
+    this.state = {
+      ...this.state,
+      score,
+      active: null,
+      gameOver: true,
+      hold: { active: false, remainingMs: 0 },
+    };
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    this.emit();
+  }
 }

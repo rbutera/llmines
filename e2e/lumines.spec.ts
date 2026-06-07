@@ -255,3 +255,73 @@ test("landed blocks settle flush on the bottom rows with no out-of-bounds cells"
   for (const row of s.grid) expect(row.length).toBe(COLS);
   expect(inBounds(s)).toBe(true);
 });
+
+// ---- F3: auth + global leaderboard (deterministic mock seam) --------------
+
+async function signIn(page: Page, name: string, subject: string): Promise<void> {
+  await page.evaluate(
+    ([n, s]) => window.__lumines!.auth!.signIn({ name: n, subject: s }),
+    [name, subject] as const,
+  );
+}
+
+async function endGame(page: Page, score: number): Promise<void> {
+  await page.evaluate((s) => window.__lumines!.endGame!(s), score);
+}
+
+test("signing in shows the user name and a sign-out control", async ({
+  page,
+}) => {
+  await expect(page.getByTestId("signin")).toBeVisible();
+  await expect(page.getByTestId("user-name")).toHaveCount(0);
+
+  await signIn(page, "Ada", "subject-ada");
+
+  await expect(page.getByTestId("user-name")).toHaveText("Ada");
+  await expect(page.getByTestId("signout")).toBeVisible();
+  await expect(page.getByTestId("signin")).toHaveCount(0);
+});
+
+test("signing out returns to the unauthenticated state", async ({ page }) => {
+  await signIn(page, "Ada", "subject-ada");
+  await expect(page.getByTestId("signout")).toBeVisible();
+
+  await page.getByTestId("signout").click();
+
+  await expect(page.getByTestId("signin")).toBeVisible();
+  await expect(page.getByTestId("user-name")).toHaveCount(0);
+});
+
+test("a signed-in run adds a leaderboard row and updates personal best (improve-only)", async ({
+  page,
+}) => {
+  await signIn(page, "Ada", "subject-ada");
+  await page.getByTestId("start-button").click();
+
+  await endGame(page, 120);
+  await expect(page.getByTestId("game-over")).toBeVisible();
+  await expect(page.getByTestId("leaderboard-row")).toHaveCount(1);
+  await expect(page.getByTestId("leaderboard-row")).toContainText("Ada");
+  await expect(page.getByTestId("leaderboard-row")).toContainText("120");
+  await expect(page.getByTestId("personal-best")).toHaveText("120");
+
+  // A lower score does NOT lower the personal best (improve-only).
+  await page.getByTestId("restart").click();
+  await endGame(page, 50);
+  await expect(page.getByTestId("personal-best")).toHaveText("120");
+
+  // A higher score DOES improve it.
+  await page.getByTestId("restart").click();
+  await endGame(page, 300);
+  await expect(page.getByTestId("personal-best")).toHaveText("300");
+  await expect(page.getByTestId("leaderboard-row")).toHaveCount(1);
+});
+
+test("a signed-out run writes nothing to the leaderboard", async ({ page }) => {
+  await page.getByTestId("start-button").click();
+  await endGame(page, 999);
+
+  await expect(page.getByTestId("game-over")).toBeVisible();
+  await expect(page.getByTestId("leaderboard-row")).toHaveCount(0);
+  await expect(page.getByTestId("personal-best")).toHaveCount(0);
+});

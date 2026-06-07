@@ -14,6 +14,19 @@ export interface LuminesTestApi {
   pressSoftDrop(): void;
   /** Simulate a FRESH deliberate hard-drop press (ends the hold, slams down). */
   pressHardDrop(): void;
+  /**
+   * Mock auth (F3). Installed by the leaderboard provider in TEST_MODE.
+   * `subject` is the server-derived id; never a client-trusted value elsewhere.
+   */
+  auth?: {
+    signIn(arg: { name: string; subject: string }): void;
+    signOut(): void;
+  };
+  /**
+   * Deterministically end the current game with `score` via the REAL game-over
+   * path (F3). Submits to the mock backend when signed in; no-op write when out.
+   */
+  endGame?: (score: number) => void;
 }
 
 declare global {
@@ -40,8 +53,24 @@ export function installTestApi(controller: GameController): () => void {
     pressSoftDrop: () => controller.pressSoftDrop(),
     pressHardDrop: () => controller.pressHardDrop(),
   };
-  window.__lumines = api;
+  // Merge (don't clobber) so the leaderboard provider's auth/endGame hooks,
+  // which may be installed before or after this, survive.
+  const merged = Object.assign(window.__lumines ?? ({} as LuminesTestApi), api);
+  window.__lumines = merged;
   return () => {
-    if (window.__lumines === api) delete window.__lumines;
+    if (window.__lumines === merged) {
+      const keys: (keyof LuminesTestApi)[] = [
+        "seed",
+        "state",
+        "marked",
+        "spawn",
+        "tick",
+        "sweepNow",
+        "sweepProgress",
+        "pressSoftDrop",
+        "pressHardDrop",
+      ];
+      for (const k of keys) delete merged[k];
+    }
   };
 }
