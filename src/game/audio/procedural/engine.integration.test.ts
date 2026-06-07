@@ -99,6 +99,7 @@ vi.mock("tone", () => {
   };
   return {
     start: () => Promise.resolve(),
+    now: () => 0,
     getTransport: () => fakeTransport,
     gainToDb: (g: number) => 20 * Math.log10(g),
     Gain: FakeGain,
@@ -239,5 +240,67 @@ describe("clearing advances the song (headless proof)", () => {
     const a = await run("A");
     const c = await run("C");
     expect(c).toBeGreaterThan(a);
+  });
+});
+
+describe("switchTrack: skin swaps the whole song, advance continues", () => {
+  let engine: InteractiveAudioEngine;
+
+  beforeEach(async () => {
+    (globalThis as unknown as { window?: object }).window = globalThis;
+    mockState.beatCallback = null;
+    engine = new InteractiveAudioEngine();
+    engine.setPreset("B");
+    await engine.unlock();
+    for (let i = 0; i < 80; i++) await Promise.resolve();
+  });
+
+  it("starts on song1 by default", () => {
+    expect(engine.getAudioState().trackId).toBe("song1");
+  });
+
+  it("switchTrack swaps the live track id + keeps the bed audible", async () => {
+    await engine.switchTrack({ id: "pipeline", base: "/audio/song2" });
+    for (let i = 0; i < 80; i++) await Promise.resolve();
+    const s = engine.getAudioState();
+    expect(s.trackId).toBe("pipeline");
+    // the new active segment's bed is the crossfade target (ramps to 1 in the fake)
+    expect(s.layerGains.bed).toBeGreaterThan(0.9);
+    expect(s.recordedBedActive).toBe(true);
+  });
+
+  it("PRESERVES segment-advance state across the switch, then keeps advancing", async () => {
+    // advance song1 ONE segment first (leave room to advance further after switch)
+    for (let i = 0; i < 2; i++) engine.fire({ type: "lineClear", squares: 1, combo: 0 });
+    const beforeIdx = engine.getAudioState().segmentIndex;
+    expect(beforeIdx).toBeGreaterThan(0);
+    expect(beforeIdx).toBeLessThan(5); // headroom to advance on the new song
+
+    await engine.switchTrack({ id: "pipeline", base: "/audio/song2" });
+    for (let i = 0; i < 80; i++) await Promise.resolve();
+    const afterSwitch = engine.getAudioState();
+    // structural position is carried over to the new song (no rewind to 0)
+    expect(afterSwitch.trackId).toBe("pipeline");
+    expect(afterSwitch.segmentIndex).toBe(beforeIdx);
+
+    // clears now advance SONG2's segments
+    for (let i = 0; i < 12; i++) engine.fire({ type: "lineClear", squares: 2, combo: 1 });
+    const advanced = engine.getAudioState();
+    expect(advanced.segmentIndex).toBeGreaterThan(beforeIdx);
+    expect(advanced.trackId).toBe("pipeline");
+  });
+
+  it("switching back to song1 works (round-trip)", async () => {
+    await engine.switchTrack({ id: "pipeline", base: "/audio/song2" });
+    for (let i = 0; i < 60; i++) await Promise.resolve();
+    await engine.switchTrack({ id: "song1", base: "/audio" });
+    for (let i = 0; i < 60; i++) await Promise.resolve();
+    expect(engine.getAudioState().trackId).toBe("song1");
+  });
+
+  it("switching to the SAME track is a no-op (no churn)", async () => {
+    const before = engine.getAudioState().trackId;
+    await engine.switchTrack({ id: "song1", base: "/audio" });
+    expect(engine.getAudioState().trackId).toBe(before);
   });
 });

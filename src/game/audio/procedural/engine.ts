@@ -61,15 +61,40 @@ const GRACE_BEATS = 6;
  * promptly (a long ramp + per-beat re-issue made gains crawl far behind). */
 const LAYER_RAMP_S = 0.35;
 
-/** Public base path for the recorded audio assets. */
+/** Default base path for the recorded audio assets (song 1, flat under /audio). */
 const ASSET_BASE = "/audio";
+
+/**
+ * A TRACK is one full recorded soundtrack: an ordered set of segment loops
+ * (bed + vox) plus the eight ad-lib SFX, all living under a single asset
+ * directory. Song 1 ("Especifico Primero") lives flat under `/audio`; song 2
+ * ("Verde el Pipeline", phonk) lives under `/audio/song2` with the SAME file
+ * scheme (`seg{i}-bed.mp3` / `seg{i}-vox.mp3` / `sfx-{name}.mp3`). A skin owns a
+ * TrackBundle, so switching skin crossfades to that skin's song via
+ * {@link InteractiveAudioEngine.switchTrack} — the segment-advance mechanic then
+ * runs on the NEW song (clears step its segments + reveal its vox).
+ */
+export interface TrackBundle {
+  /** Stable id (matches the owning skin's id). */
+  id: string;
+  /** Asset directory under public/ (no trailing slash). e.g. "/audio", "/audio/song2". */
+  base: string;
+}
+
+/** Song 1 — the default flat-`/audio` track. */
+export const TRACK_SONG1: TrackBundle = { id: "song1", base: ASSET_BASE };
+
+/** Build a TrackBundle for a per-song asset directory (e.g. "/audio/song2"). */
+export function makeTrack(id: string, base: string): TrackBundle {
+  return { id, base };
+}
 
 /**
  * The song is cut into ORDERED SEGMENTS — sequential 8-bar windows from
  * different sections of the real track (intro → verse → build → hook → …). Each
  * segment has a `bed` (instrumental) loop and a `vox` (lead+backing vocals)
- * loop, all the same length (~16.94s) so they loop in phase and segment
- * crossfades land on the bar grid.
+ * loop, all the same length (per-song: song1 ~16.94s @113 BPM, song2 ~15.24s
+ * @126 BPM) so they loop in phase and segment crossfades land on the bar grid.
  *
  * Two axes of "clearing advances the song":
  *  - HORIZONTAL: cumulative clears step the active SEGMENT forward (1→2→3…), so
@@ -79,8 +104,8 @@ const ASSET_BASE = "/audio";
  *    clearing builds `progression`, and recedes when idle.
  */
 const SEGMENT_COUNT = 6;
-const segBed = (i: number) => `${ASSET_BASE}/seg${i}-bed.mp3`;
-const segVox = (i: number) => `${ASSET_BASE}/seg${i}-vox.mp3`;
+const segBed = (base: string, i: number) => `${base}/seg${i}-bed.mp3`;
+const segVox = (base: string, i: number) => `${base}/seg${i}-vox.mp3`;
 
 /** One loaded segment: its bed + vox players and their gain nodes. */
 interface Segment {
@@ -90,17 +115,19 @@ interface Segment {
   voxGain?: Tone.Gain; // 0..1 vertical reveal (only meaningful for the active seg)
 }
 
-/** The eight curated ad-lib one-shots and their files. */
-const SFX_FILES: Record<SfxName, string> = {
-  move: `${ASSET_BASE}/sfx-move.mp3`,
-  rotate: `${ASSET_BASE}/sfx-rotate.mp3`,
-  lock: `${ASSET_BASE}/sfx-lock.mp3`,
-  match: `${ASSET_BASE}/sfx-match.mp3`,
-  softdrop: `${ASSET_BASE}/sfx-softdrop.mp3`,
-  harddrop: `${ASSET_BASE}/sfx-harddrop.mp3`,
-  gem: `${ASSET_BASE}/sfx-gem.mp3`,
-  chain: `${ASSET_BASE}/sfx-chain.mp3`,
-};
+/** Build the eight ad-lib SFX file paths for a track's asset directory. */
+function sfxFilesFor(base: string): Record<SfxName, string> {
+  return {
+    move: `${base}/sfx-move.mp3`,
+    rotate: `${base}/sfx-rotate.mp3`,
+    lock: `${base}/sfx-lock.mp3`,
+    match: `${base}/sfx-match.mp3`,
+    softdrop: `${base}/sfx-softdrop.mp3`,
+    harddrop: `${base}/sfx-harddrop.mp3`,
+    gem: `${base}/sfx-gem.mp3`,
+    chain: `${base}/sfx-chain.mp3`,
+  };
+}
 
 /** A coarse "what just happened" describing one game action, fed to the engine. */
 export type AudioEvent =
@@ -136,6 +163,11 @@ export class InteractiveAudioEngine {
   private maxSegmentReached = 0;
   /** True once the recorded bed loaded + started (else the synth bed runs). */
   private recordedBedActive = false;
+
+  /** The track (song) whose segments are currently loaded. Swapped by switchTrack. */
+  private currentTrack: TrackBundle = TRACK_SONG1;
+  /** Guards against overlapping switchTrack calls (rapid skin toggles). */
+  private switching = false;
 
   // Recorded ad-lib SFX one-shots.
   private sfxPlayers: Partial<Record<SfxName, Tone.Player>> = {};
@@ -202,6 +234,123 @@ export class InteractiveAudioEngine {
   }
 
   /**
+   * Choose the track BEFORE the engine starts (called from the Start gesture for
+   * the currently-selected skin). No-op once started — a live change must use
+   * {@link switchTrack} so it crossfades. Returns true if it set the track.
+   */
+  setInitialTrack(track: TrackBundle): boolean {
+    if (this.started) return false;
+    this.currentTrack = track;
+    return true;
+  }
+
+  /** The id of the track whose segments are currently loaded. */
+  getCurrentTrackId(): string {
+    return this.currentTrack.id;
+  }
+
+  /**
+   * Live-swap the soundtrack with a beat-aligned crossfade. Loads the new track's
+   * full segment bank + SFX (synced to transport 0), then crossfades the OLD
+   * active segment's bed out and the NEW active segment's bed in over `seconds`,
+   * starting on the next bar so the change lands musically. The
+   * segment-advance STATE is preserved (segmentIndex / clearProgress /
+   * progression / maxSegmentReached), so the song keeps advancing on the NEW
+   * track from the same structural position — clears step the new song's
+   * segments and reveal its vox exactly like before. After the crossfade the old
+   * bank + SFX are disposed and the new ones become live.
+   *
+   * No-op before unlock (nothing to crossfade — `setInitialTrack` handles the
+   * pre-start choice). Guarded + reentrancy-locked so a rapid double-toggle can
+   * never leave two banks fighting or crash the game.
+   */
+  async switchTrack(track: TrackBundle, seconds = 1.5): Promise<void> {
+    if (typeof window === "undefined") return;
+    // Before start, or same track: just record the choice (unlock loads it).
+    if (!this.started || !this.recordedBedActive) {
+      this.currentTrack = track;
+      return;
+    }
+    if (track.id === this.currentTrack.id) return;
+    if (this.switching) return;
+    const master = this.master;
+    if (!master) return;
+    this.switching = true;
+    try {
+      const idx = this.segmentIndex;
+      // Build the NEW bank in parallel (silent: active bed at 1 in its own gain
+      // node, but we ramp it from 0 for the crossfade). Synced to transport 0.
+      const newBank = await this.loadSegmentBank(track, idx, master);
+      const newSfx = await this.loadSfxSet(track, master);
+
+      const oldBank = this.segments;
+      const oldSfx = this.sfxPlayers;
+      const fromBed = oldBank[idx]?.bedGain;
+      const fromVox = oldBank[idx]?.voxGain;
+      const toBed = newBank[idx]?.bedGain;
+
+      // Start the new active bed at 0 so we can crossfade it up.
+      try {
+        toBed?.gain.cancelScheduledValues(Tone.now());
+        toBed?.gain.setValueAtTime(0, Tone.now());
+      } catch {
+        // ignore
+      }
+
+      // Crossfade on the next bar boundary (equal-power-ish via Tone ramps).
+      let at: number;
+      try {
+        at = Tone.getTransport().nextSubdivision("1m");
+      } catch {
+        at = Tone.now();
+      }
+      try {
+        fromBed?.gain.rampTo(0, seconds, at);
+        fromVox?.gain.rampTo(0, seconds, at);
+        toBed?.gain.rampTo(1, seconds, at);
+      } catch {
+        // best-effort immediate
+        try {
+          fromBed?.gain.rampTo(0, seconds);
+          fromVox?.gain.rampTo(0, seconds);
+          toBed?.gain.rampTo(1, seconds);
+        } catch {
+          // ignore
+        }
+      }
+
+      // Swap live references NOW so SFX + getAudioState read the new track; the
+      // old bed audio finishes its fade before we dispose it below.
+      this.segments = newBank;
+      this.sfxPlayers = newSfx;
+      this.currentTrack = track;
+      // The new active segment's vox should track the current vertical reveal.
+      this.applyProgression(at);
+
+      // Dispose the OLD bank + SFX after the crossfade settles (with margin).
+      const disposeDelayMs = Math.ceil((seconds + 0.6) * 1000) + 400;
+      window.setTimeout(() => {
+        const nodes: (Tone.ToneAudioNode | undefined)[] = [];
+        for (const seg of oldBank) {
+          nodes.push(seg.bedPlayer, seg.voxPlayer, seg.bedGain, seg.voxGain);
+        }
+        nodes.push(...Object.values(oldSfx));
+        for (const n of nodes) {
+          try {
+            n?.dispose();
+          } catch {
+            // ignore
+          }
+        }
+      }, disposeDelayMs);
+    } catch {
+      // Switch failed: keep the old track running (never crash / never go silent).
+    } finally {
+      this.switching = false;
+    }
+  }
+
+  /**
    * Live audio state for the test probe (so "clearing advances the song" is
    * HEADLESS-VERIFIABLE). Reports both axes:
    *  - `segmentIndex` / `maxSegmentReached` / `clearProgress` — the HORIZONTAL
@@ -220,6 +369,8 @@ export class InteractiveAudioEngine {
     recordedBedActive: boolean;
     layerGains: { bed: number; vox: number };
     intensity: number;
+    /** Id of the track currently playing (e.g. "song1" / "pipeline"). */
+    trackId: string;
   } {
     const read = (g: Tone.Gain | undefined): number => {
       try {
@@ -241,6 +392,7 @@ export class InteractiveAudioEngine {
         bed: read(active?.bedGain),
         vox: read(active?.voxGain),
       },
+      trackId: this.currentTrack.id,
     };
   }
 
@@ -302,32 +454,55 @@ export class InteractiveAudioEngine {
   }
 
   /**
-   * Load the ordered song segments (bed + vox each) + ad-lib SFX. On success the
-   * recorded bed takes over from the procedural fallback. Every segment loop is
-   * synced to transport time 0 so all stay in phase; only segment 0's bed starts
-   * audible. Fully guarded; a partial failure leaves the missing pieces silent or
-   * synthesised.
+   * Load the ordered song segments (bed + vox each) + ad-lib SFX for the CURRENT
+   * track. On success the recorded bed takes over from the procedural fallback.
+   * The active segment's bed starts audible (gain 1); the rest at 0. Fully
+   * guarded; a partial failure leaves the missing pieces silent or synthesised.
    */
   private async loadRecorded(): Promise<void> {
     const master = this.master;
     if (!master) return;
 
+    const bank = await this.loadSegmentBank(this.currentTrack, this.segmentIndex, master);
+    // Mark the recorded bed live + fade out the procedural fallback once the
+    // active segment's bed is in.
+    if (bank[this.segmentIndex]?.bedPlayer && !this.recordedBedActive) {
+      this.recordedBedActive = true;
+      this.fadeProceduralBed(0);
+    }
+    this.segments = bank;
+
+    if (this.recordedBedActive) {
+      this.applyProgression();
+    }
+
+    // --- ad-lib SFX (independent of the bed; load even if the bed failed) ---
+    this.sfxPlayers = await this.loadSfxSet(this.currentTrack, master);
+  }
+
+  /**
+   * Load a full segment bank (bed + vox per segment) for a track, all synced to
+   * transport time 0 so every loop stays in phase. The segment at `activeIndex`
+   * gets bed gain 1; every other bed gain 0; all vox gains 0 (revealed later by
+   * progression). Returns the bank (caller owns disposal). Fully guarded.
+   */
+  private async loadSegmentBank(
+    track: TrackBundle,
+    activeIndex: number,
+    master: Tone.Gain,
+  ): Promise<Segment[]> {
+    const bank: Segment[] = [];
     for (let i = 0; i < SEGMENT_COUNT; i++) {
       const seg: Segment = {};
       try {
-        const bedGain = new Tone.Gain(i === 0 ? 1 : 0).connect(master);
-        const bed = await this.loadPlayer(segBed(i));
+        const bedGain = new Tone.Gain(i === activeIndex ? 1 : 0).connect(master);
+        const bed = await this.loadPlayer(segBed(track.base, i));
         if (bed) {
           bed.loop = true;
           bed.connect(bedGain);
           bed.sync().start(0);
           seg.bedPlayer = bed;
           seg.bedGain = bedGain;
-          if (i === 0 && !this.recordedBedActive) {
-            this.recordedBedActive = true;
-            // Fade the procedural fallback bed out now the real bed is in.
-            this.fadeProceduralBed(0);
-          }
         } else {
           bedGain.dispose();
         }
@@ -336,7 +511,7 @@ export class InteractiveAudioEngine {
       }
       try {
         const voxGain = new Tone.Gain(0).connect(master); // revealed by progression
-        const vox = await this.loadPlayer(segVox(i));
+        const vox = await this.loadPlayer(segVox(track.base, i));
         if (vox) {
           vox.loop = true;
           vox.connect(voxGain);
@@ -349,25 +524,30 @@ export class InteractiveAudioEngine {
       } catch {
         // segment vox missing — vertical reveal just won't fire for it
       }
-      this.segments[i] = seg;
+      bank[i] = seg;
     }
+    return bank;
+  }
 
-    if (this.recordedBedActive) {
-      this.applyProgression();
-    }
-
-    // --- ad-lib SFX (independent of the bed; load even if the bed failed) ---
-    for (const name of Object.keys(SFX_FILES) as SfxName[]) {
+  /** Load a track's eight ad-lib SFX one-shots. Returns the player map. Guarded. */
+  private async loadSfxSet(
+    track: TrackBundle,
+    master: Tone.Gain,
+  ): Promise<Partial<Record<SfxName, Tone.Player>>> {
+    const out: Partial<Record<SfxName, Tone.Player>> = {};
+    const files = sfxFilesFor(track.base);
+    for (const name of Object.keys(files) as SfxName[]) {
       try {
-        const p = await this.loadPlayer(SFX_FILES[name]);
+        const p = await this.loadPlayer(files[name]);
         if (p) {
           p.connect(master);
-          this.sfxPlayers[name] = p;
+          out[name] = p;
         }
       } catch {
         // missing SFX falls back to a procedural blip at play time
       }
     }
+    return out;
   }
 
   /** Load a Tone.Player and resolve only once its buffer is ready (or null). */

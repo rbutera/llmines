@@ -1,27 +1,28 @@
 /**
- * Skin bundles — a SKIN ties a cohesive colour scheme (board + chrome) to the
- * game. In v2.5 a skin is a purely VISUAL bundle:
+ * Skin bundles — a SKIN ties a cohesive colour scheme AND a soundtrack to the
+ * game:
  *   - `board`   — the Three.js viewport palette (dark-cell emissive, edges,
  *                 canvas background, gem accent). The renderer reads these so the
  *                 3D board recolours when the skin changes.
  *   - `chrome`  — the DOM frame palette, exposed as CSS custom properties on the
  *                 page root. The chrome's accents reference these vars, so the
  *                 frame crossfades with the board.
+ *   - `track`   — the recorded soundtrack ({@link TrackBundle}): a full ordered
+ *                 segment set (bed + vox) + ad-lib SFX. Switching skin crossfades
+ *                 to this song via the engine's switchTrack, and the
+ *                 segment-advance mechanic runs on it (clears step ITS segments).
  *
  * Two skins ship:
- *   1. NEON     — the round-2 neon-purple scheme (matches the baked-in palette).
- *   2. PIPELINE — a cohesive lime/emerald "pipeline" scheme.
+ *   1. NEON     — round-2 neon-purple scheme + song 1 (Especifico Primero).
+ *   2. PIPELINE — a cohesive lime/emerald scheme + song 2 (Verde el Pipeline,
+ *                 phonk, ~126 BPM), assets under /audio/song2.
  *
- * NOTE (v2.5): the skin switch is COLOUR-ONLY. The earlier per-skin soundtrack
- * (TrackBundle / switchTrack) is held: the live audio is the song1 segment-
- * advance engine, which has no per-segment assets for a second song, so song2
- * audio crossfade is deferred rather than shipped broken. The visual crossfade
- * (Neon <-> Pipeline) is fully live.
- *
- * Pure data, so this module imports nothing and is trivially unit-testable. The
- * crossfade itself (interpolating between two skins' colours) lives in
+ * Imports only the (pure) TrackBundle factory from the engine, so it stays
+ * trivially unit-testable. The colour crossfade lives in
  * `crossfade.ts`.
  */
+
+import { makeTrack, type TrackBundle, TRACK_SONG1 } from "../audio/procedural/engine";
 
 /**
  * The Three.js board palette for a skin. Hex strings consumed directly by
@@ -63,14 +64,17 @@ export interface Skin {
   id: string;
   /** Human-readable label shown in the HUD + the switch control. */
   label: string;
+  /** The recorded soundtrack for this skin (segment set + SFX asset dir). */
+  track: TrackBundle;
   board: BoardPalette;
   chrome: ChromePalette;
 }
 
-/** Skin 1 — neon purple. Mirrors the round-2 baked-in palette exactly. */
+/** Skin 1 — neon purple + song 1 (flat /audio). Mirrors the round-2 palette. */
 export const SKIN_NEON: Skin = {
   id: "neon",
   label: "Neon",
+  track: TRACK_SONG1,
   board: {
     background: "#0a0a12",
     darkFace: "#1a0e33",
@@ -98,6 +102,7 @@ export const SKIN_NEON: Skin = {
 export const SKIN_PIPELINE: Skin = {
   id: "pipeline",
   label: "Pipeline",
+  track: makeTrack("pipeline", "/audio/song2"),
   board: {
     background: "#06120c",
     darkFace: "#0c2a1a",

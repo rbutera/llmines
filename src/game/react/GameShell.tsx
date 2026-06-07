@@ -64,12 +64,15 @@ export function GameShell() {
   const phaseRef = useRef<Phase>("start");
   phaseRef.current = phase;
 
-  // Skin switch (v2.5): a skin is a cohesive COLOUR bundle (board + chrome).
-  // Switching crossfades the board + chrome colours (handled inside the hook).
-  // COLOUR-ONLY: the per-skin soundtrack is held — the live audio is the song1
-  // segment-advance engine (no per-segment assets exist for a second song), so a
-  // colour switch never touches audio. No onSwitch callback is passed.
-  const skinSwitch = useSkinSwitch();
+  // Skin switch (v2.5): a skin is a cohesive bundle of COLOUR (board + chrome)
+  // AND a soundtrack. The hook crossfades the colours; the onSwitch callback
+  // crossfades the audio engine to the skin's track in lock step, so the
+  // segment-advance mechanic continues on the NEW song (clears step its segments
+  // + reveal its vox). Fire-and-forget + self-guarded in the engine so a failed
+  // audio switch can never break the colour switch or the game.
+  const skinSwitch = useSkinSwitch((skin) => {
+    void audioEngineRef.current?.switchTrack(skin.track);
+  });
 
   // Account seam: submit the final score on game over (signed-in only). Held in
   // refs so the mount-once subscription always sees the current values.
@@ -276,6 +279,9 @@ export function GameShell() {
     // the bed here. Fire-and-forget + self-guarded so a blocked/failed audio
     // start can never break the game start path.
     audioDeriverRef.current?.reset();
+    // Load the currently-selected skin's song on this first unlock (before the
+    // engine starts; a LIVE skin switch later uses switchTrack to crossfade).
+    audioEngineRef.current?.setInitialTrack(skinSwitch.skin.track);
     void audioEngineRef.current?.unlock().then(() => {
       audioEngineRef.current?.setVolume(musicVolume);
       audioEngineRef.current?.setMuted(muted);
@@ -283,7 +289,7 @@ export function GameShell() {
     });
     controller.start();
     setPhase("playing");
-  }, [controller, musicVolume, muted, audioMix]);
+  }, [controller, musicVolume, muted, audioMix, skinSwitch.skin]);
 
   const handleRestart = useCallback(() => {
     if (!controller) return;

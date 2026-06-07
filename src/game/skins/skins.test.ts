@@ -15,6 +15,14 @@ describe("skin registry", () => {
   it("defaults to neon", () => {
     expect(DEFAULT_SKIN.id).toBe("neon");
   });
+  it("every skin carries a track", () => {
+    for (const s of SKINS) expect(typeof s.track.base).toBe("string");
+  });
+  it("neon plays song1 flat under /audio; pipeline plays song2", () => {
+    expect(SKIN_NEON.track.base).toBe("/audio");
+    expect(SKIN_PIPELINE.track.base).toBe("/audio/song2");
+    expect(SKIN_PIPELINE.track.id).toBe("pipeline");
+  });
 });
 
 describe("nextSkin cycles", () => {
