@@ -49,6 +49,17 @@ interface Flash {
   life: number; // 0..1, 1 = fresh
 }
 
+/** A celebratory spark emitted when the score increases (F4). */
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number; // 0..1, 1 = fresh
+  color: number;
+  size: number;
+}
+
 /** Per-column occupied rows, bottom-to-top, with colours. */
 function columnStack(grid: Grid, col: number): { row: number; cell: Cell }[] {
   const out: { row: number; cell: Cell }[] = [];
@@ -74,12 +85,16 @@ export class PixiRenderer {
   private markG = new Graphics();
   private sweepG = new Graphics();
   private fxG = new Graphics();
+  private scoreG = new Graphics();
 
   private last: RenderState | null = null;
   private prevGrid: Grid | null = null;
   private prevMarked = new Set<number>();
   private fallOffsets = new Map<number, number>(); // key row*COLS+col -> px offset
   private flashes: Flash[] = [];
+  private particles: Particle[] = [];
+  private prevScore = 0;
+  private scoreFlash = 0; // 0..1, full-board gold tint on a scoring event
   private clock = 0;
   private unsub: (() => void) | null = null;
   private destroyed = false;
@@ -112,7 +127,14 @@ export class PixiRenderer {
 
     const stage = new Container();
     stage.addChild(this.buildGrid());
-    stage.addChild(this.cellG, this.markG, this.pieceG, this.fxG, this.sweepG);
+    stage.addChild(
+      this.cellG,
+      this.markG,
+      this.pieceG,
+      this.fxG,
+      this.sweepG,
+      this.scoreG,
+    );
     app.stage.addChild(stage);
 
     app.ticker.add((t) => this.frame(t.deltaMS));
@@ -141,9 +163,45 @@ export class PixiRenderer {
       this.seedCollapse(this.prevGrid, rs.grid);
       this.seedClearFlashes(this.prevGrid, rs.grid);
     }
+    this.seedScoreCelebration(rs.score);
     this.prevGrid = rs.grid.map((r) => r.slice());
     this.prevMarked = markedSet;
     this.last = rs;
+  }
+
+  /**
+   * F4: when the score increases, light up the game view — a gold full-board
+   * flash plus a radiating spark burst, both scaled by the size of the gain so
+   * bigger clears feel bigger. A decrease (restart) clears the effects.
+   */
+  private seedScoreCelebration(score: number): void {
+    const delta = score - this.prevScore;
+    this.prevScore = score;
+    if (delta <= 0) {
+      if (delta < 0) {
+        this.particles = [];
+        this.scoreFlash = 0;
+      }
+      return;
+    }
+    this.scoreFlash = Math.min(1, delta / 12);
+    const count = Math.max(6, Math.min(60, Math.round(delta * 3)));
+    const cx = BOARD_W / 2;
+    const cy = BOARD_H / 2;
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 1.5 + Math.random() * 4.5;
+      const gold = Math.random() < 0.6;
+      this.particles.push({
+        x: cx + (Math.random() - 0.5) * BOARD_W * 0.5,
+        y: cy + (Math.random() - 0.5) * BOARD_H * 0.5,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 1.5,
+        life: 1,
+        color: gold ? 0xfff2a8 : 0x9bf6e8,
+        size: 2 + Math.random() * 3,
+      });
+    }
   }
 
   /** Match each column's new stack to its old stack to animate fallen cells. */
@@ -199,12 +257,23 @@ export class PixiRenderer {
       f.life -= dtMs / 260;
       return f.life > 0;
     });
+    // F4: decay the score flash and integrate/age the spark particles.
+    this.scoreFlash = Math.max(0, this.scoreFlash - dtMs / 420);
+    this.particles = this.particles.filter((p) => {
+      p.life -= dtMs / 900;
+      p.x += p.vx * (dtMs / 16.6667);
+      p.y += p.vy * (dtMs / 16.6667);
+      p.vy += 0.12 * (dtMs / 16.6667); // gravity
+      p.vx *= 0.985;
+      return p.life > 0;
+    });
 
     this.drawCells(this.last);
     this.drawMarked(this.last);
     this.drawPiece(this.last);
     this.drawFlashes();
     this.drawSweep(this.last);
+    this.drawScoreFx();
   }
 
   private buildGrid(): Graphics {
@@ -333,5 +402,22 @@ export class PixiRenderer {
     g.rect(x - 1.5, 0, 3, BOARD_H).fill({ color: 0xffffff, alpha: 0.95 });
     g.circle(x, 6, 5).fill({ color: 0xffffff });
     g.circle(x, BOARD_H - 6, 5).fill({ color: 0xffffff });
+  }
+
+  /** F4: full-board gold flash + radiating sparks on a scoring event. */
+  private drawScoreFx(): void {
+    const g = this.scoreG;
+    g.clear();
+    if (this.scoreFlash > 0) {
+      g.rect(0, 0, BOARD_W, BOARD_H).fill({
+        color: SWEEP,
+        alpha: this.scoreFlash * 0.22,
+      });
+    }
+    for (const p of this.particles) {
+      const r = p.size * (0.5 + p.life * 0.8);
+      g.circle(p.x, p.y, r).fill({ color: p.color, alpha: p.life });
+      g.circle(p.x, p.y, r * 2.4).fill({ color: p.color, alpha: p.life * 0.18 });
+    }
   }
 }
