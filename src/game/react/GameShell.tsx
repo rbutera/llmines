@@ -23,6 +23,9 @@ import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
 import { installTestApi } from "../test-api/install";
 import { loadSettings, saveSettings } from "../render3d/settings";
+import type { BoardPalette } from "../skins/skins";
+import { useSkinSwitch } from "../skins/useSkinSwitch";
+import { chromeCssVars } from "../skins/crossfade";
 import { ControlsCheatsheet } from "./ControlsCheatsheet";
 import { GameCanvas } from "./GameCanvas";
 import { ScoreFx } from "./ScoreFx";
@@ -60,6 +63,13 @@ export function GameShell() {
   const audioDeriverRef = useRef<AudioEventDeriver | null>(null);
   const phaseRef = useRef<Phase>("start");
   phaseRef.current = phase;
+
+  // Skin switch (v2.5): a skin is a cohesive COLOUR bundle (board + chrome).
+  // Switching crossfades the board + chrome colours (handled inside the hook).
+  // COLOUR-ONLY: the per-skin soundtrack is held — the live audio is the song1
+  // segment-advance engine (no per-segment assets exist for a second song), so a
+  // colour switch never touches audio. No onSwitch callback is passed.
+  const skinSwitch = useSkinSwitch();
 
   // Account seam: submit the final score on game over (signed-in only). Held in
   // refs so the mount-once subscription always sees the current values.
@@ -153,6 +163,27 @@ export function GameShell() {
       audioDeriverRef.current = null;
     };
   }, []);
+
+  // Skin switch hotkey ("n" / "N") — active in every phase so the look can be
+  // switched on demand. Ignored when a text field is focused.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "n" && e.key !== "N") return;
+      const el = e.target as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "SELECT" ||
+          el.tagName === "TEXTAREA")
+      ) {
+        return;
+      }
+      e.preventDefault();
+      skinSwitch.cycleSkin();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [skinSwitch]);
 
   // Keyboard controls — active only while playing.
   useEffect(() => {
@@ -269,7 +300,15 @@ export function GameShell() {
 
   return (
     <main
-      className={`relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#08060f] text-white ${
+      data-testid="game-root"
+      data-skin={skinSwitch.skin.id}
+      style={{
+        // Skin chrome: the page background + the accent CSS custom properties the
+        // chrome reads. These crossfade with the board on a skin switch.
+        backgroundColor: skinSwitch.chrome.base,
+        ...chromeCssVars(skinSwitch.chrome),
+      }}
+      className={`relative flex min-h-screen flex-col items-center justify-center overflow-hidden text-white ${
         // FIX 1: while playing, drop the reading-page padding so the board can
         // dominate the viewport (~90%). Start / game-over keep the padded column.
         phase === "playing" ? "p-0" : "px-4 py-8"
@@ -284,6 +323,20 @@ export function GameShell() {
           Always-visible, top-right of the page, so the bed + action SFX can be
           silenced or the mix switched without hunting for the slider. */}
       <div className="absolute top-4 right-4 z-40 flex items-center gap-2">
+        <button
+          type="button"
+          data-testid="skin-switch"
+          aria-label={`Switch skin (current: ${skinSwitch.skin.label})`}
+          onClick={() => skinSwitch.cycleSkin()}
+          className="rounded-lg border px-3 py-1.5 text-sm font-semibold text-white/90 backdrop-blur transition hover:brightness-125"
+          style={{
+            borderColor: `${skinSwitch.chrome.accent}66`,
+            backgroundColor: `${skinSwitch.chrome.accent}1f`,
+          }}
+        >
+          Skin:{" "}
+          <span data-testid="skin-switch-label">{skinSwitch.skin.label}</span>
+        </button>
         <select
           data-testid="audio-mix"
           aria-label="Audio mix preset"
@@ -337,6 +390,7 @@ export function GameShell() {
             paused={paused}
             musicVolume={musicVolume}
             onVolumeChange={handleVolumeChange}
+            boardPalette={skinSwitch.board}
           />
         )}
 
@@ -352,10 +406,19 @@ function Header() {
   return (
     <div className="mb-6 flex items-center justify-between gap-4">
       <div className="flex items-baseline gap-3">
-        <h1 className="bg-gradient-to-r from-[#a855f7] to-[#c45cff] bg-clip-text text-3xl font-black tracking-tight text-transparent drop-shadow-[0_0_18px_rgba(196,92,255,0.35)] sm:text-4xl">
+        <h1
+          className="bg-clip-text text-3xl font-black tracking-tight text-transparent sm:text-4xl"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, var(--accent), var(--accent-bright))",
+          }}
+        >
           LLMines
         </h1>
-        <span className="hidden text-xs tracking-widest text-[#a855f7]/60 uppercase sm:inline">
+        <span
+          className="hidden text-xs tracking-widest uppercase sm:inline"
+          style={{ color: "var(--accent)", opacity: 0.6 }}
+        >
           a lumines-like
         </span>
       </div>
@@ -435,7 +498,11 @@ function StartScreen({
           data-testid="start-button"
           onClick={onStart}
           autoFocus
-          className="mt-6 rounded-xl bg-gradient-to-r from-[#a855f7] to-[#c45cff] px-8 py-3 text-lg font-bold text-white shadow-[0_0_30px_-6px_rgba(196,92,255,0.7)] transition hover:brightness-110 focus:ring-4 focus:ring-[#c45cff]/40 focus:outline-none"
+          className="mt-6 rounded-xl px-8 py-3 text-lg font-bold text-white transition hover:brightness-110 focus:ring-4 focus:outline-none"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, var(--accent), var(--accent-bright))",
+          }}
         >
           Start game
         </button>
@@ -457,6 +524,7 @@ function PlayingScreen({
   paused,
   musicVolume,
   onVolumeChange,
+  boardPalette,
 }: {
   controller: GameController;
   score: number;
@@ -464,6 +532,7 @@ function PlayingScreen({
   paused: boolean;
   musicVolume: number;
   onVolumeChange: (v: number) => void;
+  boardPalette: BoardPalette;
 }) {
   const skin = skinAt(hud.skinIndex);
   // Chrome (the side panels) is OVERLAID on the canvas and HIDDEN during active
@@ -493,7 +562,7 @@ function PlayingScreen({
           className="relative h-full w-full"
           style={{ aspectRatio: BOARD_ASPECT }}
         >
-          <GameCanvas controller={controller} />
+          <GameCanvas controller={controller} palette={boardPalette} />
           <ScoreFx score={score} />
 
           {/* Always-visible score chip (small, overlaid top-left). The
@@ -661,7 +730,11 @@ function GameOverScreen({
           data-testid="restart"
           onClick={onRestart}
           autoFocus
-          className="mt-8 rounded-xl bg-gradient-to-r from-[#a855f7] to-[#c45cff] px-8 py-3 text-lg font-bold text-white shadow-[0_0_30px_-6px_rgba(196,92,255,0.7)] transition hover:brightness-110 focus:ring-4 focus:ring-[#c45cff]/40 focus:outline-none"
+          className="mt-8 rounded-xl px-8 py-3 text-lg font-bold text-white transition hover:brightness-110 focus:ring-4 focus:outline-none"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, var(--accent), var(--accent-bright))",
+          }}
         >
           Play again
         </button>
@@ -675,10 +748,19 @@ function GameOverScreen({
 }
 
 function BackdropGlow() {
+  // The two ambient bloom blobs read the live skin accent CSS vars (set on the
+  // page root), so they crossfade from purple to the new skin's accent on a skin
+  // switch — keeping the whole page cohesive, not just the board + chrome.
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0">
-      <div className="absolute -top-32 -left-24 h-96 w-96 rounded-full bg-[#7c3aed]/15 blur-3xl" />
-      <div className="absolute -right-24 -bottom-32 h-96 w-96 rounded-full bg-[#c45cff]/12 blur-3xl" />
+      <div
+        className="absolute -top-32 -left-24 h-96 w-96 rounded-full blur-3xl"
+        style={{ backgroundColor: "var(--accent-deep)", opacity: 0.15 }}
+      />
+      <div
+        className="absolute -right-24 -bottom-32 h-96 w-96 rounded-full blur-3xl"
+        style={{ backgroundColor: "var(--accent-bright)", opacity: 0.12 }}
+      />
     </div>
   );
 }

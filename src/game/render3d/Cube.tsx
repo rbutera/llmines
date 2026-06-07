@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { beatBreathe } from "../fx/beatFx";
 import type { VisualSettings } from "./settings";
 import { CELL, GAP } from "./layout";
+import { type BoardPalette, SKIN_NEON } from "../skins/skins";
 
 /**
  * A single board cell rendered as a sheared 3D cube — the "Lumines Arise" 2.5D
@@ -68,6 +69,12 @@ export interface CubeProps {
    * from the sheared board cubes. Default false (board cubes shear by column).
    */
   flat?: boolean;
+  /**
+   * The active skin's board palette — drives the dark-cell colours + the
+   * dark-block gem accent so the board recolours when the skin switches. Defaults
+   * to the neon (skin 1) palette so existing callers/tests are unaffected.
+   */
+  palette?: BoardPalette;
 }
 
 /**
@@ -101,6 +108,7 @@ export function Cube({
   marked = false,
   noBeat = false,
   flat = false,
+  palette = SKIN_NEON.board,
 }: CubeProps) {
   const leftRef = useRef<THREE.MeshStandardMaterial>(null);
   const rightRef = useRef<THREE.MeshStandardMaterial>(null);
@@ -111,17 +119,18 @@ export function Cube({
   const size = CELL - GAP;
 
   // Dark-cell inner-X material (shared by both crossed bars). Muted by design.
+  // Rebuilt when the skin palette's dark-core colours change (skin switch); the
+  // emissive INTENSITY is still updated live in useFrame.
   const darkCoreMat = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
-        color: "#2a1147",
-        emissive: "#7c3aed",
+        color: palette.darkCore,
+        emissive: palette.darkCoreEmissive,
         emissiveIntensity: settings.darkCoreIntensity,
         toneMapped: false,
       }),
-    // Created once; emissive intensity is updated live in useFrame.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [palette.darkCore, palette.darkCoreEmissive],
   );
 
   useFrame((s) => {
@@ -216,8 +225,11 @@ export function Cube({
     }
   });
 
-  // Gem variant colour: LIGHT inlay on bright blocks, DARK inlay on dark blocks,
-  // so the marker reads against the cell while preserving its colour identity.
+  // Gem variant colour (P0, round-2 tuned for visibility): MAGENTA inlay on
+  // bright blocks, GOLD inlay on dark blocks — high contrast against either cell.
+  // v2.5 keeps this on the round-2 settings scheme across BOTH skins (P0 wins
+  // over per-skin gem recolour) so the chain-special marker stays consistently
+  // readable; the skin recolours the cells/edges/background/chrome around it.
   const gemColor = bright ? settings.gemLightColor : settings.gemDarkColor;
 
   // Per-column sheared geometry. Front face at z=0; body extends to z=-size and
@@ -316,22 +328,22 @@ export function Cube({
           </>
         ) : (
           <>
-            {/* [0] +x right — mildly emissive purple, dim */}
+            {/* [0] +x right — mildly emissive accent, dim */}
             <meshStandardMaterial
               ref={rightRef}
               attach="material-0"
-              color="#1a0e33"
-              emissive="#3b1d6e"
+              color={palette.darkFace}
+              emissive={palette.darkEmissive}
               emissiveIntensity={settings.darkFaceIntensity}
               metalness={0.1}
               roughness={0.6}
             />
-            {/* [1] -x left — mildly emissive purple, dim */}
+            {/* [1] -x left — mildly emissive accent, dim */}
             <meshStandardMaterial
               ref={leftRef}
               attach="material-1"
-              color="#1a0e33"
-              emissive="#3b1d6e"
+              color={palette.darkFace}
+              emissive={palette.darkEmissive}
               emissiveIntensity={settings.darkFaceIntensity}
               metalness={0.1}
               roughness={0.6}
@@ -339,45 +351,45 @@ export function Cube({
             {/* [2] +y top — transparent */}
             <meshStandardMaterial
               attach="material-2"
-              color="#1a0e33"
+              color={palette.darkFace}
               transparent
               opacity={0.12}
               depthWrite={false}
               metalness={0.1}
               roughness={0.7}
             />
-            {/* [3] -y bottom — dark semi-opaque purple */}
+            {/* [3] -y bottom — dark semi-opaque accent */}
             <meshStandardMaterial
               attach="material-3"
-              color="#1a0e33"
+              color={palette.darkFace}
               transparent
               opacity={0.85}
               depthWrite={false}
               metalness={0.1}
               roughness={0.7}
             />
-            {/* [4] +z front — dark semi-opaque purple */}
+            {/* [4] +z front — dark semi-opaque accent */}
             <meshStandardMaterial
               attach="material-4"
-              color="#1a0e33"
+              color={palette.darkFace}
               transparent
               opacity={0.85}
               depthWrite={false}
               metalness={0.1}
               roughness={0.65}
             />
-            {/* [5] -z back — deep night-sky purple */}
+            {/* [5] -z back — deep night-sky accent */}
             <meshStandardMaterial
               attach="material-5"
-              color="#150a2e"
+              color={palette.darkBack}
               metalness={0.05}
               roughness={0.9}
             />
           </>
         )}
         {/* Glowing edge frame — hero element. White on bright (blooms), dim
-            purple on dark. Child of the mesh so it follows the shear. */}
-        <Edges color={bright ? "#ffffff" : "#6b4a9e"} />
+            accent on dark. Child of the mesh so it follows the shear. */}
+        <Edges color={bright ? "#ffffff" : palette.darkEdge} />
       </mesh>
 
       {/* Inner light orb — bright cells only. Axis-aligned, cell centre. */}

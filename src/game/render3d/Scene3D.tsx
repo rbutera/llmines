@@ -10,6 +10,7 @@ import { clearedCellCount } from "../render/renderer";
 import { shouldBurstOnClear } from "../fx/scoreFx";
 import type { VisualSettings } from "./settings";
 import { Cube } from "./Cube";
+import type { BoardPalette } from "../skins/skins";
 import { CellGrid } from "./CellGrid";
 import { SweepBar } from "./SweepBar";
 import { BackgroundField } from "./BackgroundField";
@@ -86,11 +87,15 @@ export function Scene3D({
   controller,
   settings,
   beatPhaseRef,
+  palette,
 }: {
   controller: GameController;
   settings: VisualSettings;
   /** Shared with the host so the bloom pass can breathe on the same beat. */
   beatPhaseRef: React.RefObject<number>;
+  /** Active skin's board palette (drives dark-cell + gem colours). Optional so
+      existing callers/tests fall back to neon via Cube's default. */
+  palette?: BoardPalette;
 }) {
   const [settled, setSettled] = useState<SettledCellData[]>([]);
   const [active, setActive] = useState<ActiveCellData[]>([]);
@@ -513,6 +518,7 @@ export function Scene3D({
           beatPhaseRef={beatPhaseRef}
           isGem={c.gem}
           marked={c.marked}
+          palette={palette}
         />
       ))}
 
@@ -533,6 +539,7 @@ export function Scene3D({
             heatRef={heatRef}
             isGem={c.gem}
             marked={false}
+            palette={palette}
           />
         ))}
       </group>

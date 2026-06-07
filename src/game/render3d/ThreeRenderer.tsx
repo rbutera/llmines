@@ -11,6 +11,7 @@ import { Scene3D } from "./Scene3D";
 import { useVisualSettings } from "./useVisualSettings";
 import { PREVIEW_GUTTER } from "./PreviewDock";
 import { BOARD_H, BOARD_W, CELL } from "./layout";
+import { type BoardPalette, SKIN_NEON } from "../skins/skins";
 
 /**
  * FIX 4: auto-fit the orthographic zoom to the live canvas size so the well (plus
@@ -104,7 +105,14 @@ function AutoFitCamera({
  * preview gutter beside the well, and threads a shared `beatPhaseRef` (written
  * from sweepX) to the scene so every breathing element pulses in sync.
  */
-export function ThreeRenderer({ controller }: { controller: GameController }) {
+export function ThreeRenderer({
+  controller,
+  palette = SKIN_NEON.board,
+}: {
+  controller: GameController;
+  /** Active skin's board palette (canvas bg + cell colours). Defaults to neon. */
+  palette?: BoardPalette;
+}) {
   const settings = useVisualSettings();
   const [panelOpen, setPanelOpen] = useState(false);
 
@@ -149,10 +157,11 @@ export function ThreeRenderer({ controller }: { controller: GameController }) {
         // (width follows from the aspect), with max-h/max-w guarding overflow.
         height: "100%",
         aspectRatio: BOARD_ASPECT,
-        // Round-2 (owner): keep the surround DARK. A faint violet edge accent
-        // only (low alpha, tight spread) so the board reads as the hero — not a
-        // bright purple halo slab around the canvas.
-        boxShadow: "0 0 24px -18px #c45cff66",
+        // Round-2 (owner): keep the surround DARK — a faint edge accent only
+        // (low alpha, tight spread) so the board reads as the hero, not a bright
+        // halo slab around the canvas. v2.5: drive the accent from the active
+        // skin's gem so it recolours Neon -> Pipeline while staying dark.
+        boxShadow: `0 0 24px -18px ${palette.gem}66`,
       }}
     >
       {/* Settings panel — hidden until toggled so it never blocks play. */}
@@ -172,7 +181,7 @@ export function ThreeRenderer({ controller }: { controller: GameController }) {
         style={{ width: "100%", height: "100%", display: "block" }}
         aria-hidden="true"
       >
-        <color attach="background" args={["#0a0a12"]} />
+        <color attach="background" args={[palette.background]} />
 
         {/* Flat orthographic camera, straight-on. The side-face reveal comes
             entirely from the per-column shear, not the camera. Shifted left to
@@ -192,6 +201,7 @@ export function ThreeRenderer({ controller }: { controller: GameController }) {
           controller={controller}
           settings={settings}
           beatPhaseRef={beatPhaseRef}
+          palette={palette}
         />
 
         <EffectComposer>
