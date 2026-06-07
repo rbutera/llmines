@@ -27,7 +27,8 @@
     /* Path Aliases */
     "baseUrl": ".",
     "paths": {
-      "~/*": ["./src/*"]
+      "~/*": ["./src/*"],
+      "three": ["./node_modules/@types/three/index.d.ts"]
     }
   },
   "include": [

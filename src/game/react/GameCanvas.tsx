@@ -1,41 +1,15 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { BOARD_ASPECT } from "../core";
 import type { GameController } from "../engine/controller";
-import { PixiRenderer } from "../render/renderer";
+import { ThreeRenderer } from "../render3d/ThreeRenderer";
 
 /**
- * Mounts the PixiJS renderer into a ref'd container and wires it to the
- * controller. The Pixi app is created on mount and fully destroyed on unmount
- * (StrictMode double-invoke safe — async init checks a destroyed flag).
+ * Mounts the Three.js / react-three-fiber renderer and wires it to the
+ * controller. The `<Canvas>` is client-only (this file is "use client") and
+ * subscribes to the controller via `controller.subscribe` inside the scene — the
+ * same pure-consumer contract the old PixiRenderer used. The renderer swap (Pixi
+ * -> R3F) touches no game logic and no test seam.
  */
 export function GameCanvas({ controller }: { controller: GameController }) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const renderer = new PixiRenderer();
-    let cancelled = false;
-    void renderer.init(host).then(() => {
-      if (cancelled) {
-        renderer.destroy();
-        return;
-      }
-      renderer.attach(controller);
-    });
-    return () => {
-      cancelled = true;
-      renderer.destroy();
-    };
-  }, [controller]);
-
-  return (
-    <div
-      ref={hostRef}
-      className="w-full overflow-hidden rounded-xl ring-1 shadow-2xl ring-white/10"
-      style={{ aspectRatio: BOARD_ASPECT, boxShadow: "0 0 60px -15px #37e0c980" }}
-    />
-  );
+  return <ThreeRenderer controller={controller} />;
 }
