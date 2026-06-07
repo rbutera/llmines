@@ -83,6 +83,32 @@ export function useVisualSettings(): VisualSettings {
         step: 0.01,
       },
     }),
+    "Beat (a11y: gentle only)": folder({
+      beatReactive: { value: initial.beatReactive },
+      // Hard-capped at 0.3 so even at the slider max this is a swell, not a
+      // strobe. The default (0.12) is a small, slow breathe.
+      beatStrength: { value: initial.beatStrength, min: 0, max: 0.3, step: 0.01 },
+    }),
+    Bursts: folder({
+      burstEnabled: { value: initial.burstEnabled },
+      burstPerCell: { value: initial.burstPerCell, min: 1, max: 20, step: 1 },
+      burstCap: { value: initial.burstCap, min: 10, max: 200, step: 5 },
+    }),
+    Background: folder({
+      bgEnabled: { value: initial.bgEnabled },
+      bgIntensity: { value: initial.bgIntensity, min: 0, max: 1, step: 0.01 },
+    }),
+    "Heat glow": folder({
+      heatEnabled: { value: initial.heatEnabled },
+      heatIntensity: { value: initial.heatIntensity, min: 0, max: 4, step: 0.05 },
+    }),
+    Gems: folder({
+      gemEnabled: { value: initial.gemEnabled },
+      gemIntensity: { value: initial.gemIntensity, min: 0, max: 4, step: 0.05 },
+    }),
+    Preview: folder({
+      previewEnabled: { value: initial.previewEnabled },
+    }),
   });
 
   // `values` is the flat, typed leva values object (folders flattened). Build
@@ -104,6 +130,18 @@ export function useVisualSettings(): VisualSettings {
     bloomIntensity: values.bloomIntensity ?? DEFAULT_SETTINGS.bloomIntensity,
     luminanceThreshold:
       values.luminanceThreshold ?? DEFAULT_SETTINGS.luminanceThreshold,
+    beatReactive: values.beatReactive ?? DEFAULT_SETTINGS.beatReactive,
+    beatStrength: values.beatStrength ?? DEFAULT_SETTINGS.beatStrength,
+    burstEnabled: values.burstEnabled ?? DEFAULT_SETTINGS.burstEnabled,
+    burstPerCell: values.burstPerCell ?? DEFAULT_SETTINGS.burstPerCell,
+    burstCap: values.burstCap ?? DEFAULT_SETTINGS.burstCap,
+    bgEnabled: values.bgEnabled ?? DEFAULT_SETTINGS.bgEnabled,
+    bgIntensity: values.bgIntensity ?? DEFAULT_SETTINGS.bgIntensity,
+    heatEnabled: values.heatEnabled ?? DEFAULT_SETTINGS.heatEnabled,
+    heatIntensity: values.heatIntensity ?? DEFAULT_SETTINGS.heatIntensity,
+    gemEnabled: values.gemEnabled ?? DEFAULT_SETTINGS.gemEnabled,
+    gemIntensity: values.gemIntensity ?? DEFAULT_SETTINGS.gemIntensity,
+    previewEnabled: values.previewEnabled ?? DEFAULT_SETTINGS.previewEnabled,
   };
 
   // Persist on every change so tweaks survive reload.
@@ -125,6 +163,18 @@ export function useVisualSettings(): VisualSettings {
     settings.gridOpacity,
     settings.bloomIntensity,
     settings.luminanceThreshold,
+    settings.beatReactive,
+    settings.beatStrength,
+    settings.burstEnabled,
+    settings.burstPerCell,
+    settings.burstCap,
+    settings.bgEnabled,
+    settings.bgIntensity,
+    settings.heatEnabled,
+    settings.heatIntensity,
+    settings.gemEnabled,
+    settings.gemIntensity,
+    settings.previewEnabled,
   ]);
 
   return settings;

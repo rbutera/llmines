@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { type RefObject, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Edges } from "@react-three/drei";
 import * as THREE from "three";
+import { beatBreathe } from "../fx/beatFx";
 import type { VisualSettings } from "./settings";
 import { CELL, GAP } from "./layout";
 
@@ -23,12 +24,6 @@ import { CELL, GAP } from "./layout";
  * invisible under an ortho camera (the sandbox's documented gotcha).
  */
 
-/** Gentle slow breathe (~0.4Hz) — NOT a strobe. Phase 2 owns real beat-reactive. */
-function pulse(base: number, t: number, on: boolean): number {
-  if (!on) return base;
-  return base * (0.9 + 0.1 * Math.sin(t * Math.PI * 0.8));
-}
-
 export interface CubeProps {
   /** Centred world position of the cell's cube group. */
   position: [number, number, number];
@@ -39,12 +34,41 @@ export interface CubeProps {
   /** Bright (glass crystal + orb) vs dark (night box + X). */
   bright: boolean;
   settings: VisualSettings;
+  /**
+   * Phase-2: shared beat-phase ref (0..1 from sweepX/bpm). When present AND
+   * `settings.beatReactive`, the emissive GENTLY breathes on the beat (a smooth,
+   * small cosine swell — never a strobe). Absent => falls back to the slow
+   * free-running breathe gated by the legacy `beatPulse` toggle.
+   */
+  beatPhaseRef?: RefObject<number>;
+  /**
+   * Phase-2 heat glow: shared 0..1 heat ref (active descending piece only). When
+   * present, adds `heat * settings.heatIntensity` extra emissive on the piece so
+   * a fast soft-drop visibly heats up. Glow lives ON the piece, not centre-screen.
+   */
+  heatRef?: RefObject<number>;
+  /** Phase-2 gem: this cell carries a chain special — give it a distinct read. */
+  isGem?: boolean;
+  /** Opt out of all beat/heat animation (used by the calm preview dock). */
+  noBeat?: boolean;
 }
 
-export function Cube({ position, col, cols, bright, settings }: CubeProps) {
+export function Cube({
+  position,
+  col,
+  cols,
+  bright,
+  settings,
+  beatPhaseRef,
+  heatRef,
+  isGem = false,
+  noBeat = false,
+}: CubeProps) {
   const leftRef = useRef<THREE.MeshStandardMaterial>(null);
   const rightRef = useRef<THREE.MeshStandardMaterial>(null);
   const coreRef = useRef<THREE.MeshStandardMaterial>(null);
+  const gemRef = useRef<THREE.Mesh>(null);
+  const gemMatRef = useRef<THREE.MeshStandardMaterial>(null);
 
   const size = CELL - GAP;
   const centerCol = (cols - 1) / 2;
@@ -65,22 +89,50 @@ export function Cube({ position, col, cols, bright, settings }: CubeProps) {
 
   useFrame((s) => {
     const t = s.clock.elapsedTime;
-    const on = settings.beatPulse;
+
+    // --- Beat-reactive breathe factor (Phase 2). GENTLE: a small smooth cosine
+    // swell around 1.0, capped by beatStrength. Never a strobe (a11y). Falls
+    // back to the legacy slow free-running breathe when no beat ref / disabled. ---
+    let breathe = 1;
+    if (!noBeat) {
+      if (beatPhaseRef && settings.beatReactive) {
+        breathe = beatBreathe(beatPhaseRef.current ?? 0, settings.beatStrength, true);
+      } else if (settings.beatPulse) {
+        breathe = 0.9 + 0.1 * Math.sin(t * Math.PI * 0.8);
+      }
+    }
+
+    // --- Heat glow (Phase 2): extra additive emissive on a fast-dropping piece. ---
+    const heat =
+      !noBeat && heatRef && settings.heatEnabled
+        ? (heatRef.current ?? 0) * settings.heatIntensity
+        : 0;
+
+    // --- Gem boost (Phase 2): special cells read brighter + pulse a marker. ---
+    const gemBoost = isGem && settings.gemEnabled ? settings.gemIntensity : 0;
+
     if (bright) {
-      const faceI = pulse(settings.brightFaceIntensity, t, on);
+      const faceI = settings.brightFaceIntensity * breathe + heat + gemBoost;
       if (leftRef.current) leftRef.current.emissiveIntensity = faceI;
       if (rightRef.current) rightRef.current.emissiveIntensity = faceI;
       if (coreRef.current)
-        coreRef.current.emissiveIntensity = pulse(
-          settings.innerLightIntensity,
-          t,
-          on,
-        );
+        coreRef.current.emissiveIntensity =
+          settings.innerLightIntensity * breathe + heat + gemBoost;
     } else {
-      const faceI = pulse(settings.darkFaceIntensity, t, on);
+      const faceI = settings.darkFaceIntensity * breathe + heat + gemBoost;
       if (leftRef.current) leftRef.current.emissiveIntensity = faceI;
       if (rightRef.current) rightRef.current.emissiveIntensity = faceI;
-      darkCoreMat.emissiveIntensity = pulse(settings.darkCoreIntensity, t, on);
+      darkCoreMat.emissiveIntensity = settings.darkCoreIntensity * breathe + heat;
+    }
+
+    // Gem marker: a small pulsing octahedron that spins + breathes so a special
+    // reads instantly even at a glance. Uses its own steady pulse (not the beat)
+    // so it stands out against the calmer board.
+    if (gemRef.current && gemMatRef.current && isGem && settings.gemEnabled) {
+      gemRef.current.rotation.y = t * 1.6;
+      gemRef.current.rotation.x = t * 0.9;
+      gemMatRef.current.emissiveIntensity =
+        settings.gemIntensity * (1.1 + 0.5 * Math.sin(t * 4));
     }
   });
 
@@ -266,6 +318,24 @@ export function Cube({ position, col, cols, bright, settings }: CubeProps) {
             <boxGeometry args={[size * 0.6, size * 0.12, size * 0.12]} />
           </mesh>
         </group>
+      )}
+
+      {/* Gem marker — special cells only. A small spinning, pulsing octahedron
+          floating slightly in front of the cell so a special reads instantly
+          (distinct silhouette from the square blocks). Animated in useFrame. */}
+      {isGem && settings.gemEnabled && (
+        <mesh ref={gemRef} position={[0, 0, size * 0.25]}>
+          <octahedronGeometry args={[size * 0.26, 0]} />
+          <meshStandardMaterial
+            ref={gemMatRef}
+            color="#fff0b0"
+            emissive="#ffd24a"
+            emissiveIntensity={settings.gemIntensity}
+            toneMapped={false}
+            metalness={0.3}
+            roughness={0.2}
+          />
+        </mesh>
       )}
     </group>
   );

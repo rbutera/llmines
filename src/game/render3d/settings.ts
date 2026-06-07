@@ -36,6 +36,40 @@ export interface VisualSettings {
   bloomIntensity: number;
   /** Bloom luminance threshold (only > this blooms). */
   luminanceThreshold: number;
+
+  // --- Phase 2: Arise VFX layer (all render-only, all tunable + persisted) ---
+  /**
+   * Beat-reactive master toggle: pulse bloom + block emissive GENTLY on the
+   * beat (phase derived from sweepX/bpm). Default ON.
+   */
+  beatReactive: boolean;
+  /**
+   * Beat breathe amplitude (fraction). The on-beat swell is ±beatStrength on
+   * bloom + emissive. KEPT LOW by default and the curve is a smooth cosine, so
+   * it is a gentle breathe, NEVER a strobe (a11y: flagged seizure risk). Slider
+   * is capped well below anything that could flash.
+   */
+  beatStrength: number;
+  /** Particle bursts on square/chain clears. Default ON. */
+  burstEnabled: boolean;
+  /** Particles spawned per cleared cell (scaled then capped). */
+  burstPerCell: number;
+  /** Hard cap on particles in a single burst (perf guard). */
+  burstCap: number;
+  /** Reactive evolving background shader plane behind the well. Default ON. */
+  bgEnabled: boolean;
+  /** Background shader brightness / presence (0 = invisible, subtle by default). */
+  bgIntensity: number;
+  /** Slow-drop heat glow on the descending piece. Default ON. */
+  heatEnabled: boolean;
+  /** Peak extra emissive added to the descending piece at full soft-drop speed. */
+  heatIntensity: number;
+  /** Gem / special-cell indicator. Default ON. */
+  gemEnabled: boolean;
+  /** Gem emissive boost / marker brightness. */
+  gemIntensity: number;
+  /** In-canvas 3D next-piece preview dock. Default ON. */
+  previewEnabled: boolean;
 }
 
 /**
@@ -55,6 +89,21 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   gridOpacity: 0.73,
   bloomIntensity: 1.2,
   luminanceThreshold: 0.74,
+
+  // Phase 2 — Arise VFX defaults. Tuned conservative: alive but not distracting,
+  // and the beat breathe is a small, slow swell (a11y-safe).
+  beatReactive: true,
+  beatStrength: 0.12, // ±12% gentle swell, smooth cosine — not a strobe
+  burstEnabled: true,
+  burstPerCell: 6,
+  burstCap: 60,
+  bgEnabled: true,
+  bgIntensity: 0.35,
+  heatEnabled: true,
+  heatIntensity: 1.6,
+  gemEnabled: true,
+  gemIntensity: 1.4,
+  previewEnabled: true,
 };
 
 /** localStorage key for persisted visual settings. */

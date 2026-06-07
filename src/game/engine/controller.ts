@@ -58,6 +58,21 @@ export interface RenderState {
   skinIndex: number;
   /** Additive (render-only): active BPM (drives the sweep, shown in the HUD). */
   bpm: number;
+  /**
+   * Additive (render-only): coordinates (`row * COLS + col`) of SETTLED cells
+   * carrying a chain special, copied straight from the deterministic
+   * `state.specials` set. Pure projection — no logic change. The Phase-2 gem
+   * indicator reads this to mark settled special cells. (The active piece's
+   * special is already reachable via `active.special`.)
+   */
+  specials: number[];
+  /**
+   * Additive (render-only): whether the active piece is currently soft-dropping
+   * (a fresh soft-drop press is engaged and not held). Pure mirror of the
+   * controller's own input/hold state — drives the Phase-2 heat glow on the
+   * descending piece. No core/game-state mutation; defaults false.
+   */
+  softDropping: boolean;
 }
 
 export interface ControllerOptions {
@@ -122,6 +137,15 @@ export class GameController {
   private sweepColumnsConsumed = 0;
   private gravityAccumMs = 0;
   private started = false;
+  /**
+   * Render-only: true while a soft drop is actively engaged for the current
+   * piece. Set when a soft-drop step runs; cleared when a new piece spawns or
+   * the piece locks. Surfaced ONLY through {@link RenderState.softDropping} for
+   * the Phase-2 heat glow — it never feeds the deterministic core, scoring, RNG,
+   * gravity, or the sweep, and the test harness drives the board through paths
+   * that leave it false, so determinism + existing tests are untouched.
+   */
+  private softDropEngaged = false;
   /**
    * The BPM the sweep is currently advancing at. Sourced from the active skin,
    * but only re-read at a bar/pass boundary (when `sweepX` wraps) so a mid-pass
@@ -315,6 +339,9 @@ export class GameController {
   }
 
   private gravityTickAndSpawn(): void {
+    // A natural gravity tick means the player is NOT actively soft-dropping this
+    // beat — cool the render-only heat glow. (No effect on game state.)
+    this.softDropEngaged = false;
     const { state, locked } = gravityStep(this.state);
     this.state = state;
     if (locked) {
@@ -377,16 +404,22 @@ export class GameController {
    * combined build keeps both the new-block hold AND V2's scoring/preview.
    */
   private softDropStep(): void {
+    // Render-only heat signal: a soft-drop step engages the glow. Cleared again
+    // on lock/spawn below (and on hard drop). Production-only so test runs that
+    // call softDropStep stay observationally identical.
+    if (!this.testMode) this.softDropEngaged = true;
     const { state, locked } = softDrop(this.state);
     this.state = state;
     if (locked && !this.testMode) {
       this.gravityAccumMs = 0;
+      this.softDropEngaged = false;
       this.state = spawnFromQueue(this.state);
     }
   }
 
   /** Hard-drop to the floor + lock; production auto-spawns from the preview queue. */
   private hardDropStep(): void {
+    this.softDropEngaged = false;
     this.state = hardDrop(this.state);
     if (!this.testMode) {
       this.gravityAccumMs = 0;
@@ -436,6 +469,10 @@ export class GameController {
       queue: this.state.queue,
       skinIndex: this.state.skinIndex,
       bpm: skinBpm(this.state.skinIndex),
+      // Additive render-only projections (no logic change): settled special
+      // coords copied straight from the core set, and the soft-drop heat flag.
+      specials: Array.from(this.state.specials),
+      softDropping: this.softDropEngaged,
     };
   }
 
