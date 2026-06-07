@@ -25,6 +25,9 @@ function rs(over: Partial<RenderState> = {}): RenderState {
     specials: [],
     softDropping: false,
     softDropPulses: 0,
+    // Round-2 base added this required render-only field to RenderState; the
+    // deriver never reads it, so an empty array satisfies the type for the test.
+    floodPreview: [],
     ...over,
   } satisfies RenderState;
   return base;
