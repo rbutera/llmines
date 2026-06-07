@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import { OrthographicCamera } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import { Leva } from "leva";
@@ -10,7 +10,46 @@ import type { GameController } from "../engine/controller";
 import { Scene3D } from "./Scene3D";
 import { useVisualSettings } from "./useVisualSettings";
 import { PREVIEW_GUTTER } from "./PreviewDock";
-import { CELL } from "./layout";
+import { BOARD_H, BOARD_W, CELL } from "./layout";
+
+/**
+ * FIX 4: auto-fit the orthographic zoom to the live canvas size so the well (plus
+ * the preview gutter) FILLS the canvas, and recompute on every resize. For a
+ * drei OrthographicCamera, `zoom` is pixels-per-world-unit, so to fit a world
+ * extent `W`x`H` into a `Cw`x`Ch` canvas we take `min(Cw/W, Ch/H)` (min => never
+ * crop) times a small fill factor for breathing room. The `userZoom` slider
+ * multiplies this fit so the panel still tunes framing on top of the auto-fit.
+ * Reads the reactive `size` from R3F (updates on resize) and writes the default
+ * camera's zoom each render.
+ */
+function AutoFitCamera({
+  userZoom,
+  baseZoom,
+  gutter,
+}: {
+  userZoom: number;
+  baseZoom: number;
+  gutter: number;
+}) {
+  const size = useThree((s) => s.size);
+  const camera = useThree((s) => s.camera);
+  // World extent to frame: the board, widened by the preview gutter (one-sided),
+  // plus a margin so the bloom/edges and the dock aren't clipped at the edge.
+  const worldW = BOARD_W + gutter + CELL * 1.2;
+  const worldH = BOARD_H + CELL * 1.2;
+  const fit = Math.min(size.width / worldW, size.height / worldH);
+  // baseZoom is the panel's reference (default 30) — normalise so userZoom=baseZoom
+  // means "auto-fit", and moving the slider scales around it.
+  const zoom = fit * (userZoom / baseZoom);
+  if ((camera as { isOrthographicCamera?: boolean }).isOrthographicCamera) {
+    const ortho = camera as unknown as { zoom: number; updateProjectionMatrix: () => void };
+    if (ortho.zoom !== zoom) {
+      ortho.zoom = zoom;
+      ortho.updateProjectionMatrix();
+    }
+  }
+  return null;
+}
 
 /**
  * Top-level Three.js / react-three-fiber renderer host. Mounts an `<Canvas>`
@@ -39,17 +78,24 @@ export function ThreeRenderer({ controller }: { controller: GameController }) {
   const beatPhaseRef = useRef<number>(0);
 
   // The preview dock lives in a gutter to the LEFT of the well. Shift the camera
-  // left by ~half the gutter so both the well and the gutter sit in frame, and
-  // zoom out slightly so the extra width fits the fixed-aspect container.
+  // left by ~half the gutter so both the well and the gutter sit centred in frame.
+  // (The zoom is now auto-fit to the canvas — see AutoFitCamera — so the board
+  // fills the big canvas instead of floating small in it.)
+  const gutter = settings.previewEnabled ? PREVIEW_GUTTER : 0;
   const gutterShift = settings.previewEnabled ? PREVIEW_GUTTER / 2 + CELL * 0.3 : 0;
-  const effectiveZoom = settings.previewEnabled
-    ? settings.zoom * 0.86
-    : settings.zoom;
 
   return (
     <div
-      className="relative w-full overflow-hidden rounded-xl ring-1 shadow-2xl ring-white/10"
-      style={{ aspectRatio: BOARD_ASPECT, boxShadow: "0 0 60px -15px #37e0c980" }}
+      className="relative max-h-full max-w-full overflow-hidden rounded-xl ring-1 shadow-2xl ring-white/10"
+      style={{
+        // FIX 4: fill the available space at the fixed board aspect. The parent
+        // (PlayingScreen) gives this a tall flex region; `height: 100%` + an
+        // aspect-ratio box makes the canvas as large as the viewport allows
+        // (width follows from the aspect), with max-h/max-w guarding overflow.
+        height: "100%",
+        aspectRatio: BOARD_ASPECT,
+        boxShadow: "0 0 60px -15px #37e0c980",
+      }}
     >
       {/* Settings panel — hidden until toggled so it never blocks play. */}
       <Leva hidden={!panelOpen} collapsed={false} />
@@ -76,10 +122,13 @@ export function ThreeRenderer({ controller }: { controller: GameController }) {
         <OrthographicCamera
           makeDefault
           position={[-gutterShift, 0, 60]}
-          zoom={effectiveZoom}
+          zoom={settings.zoom}
           near={0.1}
           far={500}
         />
+        {/* FIX 4: keep the well filling the (now much larger) canvas, responsive
+            to resize. Overrides the camera zoom each frame to the fit value. */}
+        <AutoFitCamera userZoom={settings.zoom} baseZoom={30} gutter={gutter} />
 
         <Scene3D
           controller={controller}

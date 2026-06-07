@@ -35,11 +35,23 @@ interface SettledCellData {
   bright: boolean;
   /** Phase 2: this settled cell carries a chain special (gem). */
   gem: boolean;
+  /**
+   * FIX 2: this settled cell is part of a completed square and is ABOUT TO CLEAR
+   * when the sweep crosses it (from `RenderState.marked`). Drives the bright
+   * pulsing "to-clear" emissive; un-marked settled cells stay calm/inert.
+   */
+  marked: boolean;
 }
 
-/** Active-piece cell with its grid coords + colour + gem flag. */
+/**
+ * Active-piece cell. `col` is the absolute board column (drives shear + world x).
+ * `localRow` is the cell's row WITHIN the 2x2 piece (0 = top, 1 = bottom) — the
+ * piece's absolute board row is applied once to the whole group in useFrame from
+ * the synchronous snapshot, so the active piece's vertical position never depends
+ * on async React state (see FIX 1: no beat/gravity-coupled positional snap).
+ */
 interface ActiveCellData {
-  row: number;
+  localRow: 0 | 1;
   col: number;
   bright: boolean;
   gem: boolean;
@@ -150,33 +162,43 @@ export function Scene3D({
         if (cells.length > 0) pendingWavefrontsRef.current.push({ cells });
       }
 
-      // --- Settled cells (with gem flag from the additive specials set). ---
+      // --- Settled cells (gem flag from the additive specials set; marked flag
+      // from RenderState.marked so to-clear cells get the bright pulse). ---
       const specialSet = new Set(rs.specials);
+      // FIX 2: index marked (about-to-clear) settled cells by row*COLS+col.
+      const markedSet = new Set(rs.marked.map((m) => m.row * COLS + m.col));
       const next: SettledCellData[] = [];
       for (let row = 0; row < ROWS; row++) {
         for (let col = 0; col < COLS; col++) {
           const c = rs.grid[row]?.[col] ?? null;
           if (c === null) continue;
+          const idx = row * COLS + col;
           next.push({
-            key: row * COLS + col,
+            key: idx,
             row,
             col,
             bright: isBright(c),
-            gem: specialSet.has(row * COLS + col),
+            gem: specialSet.has(idx),
+            marked: markedSet.has(idx),
           });
         }
       }
       setSettled(next);
 
       // --- Active piece (gem flag from active.special.cellIndex, row-major). ---
+      // Cells carry only their COLUMN + LOCAL row (0/1 within the piece) + colour.
+      // The piece's absolute board row is NOT baked into React state here; it is
+      // applied to the whole group every frame in useFrame from the live snapshot,
+      // so the active piece's Y can never disagree between the (async) React cube
+      // positions and the (sync) per-frame fall offset. (FIX 1.)
       if (rs.active) {
         const { cells, pos } = rs.active;
         const gemIdx = rs.active.special?.cellIndex ?? -1;
         setActive([
-          { row: pos.row, col: pos.col, bright: isBright(cells[0][0]), gem: gemIdx === 0 },
-          { row: pos.row, col: pos.col + 1, bright: isBright(cells[0][1]), gem: gemIdx === 1 },
-          { row: pos.row + 1, col: pos.col, bright: isBright(cells[1][0]), gem: gemIdx === 2 },
-          { row: pos.row + 1, col: pos.col + 1, bright: isBright(cells[1][1]), gem: gemIdx === 3 },
+          { localRow: 0, col: pos.col, bright: isBright(cells[0][0]), gem: gemIdx === 0 },
+          { localRow: 0, col: pos.col + 1, bright: isBright(cells[0][1]), gem: gemIdx === 1 },
+          { localRow: 1, col: pos.col, bright: isBright(cells[1][0]), gem: gemIdx === 2 },
+          { localRow: 1, col: pos.col + 1, bright: isBright(cells[1][1]), gem: gemIdx === 3 },
         ]);
       } else {
         setActive([]);
@@ -257,8 +279,17 @@ export function Scene3D({
       0,
       Math.min(restRoomForColumn(pos.col), restRoomForColumn(pos.col + 1)),
     );
-    // World y DECREASES as the piece falls (row increases downward).
-    grp.position.y = -Math.min(rs.fallProgress, roomBelow) * CELL;
+    // FIX 1: position the WHOLE active piece from the live snapshot every frame.
+    // The cubes inside this group render at LOCAL rows (top cell at y=0), so the
+    // group carries the absolute Y of the piece's top row PLUS the smooth sub-cell
+    // fall offset. Both terms come from `snapRef` in this single useFrame, so the
+    // row baseline and the fall offset can never disagree for a frame the way the
+    // old split (absolute cube Y from async React state + offset from snapRef)
+    // did — that disagreement was the per-gravity-tick "jump on the beat". The
+    // position is now a pure function of grid coords + fallProgress, with zero
+    // beat/sweep term anywhere (beat only ever touches emissive).
+    const fallOffset = Math.min(rs.fallProgress, roomBelow) * CELL;
+    grp.position.y = cellY(pos.row) - fallOffset;
   });
 
   const half = useMemo(() => ({ w: BOARD_W, h: BOARD_H }), []);
@@ -287,7 +318,8 @@ export function Scene3D({
 
       <CellGrid opacity={settings.gridOpacity} />
 
-      {/* Settled stack */}
+      {/* Settled stack. Calm/inert by default; cells the sweep is about to clear
+          (c.marked) get the bright pulse so the to-clear read is unmistakable. */}
       {settled.map((c) => (
         <Cube
           key={c.key}
@@ -298,15 +330,19 @@ export function Scene3D({
           settings={settings}
           beatPhaseRef={beatPhaseRef}
           isGem={c.gem}
+          marked={c.marked}
         />
       ))}
 
-      {/* Active falling piece — animated as a group via useFrame. */}
+      {/* Active falling piece — animated as a group via useFrame. The group's Y
+          (absolute top-row world Y minus the smooth fall offset) is driven each
+          frame from the live snapshot; the cubes sit at LOCAL rows so nothing
+          positional rides async React state. (FIX 1.) */}
       <group ref={activeGroupRef}>
         {active.map((c, i) => (
           <Cube
             key={`active-${i}`}
-            position={[cellX(c.col), cellY(c.row), CELL * 0.02]}
+            position={[cellX(c.col), -c.localRow * CELL, CELL * 0.02]}
             col={c.col}
             cols={COLS}
             bright={c.bright}
@@ -314,6 +350,7 @@ export function Scene3D({
             beatPhaseRef={beatPhaseRef}
             heatRef={heatRef}
             isGem={c.gem}
+            marked={false}
           />
         ))}
       </group>

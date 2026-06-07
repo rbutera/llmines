@@ -131,7 +131,14 @@ export function GameShell() {
           inspectable. Live autoplay is not required. */}
       <audio ref={audioRef} src={BACKING_TRACK_URL} loop preload="auto" />
 
-      <div className="relative z-10 w-full max-w-5xl">
+      {/* While playing, the board takes (almost) the whole viewport: a much wider
+          container + a near-full-height canvas region (FIX 4). Start / game-over
+          stay in the original narrower reading column. */}
+      <div
+        className={`relative z-10 w-full ${
+          phase === "playing" ? "max-w-[1800px]" : "max-w-5xl"
+        }`}
+      >
         <Header />
 
         {phase === "start" && <StartScreen onStart={handleStart} />}
@@ -210,10 +217,15 @@ function PlayingScreen({
   return (
     <section
       aria-label="Game"
-      className="grid items-start gap-6 md:grid-cols-[1fr_240px]"
+      className="grid items-stretch gap-6 md:grid-cols-[1fr_280px]"
     >
-      {/* Relative wrapper so the cosmetic ScoreFx overlay sits over the field. */}
-      <div className="relative">
+      {/* Relative wrapper so the cosmetic ScoreFx overlay sits over the field.
+          FIX 4: the board fills the available height (near-full viewport minus
+          the header/padding) instead of being capped by the old narrow column.
+          The canvas keeps its 16:10 aspect (width follows height) and is centred
+          in the column, so it is as big as the viewport allows without cropping
+          the well or the preview dock. */}
+      <div className="relative flex h-[calc(100vh-9rem)] min-h-[420px] items-center justify-center">
         <GameCanvas controller={controller} />
         <ScoreFx score={score} />
       </div>

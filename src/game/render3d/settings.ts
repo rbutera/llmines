@@ -71,6 +71,21 @@ export interface VisualSettings {
   /** In-canvas 3D next-piece preview dock. Default ON. */
   previewEnabled: boolean;
 
+  // --- FIX 2: visual hierarchy (calm settled vs pulsing to-clear) ----------
+  /**
+   * Emissive multiplier applied to SETTLED (placed, not-about-to-clear) cells.
+   * < 1 dials them DOWN so they read as inert/placed and don't compete with the
+   * active piece or the to-clear pulse. 1.0 = no change.
+   */
+  settledEmissive: number;
+  /**
+   * Peak emissive added to MARKED (about-to-clear) cells as a bright pulse, so a
+   * cell the sweep is about to clear is unmistakably distinct from a calm settled
+   * cell. Additive on top of the (dialled-down) settled emissive; pulses on a
+   * steady fast cosine (its own, not the gentle beat breathe).
+   */
+  markedPulse: number;
+
   // --- Phase 3: chain-clear travelling wavefront (render-only, tunable) ---
   /** Travelling chain-clear wavefront flash. Default ON. */
   chainEnabled: boolean;
@@ -113,8 +128,16 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   heatEnabled: true,
   heatIntensity: 1.6,
   gemEnabled: true,
-  gemIntensity: 1.4,
+  // FIX 3: gems were invisible in a 5-min play — make the marker read instantly.
+  // Brighter default emissive (the marker is also bigger + animated in Cube.tsx).
+  gemIntensity: 2.6,
   previewEnabled: true,
+
+  // FIX 2 — visual hierarchy. Settled cells dialled DOWN to read as inert; the
+  // bright pulse moves onto the to-clear (marked) cells as the "about to clear"
+  // signal so settled-vs-marked is the primary read.
+  settledEmissive: 0.45,
+  markedPulse: 2.4,
 
   // Phase 3 — chain wavefront. Fast-ish travel (60ms/ring) so a big chain reads
   // as a clear sweeping across the shape without dragging.

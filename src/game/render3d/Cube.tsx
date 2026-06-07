@@ -49,6 +49,16 @@ export interface CubeProps {
   heatRef?: RefObject<number>;
   /** Phase-2 gem: this cell carries a chain special — give it a distinct read. */
   isGem?: boolean;
+  /**
+   * FIX 2: this is a SETTLED cell the sweep is about to clear (a completed
+   * square). When true it gets the bright pulsing emissive (`settings.markedPulse`
+   * on a steady fast cosine) so it reads as "about to clear", clearly distinct
+   * from a calm inert settled cell. When false (and not the active piece), the
+   * cell's emissive is dialled DOWN by `settings.settledEmissive` so settled
+   * blocks read as inert. The active piece passes `marked={false}` and is exempt
+   * from the dial-down (it uses its own breathe/heat). Default false.
+   */
+  marked?: boolean;
   /** Opt out of all beat/heat animation (used by the calm preview dock). */
   noBeat?: boolean;
 }
@@ -62,6 +72,7 @@ export function Cube({
   beatPhaseRef,
   heatRef,
   isGem = false,
+  marked = false,
   noBeat = false,
 }: CubeProps) {
   const leftRef = useRef<THREE.MeshStandardMaterial>(null);
@@ -111,28 +122,59 @@ export function Cube({
     // --- Gem boost (Phase 2): special cells read brighter + pulse a marker. ---
     const gemBoost = isGem && settings.gemEnabled ? settings.gemIntensity : 0;
 
+    // --- FIX 2: visual hierarchy. A cube is "settled/inert" when it is neither a
+    // preview (noBeat) nor the active piece (the active piece is the one wired
+    // with a heatRef). Inert settled cells are dialled DOWN by settledEmissive so
+    // they read as placed; a settled cell the sweep is about to clear (`marked`)
+    // instead gets a bright pulse (markedPulse on a steady fast cosine) and is
+    // NOT dialled down — that contrast is the primary read. The active piece and
+    // previews keep their normal full emissive. ---
+    const isSettled = !noBeat && !heatRef;
+    const settledScale = isSettled && !marked ? settings.settledEmissive : 1;
+    const markedAdd =
+      isSettled && marked
+        ? settings.markedPulse * (0.65 + 0.35 * (0.5 + 0.5 * Math.sin(t * 6)))
+        : 0;
+
     if (bright) {
-      const faceI = settings.brightFaceIntensity * breathe + heat + gemBoost;
+      const faceI =
+        settings.brightFaceIntensity * breathe * settledScale +
+        heat +
+        gemBoost +
+        markedAdd;
       if (leftRef.current) leftRef.current.emissiveIntensity = faceI;
       if (rightRef.current) rightRef.current.emissiveIntensity = faceI;
       if (coreRef.current)
         coreRef.current.emissiveIntensity =
-          settings.innerLightIntensity * breathe + heat + gemBoost;
+          settings.innerLightIntensity * breathe * settledScale +
+          heat +
+          gemBoost +
+          markedAdd;
     } else {
-      const faceI = settings.darkFaceIntensity * breathe + heat + gemBoost;
+      const faceI =
+        settings.darkFaceIntensity * breathe * settledScale +
+        heat +
+        gemBoost +
+        markedAdd;
       if (leftRef.current) leftRef.current.emissiveIntensity = faceI;
       if (rightRef.current) rightRef.current.emissiveIntensity = faceI;
-      darkCoreMat.emissiveIntensity = settings.darkCoreIntensity * breathe + heat;
+      darkCoreMat.emissiveIntensity =
+        settings.darkCoreIntensity * breathe * settledScale + heat + markedAdd;
     }
 
-    // Gem marker: a small pulsing octahedron that spins + breathes so a special
-    // reads instantly even at a glance. Uses its own steady pulse (not the beat)
-    // so it stands out against the calmer board.
+    // FIX 3: gem marker — a BIG spinning, throbbing octahedron that reads
+    // instantly even at a glance (the owner missed every gem in a 5-min play).
+    // Spins on two axes, pulses its emissive HARD, and breathes its scale so the
+    // silhouette itself grows/shrinks. Its own fast cycle (not the gentle beat).
     if (gemRef.current && gemMatRef.current && isGem && settings.gemEnabled) {
-      gemRef.current.rotation.y = t * 1.6;
-      gemRef.current.rotation.x = t * 0.9;
+      gemRef.current.rotation.y = t * 2.2;
+      gemRef.current.rotation.x = t * 1.3;
+      const throb = 0.5 + 0.5 * Math.sin(t * 5);
+      // Scale swell so the marker visibly grows and shrinks (silhouette change).
+      const sc = 1 + 0.28 * throb;
+      gemRef.current.scale.setScalar(sc);
       gemMatRef.current.emissiveIntensity =
-        settings.gemIntensity * (1.1 + 0.5 * Math.sin(t * 4));
+        settings.gemIntensity * (1.4 + 0.9 * throb);
     }
   });
 
@@ -320,12 +362,14 @@ export function Cube({
         </group>
       )}
 
-      {/* Gem marker — special cells only. A small spinning, pulsing octahedron
-          floating slightly in front of the cell so a special reads instantly
-          (distinct silhouette from the square blocks). Animated in useFrame. */}
+      {/* Gem marker — special cells only. FIX 3: a BIG spinning, throbbing
+          octahedron floating in FRONT of the cell so a special is unmistakable
+          (distinct silhouette + size + hard pulse vs the square blocks). The
+          wireframe shell around it adds a second, brighter read. Animated in
+          useFrame. */}
       {isGem && settings.gemEnabled && (
-        <mesh ref={gemRef} position={[0, 0, size * 0.25]}>
-          <octahedronGeometry args={[size * 0.26, 0]} />
+        <mesh ref={gemRef} position={[0, 0, size * 0.5]}>
+          <octahedronGeometry args={[size * 0.46, 0]} />
           <meshStandardMaterial
             ref={gemMatRef}
             color="#fff0b0"
@@ -335,6 +379,9 @@ export function Cube({
             metalness={0.3}
             roughness={0.2}
           />
+          {/* Bright wireframe halo around the gem — exceeds bloom threshold so it
+              flares, making the marker pop against any background. */}
+          <Edges color="#fff7d6" />
         </mesh>
       )}
     </group>

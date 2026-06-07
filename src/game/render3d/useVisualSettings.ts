@@ -104,7 +104,17 @@ export function useVisualSettings(): VisualSettings {
     }),
     Gems: folder({
       gemEnabled: { value: initial.gemEnabled },
-      gemIntensity: { value: initial.gemIntensity, min: 0, max: 4, step: 0.05 },
+      gemIntensity: { value: initial.gemIntensity, min: 0, max: 6, step: 0.05 },
+    }),
+    "Cell hierarchy": folder({
+      // FIX 2: dial settled cells down (inert) and pulse the to-clear ones.
+      settledEmissive: {
+        value: initial.settledEmissive,
+        min: 0,
+        max: 1.5,
+        step: 0.05,
+      },
+      markedPulse: { value: initial.markedPulse, min: 0, max: 5, step: 0.05 },
     }),
     Preview: folder({
       previewEnabled: { value: initial.previewEnabled },
@@ -147,6 +157,8 @@ export function useVisualSettings(): VisualSettings {
     gemEnabled: values.gemEnabled ?? DEFAULT_SETTINGS.gemEnabled,
     gemIntensity: values.gemIntensity ?? DEFAULT_SETTINGS.gemIntensity,
     previewEnabled: values.previewEnabled ?? DEFAULT_SETTINGS.previewEnabled,
+    settledEmissive: values.settledEmissive ?? DEFAULT_SETTINGS.settledEmissive,
+    markedPulse: values.markedPulse ?? DEFAULT_SETTINGS.markedPulse,
     chainEnabled: values.chainEnabled ?? DEFAULT_SETTINGS.chainEnabled,
     chainSpeed: values.chainSpeed ?? DEFAULT_SETTINGS.chainSpeed,
     chainIntensity: values.chainIntensity ?? DEFAULT_SETTINGS.chainIntensity,
@@ -183,6 +195,8 @@ export function useVisualSettings(): VisualSettings {
     settings.gemEnabled,
     settings.gemIntensity,
     settings.previewEnabled,
+    settings.settledEmissive,
+    settings.markedPulse,
     settings.chainEnabled,
     settings.chainSpeed,
     settings.chainIntensity,
