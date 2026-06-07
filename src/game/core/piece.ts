@@ -1,4 +1,4 @@
-import { SPAWN_COL, SPAWN_ROW } from "./constants";
+import { NEW_BLOCK_HOLD_MS, SPAWN_COL, SPAWN_ROW } from "./constants";
 import { cloneGrid, inBounds, pieceCells, settle } from "./grid";
 import { nextBit } from "./rng";
 import type { ActivePiece, GameState, Grid, Piece, PiecePos } from "./types";
@@ -37,9 +37,20 @@ export function canPlace(grid: Grid, cells: Piece, pos: PiecePos): boolean {
 export function spawnPiece(state: GameState, cells: Piece): GameState {
   const pos: PiecePos = { row: SPAWN_ROW, col: SPAWN_COL };
   if (!canPlace(state.grid, cells, pos)) {
-    return { ...state, active: null, gameOver: true };
+    return {
+      ...state,
+      active: null,
+      gameOver: true,
+      hold: { active: false, remainingMs: 0 },
+    };
   }
-  return { ...state, active: { cells, pos } };
+  // Arm the new-block hold: the piece pauses at the top for one beat before
+  // auto-gravity begins (a fresh drop press ends it early).
+  return {
+    ...state,
+    active: { cells, pos },
+    hold: { active: true, remainingMs: NEW_BLOCK_HOLD_MS },
+  };
 }
 
 /** Spawn the next RNG-drawn piece (used by the production loop). */
@@ -93,7 +104,13 @@ export function lockPiece(state: GameState): GameState {
   for (const { row, col, color } of pieceCells(state.active)) {
     if (inBounds(row, col) && color !== null) grid[row]![col] = color;
   }
-  return { ...state, grid: settle(grid), active: null };
+  // Clear the hold; the next spawn re-arms it for the next piece.
+  return {
+    ...state,
+    grid: settle(grid),
+    active: null,
+    hold: { active: false, remainingMs: 0 },
+  };
 }
 
 /**

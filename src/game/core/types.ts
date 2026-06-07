@@ -58,6 +58,12 @@ export interface SweepPass {
   processedCols: number;
 }
 
+/** New-block hold: a freshly spawned piece pauses at the top for `remainingMs`. */
+export interface HoldState {
+  active: boolean;
+  remainingMs: number;
+}
+
 /**
  * Full deterministic game state. Settled stack (`grid`) and the falling piece
  * (`active`) are kept distinct internally; `viewGrid()` composites them.
@@ -73,4 +79,6 @@ export interface GameState {
   rngState: number;
   /** Active sweep pass, or null when none is in progress. Internal. */
   sweepPass?: SweepPass | null;
+  /** New-block hold: paused-at-top state for the current piece. */
+  hold: HoldState;
 }

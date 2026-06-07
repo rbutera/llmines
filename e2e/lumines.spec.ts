@@ -8,21 +8,11 @@ interface State {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  hold: { active: boolean; remainingMs: number };
 }
 
-declare global {
-  interface Window {
-    __lumines?: {
-      seed(n: number): void;
-      state(): State;
-      marked(): { row: number; col: number }[];
-      spawn(piece: Piece): void;
-      tick(): void;
-      sweepNow(): void;
-      sweepProgress(dtMs: number): void;
-    };
-  }
-}
+// `window.__lumines` is declared globally by src/game/test-api/install.ts and is
+// in scope here via the project tsconfig; no local re-declaration needed.
 
 const MONO_A: Piece = [
   [0, 0],
@@ -215,4 +205,53 @@ test("audio source exists, loops, and points to /backing-track.mp3", async ({
   await expect(audio).toHaveJSProperty("loop", true);
   const src = await audio.getAttribute("src");
   expect(src).toContain("/backing-track.mp3");
+});
+
+test("landed blocks settle flush on the bottom rows with no out-of-bounds cells", async ({
+  page,
+}) => {
+  const ROWS = 10;
+  const COLS = 16;
+
+  await page.getByTestId("start-button").click();
+  await api(page, "seed", 1);
+
+  // First piece: tick it down to the floor (loop ~20 ticks, as other tests do).
+  await api(page, "spawn", MONO_A);
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+
+  let s = await getState(page);
+  // Grid shape is exactly ROWS x COLS — nothing rendered/stored out of bounds.
+  expect(s.grid.length).toBe(ROWS);
+  for (const row of s.grid) expect(row.length).toBe(COLS);
+
+  // The mono piece settled flush on the bottom two rows at cols 7-8.
+  expect(s.grid[9]![7]).toBe(0);
+  expect(s.grid[9]![8]).toBe(0);
+  expect(s.grid[8]![7]).toBe(0);
+  expect(s.grid[8]![8]).toBe(0);
+
+  // No occupied cell exists outside the ROWS x COLS bounds (no below-floor clip).
+  const inBounds = (st: State): boolean =>
+    st.grid.length === ROWS &&
+    st.grid.every(
+      (row, r) =>
+        row.length === COLS &&
+        row.every((cell, c) => cell === null || (r < ROWS && c < COLS)),
+    );
+  expect(inBounds(s)).toBe(true);
+
+  // Second piece lands atop the first (stack-top resting case, Req 2.2).
+  await api(page, "spawn", MONO_A);
+  for (let i = 0; i < 20; i++) await api(page, "tick");
+
+  s = await getState(page);
+  // Stack is flush: rows 6-9 in cols 7-8 are occupied, nothing below the floor.
+  expect(s.grid[7]![7]).toBe(0);
+  expect(s.grid[7]![8]).toBe(0);
+  expect(s.grid[6]![7]).toBe(0);
+  expect(s.grid[6]![8]).toBe(0);
+  expect(s.grid.length).toBe(ROWS);
+  for (const row of s.grid) expect(row.length).toBe(COLS);
+  expect(inBounds(s)).toBe(true);
 });

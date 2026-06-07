@@ -26,5 +26,12 @@ export const GRAVITY_INTERVAL_MS = 700;
 /** Soft-drop gravity interval (ms) while soft-drop is engaged. */
 export const SOFT_DROP_INTERVAL_MS = 60;
 
+/**
+ * New-block hold window (ms): a freshly spawned piece pauses at the top for one
+ * beat before auto-gravity begins, giving a deliberate "ready to place" moment.
+ * The player can move/rotate during the hold; a fresh drop press ends it early.
+ */
+export const NEW_BLOCK_HOLD_MS = SECONDS_PER_BEAT * 1000; // 500ms
+
 /** Backing track URL (served from public/). */
 export const BACKING_TRACK_URL = "/backing-track.mp3";

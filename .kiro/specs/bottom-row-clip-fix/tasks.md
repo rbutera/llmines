@@ -1,18 +1,21 @@
 # Implementation Plan
 
+## Overview
+
 This plan follows the exploratory bugfix workflow: explore the bug with a failing
 property test FIRST, capture the behaviour to preserve, then apply the minimal renderer
 fix and validate it. The fix is isolated to `PixiRenderer.drawPiece` in
 `src/game/render/renderer.ts` (no core, controller, or `RenderState` changes), per the
 design's Fix Implementation section.
 
-> Testing note: tests target the offset decision in `drawPiece`. Extract the offset logic
-> into a small pure helper `computeActivePieceYOffset(rs: RenderState): number` (exported
-> from `src/game/render/renderer.ts`) so it is unit- and property-testable without Pixi.
-> `drawPiece` then consumes this helper. Property tests use `fast-check` (already present
-> in `node_modules`). Vitest files match `src/**/*.test.ts` (see `vitest.config.ts`).
+The fix: import `canPlace` from `"../core"`, compute
+`canDescend = canPlace(rs.grid, cells, { row: pos.row + 1, col: pos.col })`, and set
+`yOff = canDescend ? rs.fallProgress * CELL : 0`. When the piece is resting it renders on
+its true grid row with no below-bounds clip or pre-lock delay.
 
-- [ ] 1. Write bug condition exploration test (BEFORE implementing the fix)
+## Tasks
+
+- [x] 1. Write bug condition exploration test (BEFORE implementing the fix)
   - **Property 1: Bug Condition** - Resting Piece Renders At True Row
   - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
   - **DO NOT attempt to fix the test or the code when it fails** - the failure is the goal here
@@ -39,7 +42,7 @@ design's Fix Implementation section.
   - Mark task complete when the test is written, run, and the failure is documented
   - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3_
 
-- [ ] 2. Write preservation property tests (BEFORE implementing the fix)
+- [x] 2. Write preservation property tests (BEFORE implementing the fix)
   - **Property 2: Preservation** - Non-Resting And Non-Active Rendering Unchanged
   - **IMPORTANT**: Follow observation-first methodology - capture the ORIGINAL behaviour on
     unfixed code, then assert the fixed code matches it
@@ -62,9 +65,9 @@ design's Fix Implementation section.
   - Mark task complete when tests are written, run, and passing on unfixed code
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 3. Fix for bottom-row clip (resting-piece interpolation offset)
+- [x] 3. Fix for bottom-row clip (resting-piece interpolation offset)
 
-  - [ ] 3.1 Implement the renderer fix
+  - [x] 3.1 Implement the renderer fix
     - In `src/game/render/renderer.ts`, add `canPlace` to the existing import from `"../core"`
       (alongside `COLS`, `ROWS`, `Cell`, `Grid`)
     - Extract the offset decision into an exported pure helper
@@ -81,7 +84,7 @@ design's Fix Implementation section.
     - _Preservation: Smooth descent (3.1), collapse (3.2), hard-drop (3.3), test-mode (3.4), sweep/mark/flash/score (3.5) unchanged_
     - _Requirements: 2.1, 2.2, 2.3_
 
-  - [ ] 3.2 Verify bug condition exploration test now passes
+  - [x] 3.2 Verify bug condition exploration test now passes
     - **Property 1: Expected Behavior** - Resting Piece Renders At True Row
     - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
     - The test from task 1 encodes the expected behavior; passing confirms the bug is fixed
@@ -89,7 +92,7 @@ design's Fix Implementation section.
     - **EXPECTED OUTCOME**: Test PASSES (resting offset is `0`; all cells within `[0, BOARD_H]`)
     - _Requirements: 2.1, 2.2, 2.3_
 
-  - [ ] 3.3 Verify preservation tests still pass
+  - [x] 3.3 Verify preservation tests still pass
     - **Property 2: Preservation** - Non-Resting And Non-Active Rendering Unchanged
     - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
     - Run: `pnpm test:unit -- src/game/render/renderer.test.ts`
@@ -97,7 +100,7 @@ design's Fix Implementation section.
     - Confirm no regressions in mid-fall, test-mode, and no-active-piece paths
     - _Requirements: 3.1, 3.4_
 
-- [ ] 4. Add unit tests for the offset helper boundaries
+- [x] 4. Add unit tests for the offset helper boundaries
   - In `src/game/render/renderer.test.ts`, add focused example-based unit tests:
     - `computeActivePieceYOffset` returns `0` when the active piece rests on the bottom row (row 9 occupied by its lower cells)
     - returns `0` when the active piece rests atop a settled stack
@@ -107,12 +110,12 @@ design's Fix Implementation section.
   - Run: `pnpm test:unit -- src/game/render/renderer.test.ts`
   - _Requirements: 2.1, 2.2, 3.1, 3.4_
 
-- [ ] 5. Run the full unit/property suite
+- [x] 5. Run the full unit/property suite
   - Run: `pnpm test:unit`
   - Confirm the new renderer tests plus the existing core suite (`src/game/core/core.test.ts`) all pass
   - _Requirements: 2.1, 2.2, 2.3, 3.1, 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 6. Add integration/e2e test for landed-block bounds
+- [x] 6. Add integration/e2e test for landed-block bounds
   - Extend `e2e/lumines.spec.ts` with a new test that:
     - starts the game, seeds deterministically, and `spawn`s a mono piece
     - `tick`s it to the floor (loop ~20 ticks, as existing tests do)
@@ -126,7 +129,7 @@ design's Fix Implementation section.
   - Run: `pnpm test:e2e` (Playwright launches its own test-mode server)
   - _Requirements: 2.3, 3.3_
 
-- [ ] 7. Checkpoint - run the production build
+- [x] 7. Checkpoint - run the production build
   - Run: `SKIP_ENV_VALIDATION=1 NEXT_PUBLIC_TEST_MODE=1 pnpm build`
   - Confirm the build succeeds (typecheck + lint + Next build) with the renderer change in place
   - Ensure all tests pass; ask the user if questions arise
@@ -134,32 +137,61 @@ design's Fix Implementation section.
 
 ## Task Dependency Graph
 
-```mermaid
-graph TD
-    T1["Task 1: Bug Condition exploration test<br/>(Property 1 — FAILS on unfixed code)"]
-    T2["Task 2: Preservation property tests<br/>(Property 2 — PASS on unfixed code)"]
-    T31["Task 3.1: Implement renderer fix<br/>(computeActivePieceYOffset + canPlace)"]
-    T32["Task 3.2: Verify Property 1 now PASSES"]
-    T33["Task 3.3: Verify Property 2 still PASSES"]
-    T4["Task 4: Unit tests for offset boundaries"]
-    T5["Task 5: Full unit/property suite"]
-    T6["Task 6: Integration/e2e — landed-block bounds"]
-    T7["Task 7: Checkpoint — production build"]
+Tasks 1 and 2 are exploration/preservation tests written BEFORE the fix (Task 1 must FAIL,
+Task 2 must PASS on unfixed code). Task 3.1 is the single minimal renderer change; 3.2/3.3
+re-run the same tests to confirm the fix and absence of regressions. Tasks 4-7 broaden
+coverage and end with the production-build checkpoint.
 
-    T1 --> T31
-    T2 --> T31
-    T31 --> T32
-    T31 --> T33
-    T32 --> T4
-    T33 --> T4
-    T4 --> T5
-    T5 --> T6
-    T6 --> T7
+```json
+{
+  "waves": [
+    {
+      "wave": 1,
+      "tasks": ["1", "2"],
+      "description": "Write exploration test (fails on unfixed code) and preservation tests (pass on unfixed code) before any fix."
+    },
+    {
+      "wave": 2,
+      "tasks": ["3.1"],
+      "description": "Apply the minimal renderer fix: canPlace-based resting check zeroes the interpolation offset."
+    },
+    {
+      "wave": 3,
+      "tasks": ["3.2", "3.3"],
+      "description": "Re-run the same Property 1 and Property 2 tests to confirm the fix and no regressions."
+    },
+    {
+      "wave": 4,
+      "tasks": ["4"],
+      "description": "Add example-based unit tests for the offset helper boundaries."
+    },
+    {
+      "wave": 5,
+      "tasks": ["5"],
+      "description": "Run the full unit/property suite."
+    },
+    {
+      "wave": 6,
+      "tasks": ["6"],
+      "description": "Add the integration/e2e test asserting landed-block bounds via window.__lumines.state().grid."
+    },
+    {
+      "wave": 7,
+      "tasks": ["7"],
+      "description": "Production-build checkpoint."
+    }
+  ]
+}
 ```
 
-Legend:
-- Tasks 1 and 2 are exploration/preservation tests written BEFORE the fix (Task 1 must
-  fail, Task 2 must pass on unfixed code).
-- Task 3.1 is the single minimal renderer change; 3.2/3.3 re-run the same tests to confirm
-  the fix and absence of regressions.
-- Tasks 4-7 broaden coverage and end with the full build checkpoint.
+## Notes
+
+- Property tests use `fast-check` (already present in `node_modules`); place tests in
+  `src/game/render/renderer.test.ts` to match the `src/**/*.test.ts` include in
+  `vitest.config.ts`.
+- The offset logic is extracted into the exported pure helper
+  `computeActivePieceYOffset(rs: RenderState): number` so it is unit- and property-testable
+  without instantiating Pixi; `drawPiece` consumes the helper.
+- The fix is intentionally minimal and isolated to the renderer. Do NOT modify
+  `src/game/core/*`, `src/game/engine/controller.ts`, or the `RenderState` shape.
+- Constants for assertions: `CELL = 40`, `ROWS = 10`, `COLS = 16`, `BOARD_H = ROWS * CELL = 400`.

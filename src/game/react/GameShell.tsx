@@ -47,10 +47,29 @@ export function GameShell() {
       const action = keyToAction(e);
       if (!action) return;
       e.preventDefault();
+      // Drop keys must be DELIBERATE: only a fresh keydown (not OS auto-repeat)
+      // counts as a press. This kills the soft-drop-cascade — a key held across
+      // a lock produces only repeat events, which are ignored, so the newly
+      // spawned (held) block does not auto-fall until the player re-presses.
+      if (action === "softDrop") {
+        if (!e.repeat) controller.pressSoftDrop();
+        return;
+      }
+      if (action === "hardDrop") {
+        if (!e.repeat) controller.pressHardDrop();
+        return;
+      }
       controller.input(action);
     };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (keyToAction(e) === "softDrop") controller.releaseSoftDrop();
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, [phase, controller]);
 
   const handleStart = useCallback(() => {

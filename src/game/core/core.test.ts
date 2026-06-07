@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { COLS, ROWS } from "./constants";
 import { computeMarked } from "./detect";
 import { createGame, emptyGrid, settle, viewGrid } from "./grid";
+import { NEW_BLOCK_HOLD_MS } from "./constants";
+import { publicState } from "./index";
 import {
   gravityStep,
   hardDrop,
@@ -309,5 +311,49 @@ describe("game over (7.x)", () => {
     const s = spawnPiece(createGame(), MONO_B);
     expect(s.gameOver).toBe(false);
     expect(s.active).not.toBe(null);
+  });
+});
+
+describe("new-block hold (F2)", () => {
+  it("createGame starts with no active hold", () => {
+    const s = createGame();
+    expect(s.hold).toEqual({ active: false, remainingMs: 0 });
+  });
+
+  it("spawnPiece arms the hold with the full window", () => {
+    const s = spawnPiece(createGame(), MONO_A);
+    expect(s.hold.active).toBe(true);
+    expect(s.hold.remainingMs).toBe(NEW_BLOCK_HOLD_MS);
+  });
+
+  it("failed spawn (game over) leaves the hold inactive", () => {
+    const base = createGame();
+    base.grid[0]![7] = 1; // block a spawn cell
+    const s = spawnPiece(base, MONO_A);
+    expect(s.gameOver).toBe(true);
+    expect(s.hold).toEqual({ active: false, remainingMs: 0 });
+  });
+
+  it("locking on the floor clears the hold", () => {
+    let s = spawnPiece(createGame(), MONO_A);
+    expect(s.hold.active).toBe(true);
+    for (let i = 0; i < ROWS + 2; i++) {
+      const r = gravityStep(s);
+      s = r.state;
+      if (r.locked) break;
+    }
+    expect(s.active).toBe(null);
+    expect(s.hold).toEqual({ active: false, remainingMs: 0 });
+  });
+
+  it("hard drop clears the hold", () => {
+    const s = hardDrop(spawnPiece(createGame(), MONO_A));
+    expect(s.hold).toEqual({ active: false, remainingMs: 0 });
+  });
+
+  it("publicState exposes the hold", () => {
+    const s = spawnPiece(createGame(), MONO_A);
+    const pub = publicState(s);
+    expect(pub.hold).toEqual({ active: true, remainingMs: NEW_BLOCK_HOLD_MS });
   });
 });

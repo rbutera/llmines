@@ -1,10 +1,32 @@
 import { Application, Container, Graphics } from "pixi.js";
-import { COLS, ROWS, type Cell, type Grid } from "../core";
+import { canPlace, COLS, ROWS, type Cell, type Grid } from "../core";
 import type { GameController, RenderState } from "../engine/controller";
 
 const CELL = 40;
 const BOARD_W = COLS * CELL; // 640
 const BOARD_H = ROWS * CELL; // 400
+
+/**
+ * Vertical interpolation offset (in px) for the active piece this frame.
+ *
+ * The active piece slides smoothly between discrete gravity rows via
+ * `fallProgress`. When the piece is resting — it cannot descend one more row
+ * against the settled grid — the offset is zeroed so it renders on its true
+ * grid row, entirely within the canvas, with no below-bounds clip or pre-lock
+ * delay. Returns `0` when there is no active piece (the caller early-returns;
+ * kept consistent here so the helper is pure and testable).
+ */
+export function computeActivePieceYOffset(rs: RenderState): number {
+  if (!rs.active) return 0;
+  const { cells, pos } = rs.active;
+  // `rs.grid` is the settled stack only (the active piece is drawn separately),
+  // which is exactly the grid `canPlace` expects for collision testing.
+  const canDescend = canPlace(rs.grid, cells, {
+    row: pos.row + 1,
+    col: pos.col,
+  });
+  return canDescend ? rs.fallProgress * CELL : 0;
+}
 
 const BG = 0x0b0e1a;
 const GRID_LINE = 0x1b2138;
@@ -261,7 +283,12 @@ export class PixiRenderer {
     g.clear();
     if (!rs.active) return;
     const { cells, pos } = rs.active;
-    const yOff = rs.fallProgress * CELL;
+    const yOff = computeActivePieceYOffset(rs);
+    // While the new block is held at the top, pulse the glow so it reads as a
+    // deliberate "ready to place" beat (intentional, not laggy).
+    const glow = rs.holdActive
+      ? 0.55 + 0.35 * (0.5 + 0.5 * Math.sin(this.clock / 110))
+      : 0.4;
     const map: [number, number, Cell][] = [
       [pos.row, pos.col, cells[0][0]],
       [pos.row, pos.col + 1, cells[0][1]],
@@ -269,7 +296,7 @@ export class PixiRenderer {
       [pos.row + 1, pos.col + 1, cells[1][1]],
     ];
     for (const [row, col, color] of map) {
-      this.cellRect(g, col, row, yOff, color, { glow: 0.4 });
+      this.cellRect(g, col, row, yOff, color, { glow });
     }
   }
 

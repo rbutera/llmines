@@ -1,5 +1,5 @@
 import { viewGrid } from "./grid";
-import type { GameState, Grid } from "./types";
+import type { GameState, Grid, HoldState } from "./types";
 
 export * from "./types";
 export * from "./constants";
@@ -15,6 +15,8 @@ export interface PublicState {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  /** New-block hold for the spawned-but-held piece. */
+  hold: HoldState;
 }
 
 /** Project internal state to the public `state()` shape (composites the piece). */
@@ -24,5 +26,6 @@ export function publicState(state: GameState): PublicState {
     score: state.score,
     gameOver: state.gameOver,
     sweepX: state.sweepX,
+    hold: { active: state.hold.active, remainingMs: state.hold.remainingMs },
   };
 }

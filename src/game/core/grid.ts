@@ -23,6 +23,7 @@ export function createGame(seed = 1): GameState {
     gameOver: false,
     sweepX: 0,
     rngState: seedState(seed),
+    hold: { active: false, remainingMs: 0 },
   };
 }
 

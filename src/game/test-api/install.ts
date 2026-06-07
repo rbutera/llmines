@@ -10,6 +10,10 @@ export interface LuminesTestApi {
   tick(): void;
   sweepNow(): void;
   sweepProgress(dtMs: number): void;
+  /** Simulate a FRESH deliberate soft-drop press (ends the hold, fast-falls). */
+  pressSoftDrop(): void;
+  /** Simulate a FRESH deliberate hard-drop press (ends the hold, slams down). */
+  pressHardDrop(): void;
 }
 
 declare global {
@@ -33,6 +37,8 @@ export function installTestApi(controller: GameController): () => void {
     tick: () => controller.testTick(),
     sweepNow: () => controller.testSweepNow(),
     sweepProgress: (dtMs) => controller.testSweepProgress(dtMs),
+    pressSoftDrop: () => controller.pressSoftDrop(),
+    pressHardDrop: () => controller.pressHardDrop(),
   };
   window.__lumines = api;
   return () => {
