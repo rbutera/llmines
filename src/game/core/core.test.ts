@@ -214,6 +214,23 @@ describe("piece mechanics (4.x)", () => {
     expect(s.active?.special?.cellIndex).toBe(2);
   });
 
+  it("move and gravity preserve the chain special unchanged (gem follows the piece)", () => {
+    // Regression: movePiece + gravityStep used to drop active.special, so the
+    // gem vanished on translate and on the first fall step. Translation/descent
+    // keep the SAME cellIndex (only rotation permutes).
+    const mk = () => {
+      const s = spawnPiece(createGame(), [
+        [0, 1],
+        [1, 0],
+      ]);
+      s.active!.special = { cellIndex: 1 };
+      return s;
+    };
+    expect(moveLeft(mk()).active?.special?.cellIndex).toBe(1);
+    expect(moveRight(mk()).active?.special?.cellIndex).toBe(1);
+    expect(gravityStep(mk()).state.active?.special?.cellIndex).toBe(1);
+  });
+
   it("gravity steps down then locks on the floor", () => {
     let s = withPiece(MONO_A);
     let locked = false;

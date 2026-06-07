@@ -192,7 +192,12 @@ function movePiece(state: GameState, dCol: number): GameState {
   if (!state.active || state.gameOver) return state;
   const pos = { row: state.active.pos.row, col: state.active.pos.col + dCol };
   if (!canPlace(state.grid, state.active.cells, pos)) return state;
-  return { ...state, active: { cells: state.active.cells, pos } };
+  // Carry the chain special — translation keeps the same cellIndex (only
+  // rotation permutes the cells). Dropping it here made the gem vanish on move.
+  return {
+    ...state,
+    active: { cells: state.active.cells, pos, special: state.active.special },
+  };
 }
 
 export function moveLeft(state: GameState): GameState {
@@ -315,8 +320,13 @@ export function gravityStep(state: GameState): {
   if (!state.active || state.gameOver) return { state, locked: false };
   if (canDescend(state)) {
     const pos = { row: state.active.pos.row + 1, col: state.active.pos.col };
+    // Carry the chain special down with the piece (descending keeps the same
+    // cellIndex). Dropping it made the active gem vanish on the first fall step.
     return {
-      state: { ...state, active: { cells: state.active.cells, pos } },
+      state: {
+        ...state,
+        active: { cells: state.active.cells, pos, special: state.active.special },
+      },
       locked: false,
     };
   }
