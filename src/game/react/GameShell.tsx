@@ -52,6 +52,27 @@ export function GameShell() {
     const c = new GameController({ testMode: TEST_MODE, seed: 1 });
     setController(c);
     const unsubscribe = c.subscribe((rs: RenderState) => {
+      // Production-start acceptance probe (read-only). Surfaces the few fields the
+      // non-TEST_MODE e2e guard asserts on — sweep position, whether a piece is in
+      // play, and game-over — so a "tests green but Start is broken" regression
+      // (frozen sweep / no spawn) fails CI. It mirrors the latest RenderState and
+      // mutates nothing. Distinct from window.__lumines (the deterministic
+      // TEST_MODE control seam), which is intentionally absent in production.
+      if (typeof window !== "undefined") {
+        (
+          window as unknown as {
+            __luminesProbe?: {
+              sweepX: number;
+              hasActive: boolean;
+              gameOver: boolean;
+            };
+          }
+        ).__luminesProbe = {
+          sweepX: rs.sweepX,
+          hasActive: rs.active != null,
+          gameOver: rs.gameOver,
+        };
+      }
       setScore(rs.score);
       // V2 HUD: preview queue, skin, BPM (drives NextPreview + skin panel).
       setHud({ queue: rs.queue, skinIndex: rs.skinIndex, bpm: rs.bpm });
@@ -131,12 +152,13 @@ export function GameShell() {
           inspectable. Live autoplay is not required. */}
       <audio ref={audioRef} src={BACKING_TRACK_URL} loop preload="auto" />
 
-      {/* While playing, the board takes (almost) the whole viewport: a much wider
-          container + a near-full-height canvas region (FIX 4). Start / game-over
-          stay in the original narrower reading column. */}
+      {/* While playing, the board is LARGE but CONTAINED: a generous (not
+          full-bleed) max width so the well + the side dock sit centred in the
+          viewport and never bleed under browser chrome (e.g. a vertical tab
+          sidebar). Start / game-over keep the narrower reading column. */}
       <div
         className={`relative z-10 w-full ${
-          phase === "playing" ? "max-w-[1800px]" : "max-w-5xl"
+          phase === "playing" ? "max-w-6xl" : "max-w-5xl"
         }`}
       >
         <Header />
@@ -220,12 +242,12 @@ function PlayingScreen({
       className="grid items-stretch gap-6 md:grid-cols-[1fr_280px]"
     >
       {/* Relative wrapper so the cosmetic ScoreFx overlay sits over the field.
-          FIX 4: the board fills the available height (near-full viewport minus
-          the header/padding) instead of being capped by the old narrow column.
-          The canvas keeps its 16:10 aspect (width follows height) and is centred
-          in the column, so it is as big as the viewport allows without cropping
-          the well or the preview dock. */}
-      <div className="relative flex h-[calc(100vh-9rem)] min-h-[420px] items-center justify-center">
+          The board is LARGE but CONTAINED: its height is capped so that even with
+          the header + page padding the canvas (16:10, width follows height) and
+          the side dock stay fully inside the viewport. `min(...)` keeps it from
+          overshooting on short windows; the aspect box means it never bleeds off
+          the right under browser chrome. */}
+      <div className="relative flex h-[min(78vh,640px)] min-h-[420px] items-center justify-center">
         <GameCanvas controller={controller} />
         <ScoreFx score={score} />
       </div>

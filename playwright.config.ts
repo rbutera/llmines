@@ -5,11 +5,17 @@ import { defineConfig, devices } from "@playwright/test";
  * deterministic `window.__lumines` interface is exposed and the audio-synced
  * auto-loop is paused. Tests drive the game via that interface (no wall-clock,
  * audio decode, or pixel scraping).
+ *
+ * The PRODUCTION-START guard (e2e/production-start.spec.ts) is intentionally
+ * EXCLUDED here — it needs the real, non-test bundle and lives in its own config
+ * (playwright.production-start.config.ts) so the two builds never share `.next`.
+ * `pnpm test:e2e` runs both.
  */
 const PORT = 3100;
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: /production-start\.spec\.ts/,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

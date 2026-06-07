@@ -17,7 +17,8 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test && playwright test --config=playwright.production-start.config.ts",
+    "test:e2e:production-start": "playwright test --config=playwright.production-start.config.ts"
   },
   "dependencies": {
     "@react-three/drei": "10.7.7",

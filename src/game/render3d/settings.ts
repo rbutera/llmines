@@ -188,7 +188,15 @@ export function loadSettings(): VisualSettings {
     const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw) as Partial<VisualSettings>;
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    const merged = { ...DEFAULT_SETTINGS, ...parsed };
+    // `zoom` drives the orthographic camera's auto-fit normalisation; a stale or
+    // hand-edited `0`/negative/NaN here would zero the camera zoom and blank the
+    // scene (singular projection). Sanitise it back to the default if it isn't a
+    // sane positive number, so a corrupt blob can never freeze the playfield.
+    if (!Number.isFinite(merged.zoom) || merged.zoom <= 0) {
+      merged.zoom = DEFAULT_SETTINGS.zoom;
+    }
+    return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
   }

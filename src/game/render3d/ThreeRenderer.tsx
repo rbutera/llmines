@@ -33,20 +33,54 @@ function AutoFitCamera({
 }) {
   const size = useThree((s) => s.size);
   const camera = useThree((s) => s.camera);
-  // World extent to frame: the board, widened by the preview gutter (one-sided),
-  // plus a margin so the bloom/edges and the dock aren't clipped at the edge.
-  const worldW = BOARD_W + gutter + CELL * 1.2;
-  const worldH = BOARD_H + CELL * 1.2;
-  const fit = Math.min(size.width / worldW, size.height / worldH);
-  // baseZoom is the panel's reference (default 30) — normalise so userZoom=baseZoom
-  // means "auto-fit", and moving the slider scales around it.
-  const zoom = fit * (userZoom / baseZoom);
-  if ((camera as { isOrthographicCamera?: boolean }).isOrthographicCamera) {
-    const ortho = camera as unknown as { zoom: number; updateProjectionMatrix: () => void };
-    if (ortho.zoom !== zoom) {
-      ortho.zoom = zoom;
-      ortho.updateProjectionMatrix();
+  // ROOT-CAUSE GUARD: on the first frame(s) the canvas can report a 0x0 size
+  // (not yet laid out, or the flex container momentarily collapsed), and a stale
+  // localStorage `zoom: 0` can slip past the leva slider's min. Either path makes
+  // `fit`/`zoom` resolve to 0 (or NaN); writing `zoom = 0` to an orthographic
+  // camera + updateProjectionMatrix() yields a DEGENERATE projection, so the
+  // whole scene renders nothing and the board appears frozen with the sweep stuck
+  // at x=0 — with no thrown error. Bail until the inputs are finite + positive,
+  // and floor the result so the camera zoom can never be non-positive.
+  const validSize = size.width > 0 && size.height > 0;
+  const validInputs =
+    Number.isFinite(userZoom) &&
+    Number.isFinite(baseZoom) &&
+    userZoom > 0 &&
+    baseZoom > 0;
+  if (validSize && validInputs) {
+    // World extent to frame: the board, widened by the preview gutter (one-sided),
+    // plus a margin so the bloom/edges and the dock aren't clipped at the edge.
+    const worldW = BOARD_W + gutter + CELL * 1.2;
+    const worldH = BOARD_H + CELL * 1.2;
+    const fit = Math.min(size.width / worldW, size.height / worldH);
+    // baseZoom is the panel's reference (default 30) — normalise so
+    // userZoom=baseZoom means "auto-fit", and moving the slider scales around it.
+    // Floored to a tiny positive value so a degenerate input can never produce a
+    // singular projection.
+    const MIN_ZOOM = 0.001;
+    const zoom = Math.max(MIN_ZOOM, fit * (userZoom / baseZoom));
+    if (
+      Number.isFinite(zoom) &&
+      (camera as { isOrthographicCamera?: boolean }).isOrthographicCamera
+    ) {
+      const ortho = camera as unknown as {
+        zoom: number;
+        updateProjectionMatrix: () => void;
+      };
+      if (ortho.zoom !== zoom) {
+        ortho.zoom = zoom;
+        ortho.updateProjectionMatrix();
+      }
     }
+  }
+  // Surface the camera's ACTUAL applied zoom to the production-start probe. The
+  // AutoFitCamera zoom-0 regression is invisible to the controller (sweepX still
+  // advances) but blanks the scene via a singular projection; the e2e guard reads
+  // this to assert the camera zoom stayed positive. Read-only; cosmetic field.
+  if (typeof window !== "undefined") {
+    const ortho = camera as unknown as { zoom?: number };
+    const w = window as unknown as { __luminesProbe?: { cameraZoom?: number } };
+    if (w.__luminesProbe) w.__luminesProbe.cameraZoom = ortho.zoom ?? 0;
   }
   return null;
 }
