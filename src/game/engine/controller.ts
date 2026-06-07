@@ -5,6 +5,7 @@ import {
   COLS_PER_BEAT,
   computeMarked,
   createGame,
+  floodFill,
   GRAVITY_INTERVAL_MS,
   gravityStep,
   hardDrop,
@@ -94,6 +95,19 @@ export interface RenderState {
    * lines on the descending piece. 0 until the first soft drop.
    */
   softDropPulses: number;
+  /**
+   * Additive (render-only): coordinates (`row * COLS + col`) of SETTLED cells a
+   * gem is ABOUT TO FLOOD-CLEAR on the next sweep pass. Computed purely from the
+   * current grid: any settled chain-special cell that is part of a completed
+   * square (so it WILL activate when the bar reaches it) floods its same-colour
+   * 4-connected region; every cell in that region is reported here. The renderer
+   * gives these the same bright "marked / about to clear" pulse as ordinary
+   * to-clear cells, so the player SEES the chain extent building BEFORE the sweep
+   * harvests it (previously the flooded blocks just vanished with no warning).
+   * Pure projection — no core mutation; the deletion result is identical with or
+   * without it. Empty when no armed gem is on the board.
+   */
+  floodPreview: number[];
   /**
    * Additive (render-only): the most recent HARD drop, for the slam impact FX.
    * `id` is monotonic so the renderer fires the slam exactly once per drop;
@@ -630,6 +644,38 @@ export class GameController {
 
   // ---- render / read access ------------------------------------------------
 
+  /**
+   * Render-only: the cells a gem will FLOOD-CLEAR on the next pass, so the
+   * renderer can mark them as "about to clear" BEFORE the sweep harvests them.
+   * Pure function of the current grid + specials + the marked set: a settled
+   * chain-special cell that is part of a completed square (hence marked, hence it
+   * WILL activate when the bar reaches it) floods its same-colour 4-connected
+   * region; every cell of every such region is collected. Computes nothing that
+   * feeds gameplay — it mirrors exactly what {@link chainFlood} would delete, for
+   * a pre-clear visual warning only. No mutation.
+   */
+  private computeFloodPreview(): number[] {
+    const grid = this.state.grid;
+    const specials = this.state.specials;
+    if (specials.size === 0) return [];
+    // Cells already destined to clear this pass (completed squares). A gem only
+    // floods when it is itself part of a cleared square, so restrict to armed
+    // gems = specials that sit on a marked cell.
+    const markedSet = new Set(
+      computeMarked(grid).marked.map((m) => m.row * COLS + m.col),
+    );
+    const preview = new Set<number>();
+    for (const coord of specials) {
+      if (!markedSet.has(coord)) continue; // gem won't activate this pass
+      const row = Math.floor(coord / COLS);
+      const col = coord % COLS;
+      const colour = grid[row]?.[col] ?? null;
+      if (colour === null) continue;
+      for (const c of floodFill(grid, coord, colour)) preview.add(c);
+    }
+    return Array.from(preview);
+  }
+
   private renderState(): RenderState {
     const interval = GRAVITY_INTERVAL_MS;
     // The fall interpolation represents motion toward the NEXT gravity row. A
@@ -666,6 +712,8 @@ export class GameController {
       // step pulse counter and the most recent hard-drop slam event.
       softDropPulses: this.softDropPulses,
       lastHardDrop: this.lastHardDrop,
+      // Render-only: cells a gem is about to flood-clear (pre-clear marking).
+      floodPreview: this.computeFloodPreview(),
     };
   }
 

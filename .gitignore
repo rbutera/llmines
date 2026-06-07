@@ -52,3 +52,4 @@ yarn-error.log*
 /playwright/.cache
 .cvx/
 .env.local
+/.next-shot/

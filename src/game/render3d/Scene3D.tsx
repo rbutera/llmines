@@ -17,6 +17,7 @@ import { Bursts, type BurstHandle } from "./Bursts";
 import { ChainWavefront, type ChainWavefrontHandle } from "./ChainWavefront";
 import { PreviewDock } from "./PreviewDock";
 import { SpeedLines } from "./SpeedLines";
+import { SlamFlash, type SlamHandle } from "./SlamFlash";
 import { surgeStyleForSkin } from "./surgeStyles";
 import { BOARD_H, BOARD_W, CELL, cellX, cellY } from "./layout";
 
@@ -123,9 +124,10 @@ export function Scene3D({
   // queue of slams to flush on the next frame. Screen-shake amplitude + decay
   // ride a ref read in useFrame against the camera/group.
   const lastHardDropIdRef = useRef<number>(-1);
-  const pendingSlamsRef = useRef<{ cols: number[]; row: number; mag: number }[]>(
-    [],
-  );
+  const pendingSlamsRef = useRef<
+    { cols: number[]; row: number; mag: number; distance: number }[]
+  >([]);
+  const slamFlashRef = useRef<SlamHandle>(null);
   const shakeRef = useRef<number>(0);
   // Soft-drop trail: last pulse count we observed, and a 0..1 trail energy that
   // rises while soft-drop steps keep arriving and decays when they stop.
@@ -219,7 +221,12 @@ export function Scene3D({
         lastHardDropIdRef.current = slam.id;
         // normalise fall distance to 0..1 over the well height (ROWS).
         const mag = Math.max(0.15, Math.min(1, slam.distance / ROWS));
-        pendingSlamsRef.current.push({ cols: slam.cols, row: slam.row, mag });
+        pendingSlamsRef.current.push({
+          cols: slam.cols,
+          row: slam.row,
+          mag,
+          distance: slam.distance,
+        });
       }
 
       // --- Soft-drop pulse: bump the trail energy when a soft-drop step lands
@@ -233,7 +240,14 @@ export function Scene3D({
       // from RenderState.marked so to-clear cells get the bright pulse). ---
       const specialSet = new Set(rs.specials);
       // FIX 2: index marked (about-to-clear) settled cells by row*COLS+col.
-      const markedSet = new Set(rs.marked.map((m) => m.row * COLS + m.col));
+      // Item 6: a gem's about-to-flood set (rs.floodPreview) joins the marked set
+      // so the connected cells a gem will harvest get the same bright "to-clear"
+      // pulse BEFORE the sweep reaches them — the chain extent is visible up front
+      // instead of the flooded blocks silently vanishing.
+      const markedSet = new Set([
+        ...rs.marked.map((m) => m.row * COLS + m.col),
+        ...rs.floodPreview,
+      ]);
       const next: SettledCellData[] = [];
       for (let row = 0; row < ROWS; row++) {
         for (let col = 0; col < COLS; col++) {
@@ -337,6 +351,24 @@ export function Scene3D({
             (12 + slam.mag * 30) * settings.slamIntensity,
           );
           burstsRef.current.spawn(positions, count);
+        }
+        // Fire the SLAM FLASH: bright impact bar at the landing row + a descent
+        // streak down the path the piece fell, so the hard-drop reads as a real
+        // impact + speed (item 4 rework), not just a faint dust puff.
+        if (slamFlashRef.current) {
+          const r = Math.min(ROWS - 1, Math.max(0, slam.row));
+          const minC = Math.min(...slam.cols);
+          const maxC = Math.max(...slam.cols);
+          const cx = (cellX(minC) + cellX(maxC)) / 2;
+          const topRow = Math.max(0, r - slam.distance);
+          slamFlashRef.current.slam({
+            cx,
+            impactY: cellY(r),
+            topY: cellY(topRow),
+            width: (maxC - minC + 1) * CELL,
+            mag: slam.mag,
+            intensity: settings.slamIntensity,
+          });
         }
         // kick the screen-shake (clamped to the configured peak amplitude).
         shakeRef.current = Math.max(
@@ -513,6 +545,10 @@ export function Scene3D({
 
       {/* Particle bursts on clears (pooled; gated on real clear events). */}
       {settings.burstEnabled && <Bursts ref={burstsRef} />}
+
+      {/* Hard-drop SLAM flash: impact bar + descent streak (item 4 rework;
+          pooled; fired once per new lastHardDrop.id). */}
+      {settings.slamEnabled && <SlamFlash ref={slamFlashRef} />}
 
       {/* Chain-clear travelling wavefront (Phase 3; pooled; fires once per
           new lastChainClear.id, radiating outward by BFS distance). */}

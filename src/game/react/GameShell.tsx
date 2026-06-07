@@ -191,7 +191,13 @@ export function GameShell() {
   }, [controller]);
 
   return (
-    <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#070912] px-4 py-8 text-white">
+    <main
+      className={`relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#070912] text-white ${
+        // FIX 1: while playing, drop the reading-page padding so the board can
+        // dominate the viewport (~90%). Start / game-over keep the padded column.
+        phase === "playing" ? "p-0" : "px-4 py-8"
+      }`}
+    >
       <BackdropGlow />
       {/* Looping backing track — present in the DOM so its loop/src are
           inspectable. Live autoplay is not required. */}
@@ -360,13 +366,25 @@ function PlayingScreen({
   // chip and pause hint stay always-visible (tiny, non-blocking).
   const chromeVisible = paused;
   return (
-    <section aria-label="Game" className="relative flex justify-center">
-      {/* The board is the base layer at ~90% of the viewport width, aspect-locked
-          so the well + preview never clip and a wide box never produces a
-          degenerate canvas size (which would trip the AutoFitCamera guard). */}
-      <div className="relative flex w-[90vw] max-w-[1400px] items-center justify-center">
+    <section
+      aria-label="Game"
+      className="relative flex h-screen w-screen items-center justify-center"
+    >
+      {/* FIX 1: the board DOMINATES the viewport. The box is sized to the largest
+          16:10 rectangle that fits in ~94% of BOTH viewport axes
+          (min(94vw, 94vh*aspect) wide), so on any window it fills the screen
+          instead of floating small in a padded column. Aspect-locked so the well
+          + preview never clip and a wide box never produces a degenerate canvas
+          size (which would trip the AutoFitCamera guard). */}
+      <div
+        className="relative flex items-center justify-center"
+        style={{
+          width: `min(94vw, calc(94vh * (16 / 10)))`,
+          aspectRatio: BOARD_ASPECT,
+        }}
+      >
         <div
-          className="relative w-full"
+          className="relative h-full w-full"
           style={{ aspectRatio: BOARD_ASPECT }}
         >
           <GameCanvas controller={controller} />
@@ -387,8 +405,10 @@ function PlayingScreen({
             </div>
           </div>
 
-          {/* Skin / BPM chip (small, overlaid top-right). Carries the test ids. */}
-          <div className="pointer-events-none absolute top-3 right-3 z-30 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-right backdrop-blur">
+          {/* Skin / BPM chip — overlaid top-CENTER so it never sits under the
+              renderer's Settings button (which lives top-right of the canvas).
+              FIX 5: the old top-right placement covered + blocked that button. */}
+          <div className="pointer-events-none absolute top-3 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-center backdrop-blur">
             <span
               data-testid="skin-id"
               className="block text-xs font-semibold text-white/80"

@@ -69,15 +69,15 @@ export interface VisualSettings {
   /** Gem emissive boost / marker brightness. */
   gemIntensity: number;
   /**
-   * Gem marker colour for the LIGHT variant — used on BRIGHT blocks. A cooler /
-   * darker inlay so the marker reads against a bright cell WITHOUT washing out
-   * the block's own colour. Subtle-but-clear.
+   * Gem marker colour for the LIGHT variant — used on BRIGHT / white blocks.
+   * GOLD, so a gem sitting on a light block reads instantly as "gold gem on
+   * white". Owner-specified (2026-06-07).
    */
   gemLightColor: string;
   /**
-   * Gem marker colour for the DARK variant — used on DARK blocks. A warmer /
-   * lighter inlay so the marker reads against a dark cell while preserving the
-   * block's dark identity.
+   * Gem marker colour for the DARK variant — used on DARK blocks. BRIGHT PURPLE,
+   * so a gem sitting on a dark block reads instantly as "purple gem on dark" —
+   * the opposite of the gold light-block variant. Owner-specified (2026-06-07).
    */
   gemDarkColor: string;
   /** In-canvas 3D next-piece preview dock. Default ON. */
@@ -171,20 +171,22 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   // overpowered the board and obscured the block colour. Dial it down to a
   // subtle-but-clear inlay; the light/dark variants below adapt to the cell so
   // the underlying colour identity is preserved.
-  gemIntensity: 1.1,
-  // Light variant (bright blocks): a cool deep-teal inlay reads against the
-  // bright glass without washing it out.
-  gemLightColor: "#0a5b6e",
-  // Dark variant (dark blocks): a warm pale-gold inlay reads against the dark
-  // night-box while keeping the block dark.
-  gemDarkColor: "#ffd98a",
+  gemIntensity: 1.6,
+  // Light variant (bright / white blocks): GOLD. A gem on a light block reads as
+  // a gold gem (owner-specified 2026-06-07).
+  gemLightColor: "#ffcf33",
+  // Dark variant (dark blocks): BRIGHT PURPLE. A gem on a dark block reads as a
+  // bright purple gem — instantly distinct from the gold light-block variant.
+  gemDarkColor: "#c45cff",
   previewEnabled: true,
 
-  // FIX 2 — visual hierarchy. Settled cells dialled DOWN to read as inert; the
-  // bright pulse moves onto the to-clear (marked) cells as the "about to clear"
-  // signal so settled-vs-marked is the primary read.
-  settledEmissive: 0.45,
-  markedPulse: 2.4,
+  // Polish-fix — visual hierarchy, contrast pushed HARD (owner: "want way more
+  // contrast"). Three-tier read: settled = DIM + steady; active/falling =
+  // bright + steady (no pulse — owner flagged the active-piece pulse as
+  // seizure-inducing); to-clear/marked = bright + PULSING. Settled is dialled
+  // far down and the marked pulse far up so the to-clear read is unmistakable.
+  settledEmissive: 0.18,
+  markedPulse: 5.5,
 
   // Chain wavefront (item 7): make the gem-clear cascade OBVIOUS. Slow the ring
   // travel a touch (90ms/ring) so the cascade is clearly seen sweeping across the
@@ -201,12 +203,44 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   dropTrailEnabled: true,
   dropTrailIntensity: 2.0,
   slamEnabled: true,
-  slamIntensity: 2.2,
-  slamShake: 0.26,
+  // Polish-fix drop rework: hard-drop must read as SPEED + a real slam. The
+  // streak/blur + impact flash + bigger, snappier shake scale with these. Pushed
+  // up so the landing punches instead of sprinkling faint dust.
+  slamIntensity: 2.6,
+  slamShake: 0.5,
 
   // Audio — backing-track loudness. Half volume by default.
   musicVolume: 0.5,
 };
+
+/**
+ * Visual-settings schema version. Bumped when a polish round REDEFINES the
+ * meaning / target value of an existing key (not when adding a new key — new
+ * keys fall back to their default automatically via the merge). On load, a
+ * stored blob with a lower `schemaVersion` has the affected keys force-reset to
+ * the current defaults so a stale localStorage value (e.g. the pre-polish gem
+ * colours, or the seizure-inducing active-piece pulse settings) can't keep
+ * overriding the fix. Everything else the player tuned is preserved.
+ */
+export const SETTINGS_SCHEMA_VERSION = 2;
+
+/**
+ * Keys whose DEFAULT meaning changed in the 2026-06-07 polish-fix round. A
+ * stored blob older than {@link SETTINGS_SCHEMA_VERSION} has exactly these keys
+ * reset to the current default (the values that encode the fix: gold/purple gem
+ * variants, the harder settled-vs-marked contrast, the reworked drop FX), while
+ * leaving the player's other tuning (zoom, shear, volume, …) intact.
+ */
+const POLISH_FIX_RESET_KEYS = [
+  "gemLightColor",
+  "gemDarkColor",
+  "gemIntensity",
+  "settledEmissive",
+  "markedPulse",
+  "slamIntensity",
+  "slamShake",
+  "dropTrailIntensity",
+] as const satisfies readonly (keyof VisualSettings)[];
 
 /** localStorage key for persisted visual settings. */
 export const SETTINGS_STORAGE_KEY = "llmines.visualSettings.v1";
@@ -221,8 +255,22 @@ export function loadSettings(): VisualSettings {
   try {
     const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
-    const parsed = JSON.parse(raw) as Partial<VisualSettings>;
+    const parsed = JSON.parse(raw) as Partial<VisualSettings> & {
+      schemaVersion?: number;
+    };
     const merged = { ...DEFAULT_SETTINGS, ...parsed };
+    // Schema migration: a blob older than the current version has the keys whose
+    // DEFAULT meaning changed this round force-reset to the new defaults, so a
+    // stale stored value can never keep overriding the fix (e.g. the old gem
+    // colours, or the active-piece-pulse contrast values).
+    if ((parsed.schemaVersion ?? 0) < SETTINGS_SCHEMA_VERSION) {
+      for (const key of POLISH_FIX_RESET_KEYS) {
+        // Each reset key is assigned its current default; the union of value
+        // types is widened to `never` by the generic key, so cast through the
+        // shared settings shape.
+        (merged as Record<string, unknown>)[key] = DEFAULT_SETTINGS[key];
+      }
+    }
     // `zoom` drives the orthographic camera's auto-fit normalisation; a stale or
     // hand-edited `0`/negative/NaN here would zero the camera zoom and blank the
     // scene (singular projection). Sanitise it back to the default if it isn't a
@@ -247,7 +295,12 @@ export function loadSettings(): VisualSettings {
 export function saveSettings(settings: VisualSettings): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    // Stamp the current schema version so the one-time polish-fix migration in
+    // loadSettings does not re-run on a blob we've already migrated/written.
+    window.localStorage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({ ...settings, schemaVersion: SETTINGS_SCHEMA_VERSION }),
+    );
   } catch {
     // Quota / privacy-mode failures are non-fatal: the look just won't persist.
   }

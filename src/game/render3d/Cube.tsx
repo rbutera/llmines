@@ -127,11 +127,19 @@ export function Cube({
   useFrame((s) => {
     const t = s.clock.elapsedTime;
 
+    // The ACTIVE / falling piece is the cube wired with a heatRef. It must render
+    // STEADY — no breathe, no pulse (owner flagged the active-piece pulse as
+    // seizure-inducing). Pulsing is reserved EXCLUSIVELY for the to-clear/marked
+    // cells (markedAdd below), so a pulse always means "this is about to clear".
+    const isActivePiece = !!heatRef;
+
     // --- Beat-reactive breathe factor (Phase 2). GENTLE: a small smooth cosine
     // swell around 1.0, capped by beatStrength. Never a strobe (a11y). Falls
-    // back to the legacy slow free-running breathe when no beat ref / disabled. ---
+    // back to the legacy slow free-running breathe when no beat ref / disabled.
+    // Skipped entirely for the active/falling piece (it stays steady) and the
+    // calm preview dock (noBeat). ---
     let breathe = 1;
-    if (!noBeat) {
+    if (!noBeat && !isActivePiece) {
       if (beatPhaseRef && settings.beatReactive) {
         breathe = beatBreathe(beatPhaseRef.current ?? 0, settings.beatStrength, true);
       } else if (settings.beatPulse) {
@@ -160,9 +168,12 @@ export function Cube({
     // previews keep their normal full emissive. ---
     const isSettled = !noBeat && !heatRef;
     const settledScale = isSettled && !marked ? settings.settledEmissive : 1;
+    // To-clear pulse: a deep, fast swing (0.35..1.0 of markedPulse) so a marked
+    // cell visibly THROBS — the one and only pulse in the scene, meaning "about
+    // to clear". Deeper than before so the on/off read is unmistakable.
     const markedAdd =
       isSettled && marked
-        ? settings.markedPulse * (0.65 + 0.35 * (0.5 + 0.5 * Math.sin(t * 6)))
+        ? settings.markedPulse * (0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 7)))
         : 0;
 
     if (bright) {

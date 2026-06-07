@@ -114,8 +114,15 @@ export function ThreeRenderer({ controller }: { controller: GameController }) {
   // controller's setForceGem seam), kept OUT of useVisualSettings so that hook
   // stays purely cosmetic. Off by default; not persisted (a dev affordance, not
   // a saved look). Restores natural generation when switched off.
+  // The force-gem control defaults OFF. For headless screenshot verification the
+  // leva checkbox is awkward to drive, so an OPT-IN `?gem=1` URL param seeds the
+  // default ON — a dev/QA affordance only (it just flips the same existing dev
+  // toggle's initial value), with zero effect on normal play.
+  const forceGemDefault =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("gem") === "1";
   const { forceGem } = useControls("Dev (force gem)", {
-    forceGem: { value: false, label: "force gem" },
+    forceGem: { value: forceGemDefault, label: "force gem" },
   });
   useEffect(() => {
     controller.setForceGem(forceGem);
