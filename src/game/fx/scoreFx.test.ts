@@ -1,12 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
   BIG_CLEAR_DELTA,
+  SCORE_DELTA_LIFETIME_MS,
   burstParticleCount,
   countUpValue,
+  scoreDeltaVisible,
   scoreIntensity,
   shouldBurst,
   shouldBurstOnClear,
 } from "./scoreFx";
+
+describe("score-fx model: scoreDeltaVisible (transience)", () => {
+  it("is visible within the lifetime and hidden at/after it", () => {
+    expect(scoreDeltaVisible(0)).toBe(true);
+    expect(scoreDeltaVisible(SCORE_DELTA_LIFETIME_MS - 1)).toBe(true);
+    expect(scoreDeltaVisible(SCORE_DELTA_LIFETIME_MS)).toBe(false);
+    expect(scoreDeltaVisible(SCORE_DELTA_LIFETIME_MS + 100)).toBe(false);
+  });
+
+  it("honours a custom lifetime and is hidden for negative elapsed", () => {
+    expect(scoreDeltaVisible(50, 100)).toBe(true);
+    expect(scoreDeltaVisible(100, 100)).toBe(false);
+    expect(scoreDeltaVisible(-1, 100)).toBe(false);
+  });
+});
 
 describe("score-fx model: shouldBurst", () => {
   it("fires only on a positive change", () => {

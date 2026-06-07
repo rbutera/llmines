@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   COUNT_UP_MS,
   FLOAT_MS,
+  SCORE_DELTA_LIFETIME_MS,
   countUpValue,
   scoreIntensity,
   shouldBurst,
@@ -25,6 +26,11 @@ interface FloatItem {
 export function ScoreFx({ score }: { score: number }) {
   const [display, setDisplay] = useState(score);
   const [floats, setFloats] = useState<FloatItem[]>([]);
+  // Transient visibility: the count-up number + glow show on a gain and fade out
+  // after SCORE_DELTA_LIFETIME_MS. When idle the whole overlay is hidden, leaving
+  // only the authoritative HUD score (which lives outside this component).
+  const [visible, setVisible] = useState(false);
+  const visibleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const displayRef = useRef(score);
   const prevScore = useRef(score);
   const rafRef = useRef<number | null>(null);
@@ -43,6 +49,14 @@ export function ScoreFx({ score }: { score: number }) {
       setDisplay(score);
       return;
     }
+
+    // Show the transient and arm its fade-out timer (re-armed on each gain).
+    setVisible(true);
+    if (visibleTimer.current) clearTimeout(visibleTimer.current);
+    visibleTimer.current = setTimeout(
+      () => setVisible(false),
+      SCORE_DELTA_LIFETIME_MS,
+    );
 
     const delta = score - prev;
     const from = displayRef.current;
@@ -85,10 +99,11 @@ export function ScoreFx({ score }: { score: number }) {
     return () => clearTimeout(timer);
   }, [score]);
 
-  // Stop any in-flight count-up on unmount.
+  // Stop any in-flight count-up + fade timer on unmount.
   useEffect(
     () => () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      if (visibleTimer.current) clearTimeout(visibleTimer.current);
     },
     [],
   );
@@ -98,7 +113,10 @@ export function ScoreFx({ score }: { score: number }) {
       aria-hidden
       className="pointer-events-none absolute inset-0 z-20 overflow-hidden"
     >
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 text-center">
+      <div
+        className="absolute top-3 left-1/2 -translate-x-1/2 text-center transition-opacity duration-300"
+        style={{ opacity: visible ? 1 : 0 }}
+      >
         <div
           ref={numRef}
           className="bg-gradient-to-r from-[#9bf6e8] via-white to-[#ffc1e3] bg-clip-text font-mono text-5xl font-black tabular-nums text-transparent"

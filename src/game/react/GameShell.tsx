@@ -5,6 +5,7 @@ import { AccountBar, Leaderboard, PersonalBest } from "../account/AccountUI";
 import { useAuth, useScores } from "../account/context";
 import {
   BACKING_TRACK_URL,
+  BOARD_ASPECT,
   type GeneratedPiece,
   PREVIEW_DEPTH,
   skinAt,
@@ -13,6 +14,7 @@ import { GameController, type RenderState } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
 import { installTestApi } from "../test-api/install";
+import { loadSettings, saveSettings } from "../render3d/settings";
 import { ControlsCheatsheet } from "./ControlsCheatsheet";
 import { GameCanvas } from "./GameCanvas";
 import { ScoreFx } from "./ScoreFx";
@@ -26,6 +28,7 @@ type Phase = "start" | "playing" | "gameover";
  */
 export function GameShell() {
   const [phase, setPhase] = useState<Phase>("start");
+  const [paused, setPaused] = useState(false);
   const [score, setScore] = useState(0);
   const [hud, setHud] = useState<{
     queue: GeneratedPiece[];
@@ -33,6 +36,9 @@ export function GameShell() {
     bpm: number;
   }>({ queue: [], skinIndex: 0, bpm: 0 });
   const [controller, setController] = useState<GameController | null>(null);
+  // Music volume (0..1), default 0.5, persisted with the visual settings so the
+  // renderer's Audio panel and this slider share one source of truth.
+  const [musicVolume, setMusicVolume] = useState(0.5);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const phaseRef = useRef<Phase>("start");
   phaseRef.current = phase;
@@ -101,6 +107,14 @@ export function GameShell() {
   useEffect(() => {
     if (phase !== "playing" || !controller) return;
     const onKey = (e: KeyboardEvent) => {
+      // Escape toggles pause (sweep + gravity halt, resumable). Handled before
+      // the action map so it works regardless of the active control scheme.
+      if (e.key === "Escape") {
+        e.preventDefault();
+        controller.togglePause();
+        setPaused(controller.isPaused());
+        return;
+      }
       const action = keyToAction(e);
       if (!action) return;
       e.preventDefault();
@@ -112,6 +126,8 @@ export function GameShell() {
         if (e.repeat) {
           controller.input(action);
         } else if (action === "softDrop") {
+          // Fresh soft-drop press: immediate step + ENGAGE sustained mode so
+          // HOLDING the key keeps the piece gliding down at soft-drop speed.
           controller.pressSoftDrop();
         } else {
           controller.pressHardDrop();
@@ -120,13 +136,41 @@ export function GameShell() {
       }
       controller.input(action);
     };
+    // Soft-drop key release disengages sustained mode (back to gravity speed).
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (keyToAction(e) === "softDrop") controller.releaseSoftDrop();
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, [phase, controller]);
+
+  // Load the persisted music volume once on mount (shares storage with the
+  // renderer's Audio panel). Defaults to 0.5 when nothing is stored.
+  useEffect(() => {
+    setMusicVolume(loadSettings().musicVolume);
+  }, []);
+
+  // Apply the volume to the backing-track element whenever it changes (the
+  // <audio> element's volume IS the music output gain).
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = musicVolume;
+  }, [musicVolume]);
+
+  const handleVolumeChange = useCallback((v: number) => {
+    const clamped = Math.max(0, Math.min(1, v));
+    setMusicVolume(clamped);
+    // Persist alongside the rest of the settings (read-modify-write).
+    saveSettings({ ...loadSettings(), musicVolume: clamped });
+  }, []);
 
   const handleStart = useCallback(() => {
     if (!controller) return;
     setScore(0);
+    setPaused(false);
     gameOverSubmittedRef.current = false;
     controller.start();
     audioRef.current?.play().catch(() => undefined);
@@ -137,6 +181,7 @@ export function GameShell() {
     if (!controller) return;
     controller.restart(1);
     setScore(0);
+    setPaused(false);
     gameOverSubmittedRef.current = false;
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
@@ -152,21 +197,35 @@ export function GameShell() {
           inspectable. Live autoplay is not required. */}
       <audio ref={audioRef} src={BACKING_TRACK_URL} loop preload="auto" />
 
-      {/* While playing, the board is LARGE but CONTAINED: a generous (not
-          full-bleed) max width so the well + the side dock sit centred in the
-          viewport and never bleed under browser chrome (e.g. a vertical tab
-          sidebar). Start / game-over keep the narrower reading column. */}
+      {/* Start / game-over keep a narrow reading column. While PLAYING the board
+          fills ~90% of the viewport width (the inner PlayingScreen sets w-[90vw]),
+          so the wrapper goes full-width and the title chrome is overlaid + hidden
+          in-play rather than reserving a header band. */}
       <div
         className={`relative z-10 w-full ${
-          phase === "playing" ? "max-w-6xl" : "max-w-5xl"
+          phase === "playing" ? "max-w-none" : "max-w-5xl"
         }`}
       >
-        <Header />
+        {/* Title header: part of the chrome — hidden during active play. */}
+        {phase !== "playing" && <Header />}
 
-        {phase === "start" && <StartScreen onStart={handleStart} />}
+        {phase === "start" && (
+          <StartScreen
+            onStart={handleStart}
+            musicVolume={musicVolume}
+            onVolumeChange={handleVolumeChange}
+          />
+        )}
 
         {phase === "playing" && controller && (
-          <PlayingScreen controller={controller} score={score} hud={hud} />
+          <PlayingScreen
+            controller={controller}
+            score={score}
+            hud={hud}
+            paused={paused}
+            musicVolume={musicVolume}
+            onVolumeChange={handleVolumeChange}
+          />
         )}
 
         {phase === "gameover" && (
@@ -193,7 +252,59 @@ function Header() {
   );
 }
 
-function StartScreen({ onStart }: { onStart: () => void }) {
+/** Music volume slider — persisted, shared with the renderer's Audio panel. */
+function VolumeControl({
+  musicVolume,
+  onVolumeChange,
+  compact = false,
+}: {
+  musicVolume: number;
+  onVolumeChange: (v: number) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      data-testid="volume-control"
+      className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur"
+    >
+      <label
+        htmlFor="music-volume"
+        className={`mb-2 block font-semibold tracking-wide text-white/70 uppercase ${
+          compact ? "text-[11px]" : "text-xs"
+        }`}
+      >
+        Music volume
+      </label>
+      <div className="flex items-center gap-3">
+        <input
+          id="music-volume"
+          data-testid="volume-slider"
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={musicVolume}
+          onChange={(e) => onVolumeChange(Number(e.target.value))}
+          className="w-full accent-[#37e0c9]"
+          aria-label="Music volume"
+        />
+        <span className="w-10 text-right font-mono text-xs tabular-nums text-white/60">
+          {Math.round(musicVolume * 100)}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function StartScreen({
+  onStart,
+  musicVolume,
+  onVolumeChange,
+}: {
+  onStart: () => void;
+  musicVolume: number;
+  onVolumeChange: (v: number) => void;
+}) {
   return (
     <section
       aria-label="Start"
@@ -219,6 +330,7 @@ function StartScreen({ onStart }: { onStart: () => void }) {
       </div>
       <div className="flex flex-col gap-6">
         <ControlsCheatsheet />
+        <VolumeControl musicVolume={musicVolume} onVolumeChange={onVolumeChange} />
         <PersonalBest />
         <Leaderboard />
       </div>
@@ -230,61 +342,101 @@ function PlayingScreen({
   controller,
   score,
   hud,
+  paused,
+  musicVolume,
+  onVolumeChange,
 }: {
   controller: GameController;
   score: number;
   hud: { queue: GeneratedPiece[]; skinIndex: number; bpm: number };
+  paused: boolean;
+  musicVolume: number;
+  onVolumeChange: (v: number) => void;
 }) {
   const skin = skinAt(hud.skinIndex);
+  // Chrome (the side panels) is OVERLAID on the canvas and HIDDEN during active
+  // play, shown when paused. The in-canvas PreviewDock keeps the next piece
+  // visible in-play, so hiding the DOM preview loses no information. The score
+  // chip and pause hint stay always-visible (tiny, non-blocking).
+  const chromeVisible = paused;
   return (
-    <section
-      aria-label="Game"
-      className="grid items-stretch gap-6 md:grid-cols-[1fr_280px]"
-    >
-      {/* Relative wrapper so the cosmetic ScoreFx overlay sits over the field.
-          The board is LARGE but CONTAINED: its height is capped so that even with
-          the header + page padding the canvas (16:10, width follows height) and
-          the side dock stay fully inside the viewport. `min(...)` keeps it from
-          overshooting on short windows; the aspect box means it never bleeds off
-          the right under browser chrome. */}
-      <div className="relative flex h-[min(78vh,640px)] min-h-[420px] items-center justify-center">
-        <GameCanvas controller={controller} />
-        <ScoreFx score={score} />
-      </div>
-      <aside className="flex flex-col gap-4">
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur">
-          <div className="text-xs tracking-widest text-white/50 uppercase">
-            Score
+    <section aria-label="Game" className="relative flex justify-center">
+      {/* The board is the base layer at ~90% of the viewport width, aspect-locked
+          so the well + preview never clip and a wide box never produces a
+          degenerate canvas size (which would trip the AutoFitCamera guard). */}
+      <div className="relative flex w-[90vw] max-w-[1400px] items-center justify-center">
+        <div
+          className="relative w-full"
+          style={{ aspectRatio: BOARD_ASPECT }}
+        >
+          <GameCanvas controller={controller} />
+          <ScoreFx score={score} />
+
+          {/* Always-visible score chip (small, overlaid top-left). The
+              authoritative integer lives here; never driven by the transient FX. */}
+          <div className="pointer-events-none absolute top-3 left-3 z-30 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 backdrop-blur">
+            <div className="text-[10px] tracking-widest text-white/50 uppercase">
+              Score
+            </div>
+            <div
+              key={score}
+              data-testid="score"
+              className="score-pop font-mono text-2xl font-black tabular-nums"
+            >
+              {score}
+            </div>
           </div>
-          {/* Authoritative value: exact integer, instant. The pop is a pure
-              CSS transform (text never changes), so assertions stay stable. */}
-          <div
-            key={score}
-            data-testid="score"
-            className="score-pop mt-1 font-mono text-4xl font-black tabular-nums"
-          >
-            {score}
-          </div>
-        </div>
-        <NextPreview queue={hud.queue} palette={skin.blockPalette} />
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur">
-          <div className="text-xs tracking-widest text-white/50 uppercase">
-            Skin
-          </div>
-          <div className="mt-1 flex items-baseline justify-between">
-            <span data-testid="skin-id" className="text-sm font-semibold">
+
+          {/* Skin / BPM chip (small, overlaid top-right). Carries the test ids. */}
+          <div className="pointer-events-none absolute top-3 right-3 z-30 rounded-lg border border-white/10 bg-black/40 px-3 py-1.5 text-right backdrop-blur">
+            <span
+              data-testid="skin-id"
+              className="block text-xs font-semibold text-white/80"
+            >
               {skin.id}
             </span>
             <span
               data-testid="bpm"
-              className="font-mono text-sm tabular-nums text-white/60"
+              className="font-mono text-[11px] tabular-nums text-white/50"
             >
               {hud.bpm} BPM
             </span>
           </div>
+
+          {/* Auto-hiding chrome overlay: hidden during play, shown when paused. */}
+          <div
+            data-testid="game-chrome"
+            data-visible={chromeVisible}
+            className={`absolute inset-0 z-20 flex items-center justify-center bg-black/55 backdrop-blur-sm transition-opacity duration-200 ${
+              chromeVisible
+                ? "opacity-100"
+                : "pointer-events-none opacity-0"
+            }`}
+          >
+            <div className="flex max-h-full w-[min(320px,80%)] flex-col gap-4 overflow-auto">
+              {paused && (
+                <div className="rounded-xl border border-[#37e0c9]/30 bg-white/5 p-4 text-center backdrop-blur">
+                  <div className="text-lg font-black tracking-wide text-[#37e0c9]">
+                    Paused
+                  </div>
+                  <div className="mt-1 text-xs text-white/60">
+                    Press Esc to resume
+                  </div>
+                </div>
+              )}
+              {/* The DOM preview is part of the chrome — only needed when paused,
+                  since the in-canvas dock covers in-play. */}
+              <NextPreview queue={hud.queue} palette={skin.blockPalette} />
+              <VolumeControl
+                musicVolume={musicVolume}
+                onVolumeChange={onVolumeChange}
+                compact
+              />
+              <ControlsCheatsheet compact />
+            </div>
+          </div>
         </div>
-        <ControlsCheatsheet compact />
-      </aside>
+      </div>
     </section>
   );
 }

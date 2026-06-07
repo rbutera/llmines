@@ -68,6 +68,18 @@ export interface VisualSettings {
   gemEnabled: boolean;
   /** Gem emissive boost / marker brightness. */
   gemIntensity: number;
+  /**
+   * Gem marker colour for the LIGHT variant — used on BRIGHT blocks. A cooler /
+   * darker inlay so the marker reads against a bright cell WITHOUT washing out
+   * the block's own colour. Subtle-but-clear.
+   */
+  gemLightColor: string;
+  /**
+   * Gem marker colour for the DARK variant — used on DARK blocks. A warmer /
+   * lighter inlay so the marker reads against a dark cell while preserving the
+   * block's dark identity.
+   */
+  gemDarkColor: string;
   /** In-canvas 3D next-piece preview dock. Default ON. */
   previewEnabled: boolean;
 
@@ -115,6 +127,14 @@ export interface VisualSettings {
   slamIntensity: number;
   /** Peak screen-shake amplitude (world units) on a hard-drop landing. */
   slamShake: number;
+
+  // --- Audio --------------------------------------------------------------
+  /**
+   * Music volume (0..1) for the backing track, wired to the `<audio>` element's
+   * volume (the music output gain). Default 0.5. Persisted with the rest so a
+   * reload restores the last-set loudness.
+   */
+  musicVolume: number;
 }
 
 /**
@@ -147,9 +167,17 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   heatEnabled: true,
   heatIntensity: 1.6,
   gemEnabled: true,
-  // FIX 3: gems were invisible in a 5-min play — make the marker read instantly.
-  // Brighter default emissive (the marker is also bigger + animated in Cube.tsx).
-  gemIntensity: 2.6,
+  // Polish round (item 4): the old marker (2.6, oversized amber octahedron)
+  // overpowered the board and obscured the block colour. Dial it down to a
+  // subtle-but-clear inlay; the light/dark variants below adapt to the cell so
+  // the underlying colour identity is preserved.
+  gemIntensity: 1.1,
+  // Light variant (bright blocks): a cool deep-teal inlay reads against the
+  // bright glass without washing it out.
+  gemLightColor: "#0a5b6e",
+  // Dark variant (dark blocks): a warm pale-gold inlay reads against the dark
+  // night-box while keeping the block dark.
+  gemDarkColor: "#ffd98a",
   previewEnabled: true,
 
   // FIX 2 — visual hierarchy. Settled cells dialled DOWN to read as inert; the
@@ -158,20 +186,26 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   settledEmissive: 0.45,
   markedPulse: 2.4,
 
-  // Phase 3 — chain wavefront. Fast-ish travel (55ms/ring) so a big chain reads
-  // as a clear sweeping across the shape without dragging.
+  // Chain wavefront (item 7): make the gem-clear cascade OBVIOUS. Slow the ring
+  // travel a touch (90ms/ring) so the cascade is clearly seen sweeping across the
+  // connected region, and brighten each flash + keep the climax shockwave on.
   chainEnabled: true,
-  chainSpeed: 55,
-  chainIntensity: 2.0,
+  chainSpeed: 90,
+  chainIntensity: 3.2,
   shockwaveEnabled: true,
 
-  // PART 3 — drop feedback. Both on by default; intensities scale with speed /
-  // fall distance so a hard slam reads much harder than a gentle soft drop.
+  // Drop feedback (item 8): reworked so soft and hard read distinctly. Soft-drop
+  // is a clear sustained warm trail (it now glides continuously while held — see
+  // the sustained mechanic), so the trail is brighter; hard-drop is a sharper
+  // slam with a tighter, punchier shake and a brighter impact.
   dropTrailEnabled: true,
-  dropTrailIntensity: 1.4,
+  dropTrailIntensity: 2.0,
   slamEnabled: true,
-  slamIntensity: 1.6,
-  slamShake: 0.18,
+  slamIntensity: 2.2,
+  slamShake: 0.26,
+
+  // Audio — backing-track loudness. Half volume by default.
+  musicVolume: 0.5,
 };
 
 /** localStorage key for persisted visual settings. */
@@ -195,6 +229,13 @@ export function loadSettings(): VisualSettings {
     // sane positive number, so a corrupt blob can never freeze the playfield.
     if (!Number.isFinite(merged.zoom) || merged.zoom <= 0) {
       merged.zoom = DEFAULT_SETTINGS.zoom;
+    }
+    // Clamp music volume to a valid [0,1] gain; fall back to the default if a
+    // stale/hand-edited blob carries a NaN or out-of-range value.
+    if (!Number.isFinite(merged.musicVolume)) {
+      merged.musicVolume = DEFAULT_SETTINGS.musicVolume;
+    } else {
+      merged.musicVolume = Math.max(0, Math.min(1, merged.musicVolume));
     }
     return merged;
   } catch {

@@ -105,6 +105,8 @@ export function useVisualSettings(): VisualSettings {
     Gems: folder({
       gemEnabled: { value: initial.gemEnabled },
       gemIntensity: { value: initial.gemIntensity, min: 0, max: 6, step: 0.05 },
+      gemLightColor: { value: initial.gemLightColor },
+      gemDarkColor: { value: initial.gemDarkColor },
     }),
     "Cell hierarchy": folder({
       // FIX 2: dial settled cells down (inert) and pulse the to-clear ones.
@@ -136,6 +138,9 @@ export function useVisualSettings(): VisualSettings {
       slamEnabled: { value: initial.slamEnabled },
       slamIntensity: { value: initial.slamIntensity, min: 0, max: 4, step: 0.05 },
       slamShake: { value: initial.slamShake, min: 0, max: 0.6, step: 0.01 },
+    }),
+    Audio: folder({
+      musicVolume: { value: initial.musicVolume, min: 0, max: 1, step: 0.01 },
     }),
   });
 
@@ -169,6 +174,8 @@ export function useVisualSettings(): VisualSettings {
     heatIntensity: values.heatIntensity ?? DEFAULT_SETTINGS.heatIntensity,
     gemEnabled: values.gemEnabled ?? DEFAULT_SETTINGS.gemEnabled,
     gemIntensity: values.gemIntensity ?? DEFAULT_SETTINGS.gemIntensity,
+    gemLightColor: values.gemLightColor ?? DEFAULT_SETTINGS.gemLightColor,
+    gemDarkColor: values.gemDarkColor ?? DEFAULT_SETTINGS.gemDarkColor,
     previewEnabled: values.previewEnabled ?? DEFAULT_SETTINGS.previewEnabled,
     settledEmissive: values.settledEmissive ?? DEFAULT_SETTINGS.settledEmissive,
     markedPulse: values.markedPulse ?? DEFAULT_SETTINGS.markedPulse,
@@ -182,6 +189,7 @@ export function useVisualSettings(): VisualSettings {
     slamEnabled: values.slamEnabled ?? DEFAULT_SETTINGS.slamEnabled,
     slamIntensity: values.slamIntensity ?? DEFAULT_SETTINGS.slamIntensity,
     slamShake: values.slamShake ?? DEFAULT_SETTINGS.slamShake,
+    musicVolume: values.musicVolume ?? DEFAULT_SETTINGS.musicVolume,
   };
 
   // Persist on every change so tweaks survive reload.
@@ -214,6 +222,8 @@ export function useVisualSettings(): VisualSettings {
     settings.heatIntensity,
     settings.gemEnabled,
     settings.gemIntensity,
+    settings.gemLightColor,
+    settings.gemDarkColor,
     settings.previewEnabled,
     settings.settledEmissive,
     settings.markedPulse,
@@ -226,6 +236,7 @@ export function useVisualSettings(): VisualSettings {
     settings.slamEnabled,
     settings.slamIntensity,
     settings.slamShake,
+    settings.musicVolume,
   ]);
 
   return settings;

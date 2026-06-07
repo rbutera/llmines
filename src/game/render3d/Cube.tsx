@@ -61,6 +61,32 @@ export interface CubeProps {
   marked?: boolean;
   /** Opt out of all beat/heat animation (used by the calm preview dock). */
   noBeat?: boolean;
+  /**
+   * Flat 2D mode (next-preview): force shear to 0 so the cell renders as a flat
+   * square with no per-column shear and no 2.5D side-face reveal. Used by the
+   * preview dock so upcoming pieces read as plain 2D representations, distinct
+   * from the sheared board cubes. Default false (board cubes shear by column).
+   */
+  flat?: boolean;
+}
+
+/**
+ * The per-column shear factor `kx` a cell's geometry receives. Pure, so the
+ * "preview is flat" guarantee is unit-testable without R3F: in `flat` mode the
+ * shear is forced to 0 for ANY column; otherwise it is `shear * colNorm`
+ * (centre-relative), so off-centre board columns shear and the preview never
+ * does. `cols === 1` (and the centre column) yields 0 by definition.
+ */
+export function shearFactor(
+  shear: number,
+  col: number,
+  cols: number,
+  flat: boolean,
+): number {
+  if (flat) return 0;
+  const centerCol = (cols - 1) / 2;
+  const colNorm = centerCol === 0 ? 0 : (col - centerCol) / centerCol;
+  return shear * colNorm;
 }
 
 export function Cube({
@@ -74,6 +100,7 @@ export function Cube({
   isGem = false,
   marked = false,
   noBeat = false,
+  flat = false,
 }: CubeProps) {
   const leftRef = useRef<THREE.MeshStandardMaterial>(null);
   const rightRef = useRef<THREE.MeshStandardMaterial>(null);
@@ -82,7 +109,6 @@ export function Cube({
   const gemMatRef = useRef<THREE.MeshStandardMaterial>(null);
 
   const size = CELL - GAP;
-  const centerCol = (cols - 1) / 2;
 
   // Dark-cell inner-X material (shared by both crossed bars). Muted by design.
   const darkCoreMat = useMemo(
@@ -119,8 +145,11 @@ export function Cube({
         ? (heatRef.current ?? 0) * settings.heatIntensity
         : 0;
 
-    // --- Gem boost (Phase 2): special cells read brighter + pulse a marker. ---
-    const gemBoost = isGem && settings.gemEnabled ? settings.gemIntensity : 0;
+    // --- Gem boost (item 4): keep this SMALL. The gem read now lives in the
+    // inlaid variant-coloured marker (below), not in flooding the whole block
+    // with emissive — a big boost here washed the block colour out. A faint lift
+    // only, so the cell is recognisably special without losing its colour. ---
+    const gemBoost = isGem && settings.gemEnabled ? settings.gemIntensity * 0.25 : 0;
 
     // --- FIX 2: visual hierarchy. A cube is "settled/inert" when it is neither a
     // preview (noBeat) nor the active piece (the active piece is the one wired
@@ -162,35 +191,39 @@ export function Cube({
         settings.darkCoreIntensity * breathe * settledScale + heat + markedAdd;
     }
 
-    // FIX 3: gem marker — a BIG spinning, throbbing octahedron that reads
-    // instantly even at a glance (the owner missed every gem in a 5-min play).
-    // Spins on two axes, pulses its emissive HARD, and breathes its scale so the
-    // silhouette itself grows/shrinks. Its own fast cycle (not the gentle beat).
+    // Gem marker (item 4): a SUBTLE inlaid diamond that adapts to the cell. It
+    // rotates gently and pulses softly — clear enough to spot, dialled down so it
+    // no longer dominates or hides the block's colour underneath. Light variant
+    // on bright cells, dark variant on dark cells (colour set on the material).
     if (gemRef.current && gemMatRef.current && isGem && settings.gemEnabled) {
-      gemRef.current.rotation.y = t * 2.2;
-      gemRef.current.rotation.x = t * 1.3;
-      const throb = 0.5 + 0.5 * Math.sin(t * 5);
-      // Scale swell so the marker visibly grows and shrinks (silhouette change).
-      const sc = 1 + 0.28 * throb;
-      gemRef.current.scale.setScalar(sc);
+      gemRef.current.rotation.y = t * 0.9;
+      const throb = 0.5 + 0.5 * Math.sin(t * 3);
+      // Small scale breathe (subtle, not a silhouette change).
+      gemRef.current.scale.setScalar(1 + 0.08 * throb);
       gemMatRef.current.emissiveIntensity =
-        settings.gemIntensity * (1.4 + 0.9 * throb);
+        settings.gemIntensity * (0.8 + 0.4 * throb);
     }
   });
+
+  // Gem variant colour: LIGHT inlay on bright blocks, DARK inlay on dark blocks,
+  // so the marker reads against the cell while preserving its colour identity.
+  const gemColor = bright ? settings.gemLightColor : settings.gemDarkColor;
 
   // Per-column sheared geometry. Front face at z=0; body extends to z=-size and
   // slides in x with depth. Rebuilt only when col/size/shear change.
   const geom = useMemo(() => {
     const g = new THREE.BoxGeometry(size, size, size);
     g.translate(0, 0, -size / 2); // front -> z=0, back -> z=-size
-    const colNorm = centerCol === 0 ? 0 : (col - centerCol) / centerCol; // -1..1
-    const kx = settings.shear * colNorm;
+    // FLAT 2D mode (preview): no per-column shear, so previews read as plain 2D
+    // squares rather than sheared 2.5D cubes. The board path keeps its shear.
+    // Single source of truth with the pure, tested `shearFactor`.
+    const kx = shearFactor(settings.shear, col, cols, flat);
     // makeShear(xy, xz, yx, yz, zx, zy): zx term => x' = x + kx*z (shear X by Z).
     const m = new THREE.Matrix4().makeShear(0, 0, 0, 0, kx, 0);
     g.applyMatrix4(m);
     g.computeVertexNormals();
     return g;
-  }, [col, centerCol, size, settings.shear]);
+  }, [col, cols, size, settings.shear, flat]);
 
   // Dispose the geometry when it is replaced or the cube unmounts (per-cell
   // BoxGeometry is not auto-disposed by R3F when we pass our own geometry).
@@ -362,26 +395,22 @@ export function Cube({
         </group>
       )}
 
-      {/* Gem marker — special cells only. FIX 3: a BIG spinning, throbbing
-          octahedron floating in FRONT of the cell so a special is unmistakable
-          (distinct silhouette + size + hard pulse vs the square blocks). The
-          wireframe shell around it adds a second, brighter read. Animated in
-          useFrame. */}
+      {/* Gem marker — special cells only (item 4). A SMALL diamond inlaid just in
+          front of the cell centre, in the cell's adaptive variant colour (light
+          on bright blocks, dark on dark blocks). Subtle-but-clear: it preserves
+          the block's colour rather than overpowering it. Animated in useFrame. */}
       {isGem && settings.gemEnabled && (
-        <mesh ref={gemRef} position={[0, 0, size * 0.5]}>
-          <octahedronGeometry args={[size * 0.46, 0]} />
+        <mesh ref={gemRef} position={[0, 0, size * 0.18]}>
+          <octahedronGeometry args={[size * 0.2, 0]} />
           <meshStandardMaterial
             ref={gemMatRef}
-            color="#fff0b0"
-            emissive="#ffd24a"
+            color={gemColor}
+            emissive={gemColor}
             emissiveIntensity={settings.gemIntensity}
             toneMapped={false}
-            metalness={0.3}
-            roughness={0.2}
+            metalness={0.4}
+            roughness={0.25}
           />
-          {/* Bright wireframe halo around the gem — exceeds bloom threshold so it
-              flares, making the marker pop against any background. */}
-          <Edges color="#fff7d6" />
         </mesh>
       )}
     </group>

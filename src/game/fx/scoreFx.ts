@@ -24,6 +24,27 @@ export function shouldBurst(prev: number, next: number): boolean {
 }
 
 /**
+ * Transient lifetime (ms) for the on-canvas score-delta feedback (the count-up
+ * number + glow). After this elapses since the last gain, the transient has
+ * faded out and only the authoritative HUD score remains. Matches the float
+ * indicator lifetime so the whole feedback retires together.
+ */
+export const SCORE_DELTA_LIFETIME_MS = FLOAT_MS;
+
+/**
+ * Whether the transient score-delta feedback is still showing, given the time
+ * elapsed since the last positive gain and the transient lifetime. Pure, so the
+ * transience is unit-testable without DOM/React. Visible strictly before the
+ * lifetime elapses; hidden at/after it (and for any non-positive elapsed window).
+ */
+export function scoreDeltaVisible(
+  elapsedMs: number,
+  lifetimeMs = SCORE_DELTA_LIFETIME_MS,
+): boolean {
+  return elapsedMs >= 0 && elapsedMs < lifetimeMs;
+}
+
+/**
  * Whether to fire the center score-gain burst this frame. The burst is reserved
  * for square-CLEAR events (cells deleted by a sweep), NOT for soft-drop or
  * settle score changes — those bank points without clearing the board, so they

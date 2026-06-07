@@ -1,9 +1,10 @@
 const ROWS: { keys: string[]; label: string }[] = [
-  { keys: ["h"], label: "move left" },
-  { keys: ["l"], label: "move right" },
-  { keys: ["j"], label: "soft drop" },
-  { keys: ["k"], label: "rotate" },
+  { keys: ["←", "h", "s"], label: "move left" },
+  { keys: ["→", "l", "f"], label: "move right" },
+  { keys: ["↓", "j", "d"], label: "soft drop (hold)" },
+  { keys: ["↑", "k", "e"], label: "rotate" },
   { keys: ["space"], label: "hard drop" },
+  { keys: ["esc"], label: "pause" },
 ];
 
 function Key({ children }: { children: React.ReactNode }) {

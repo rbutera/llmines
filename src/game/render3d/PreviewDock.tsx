@@ -74,6 +74,8 @@ export function PreviewDock({
                   settings={settings}
                   // No beat breathe / heat on previews — keep them calm reference.
                   noBeat
+                  // Flat 2D: previews are plain squares, no per-column shear/tilt.
+                  flat
                 />
               );
             })}

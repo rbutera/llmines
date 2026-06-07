@@ -98,3 +98,43 @@ test("clicking Start spawns a piece and advances the sweep, with no console erro
   expect(consoleErrors, `console errors during Start: ${consoleErrors.join(" | ")}`).toEqual([]);
   expect(pageErrors, `page errors during Start: ${pageErrors.join(" | ")}`).toEqual([]);
 });
+
+test("Escape pauses the running game (the sweep stops advancing)", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(err.message));
+
+  await page.goto("/");
+  await page.getByTestId("start-button").click();
+
+  // Let the sweep get going.
+  await expect
+    .poll(() => page.evaluate(() => window.__luminesProbe?.sweepX ?? 0), {
+      message: "sweepX should advance before pausing",
+      timeout: 4000,
+    })
+    .toBeGreaterThan(0);
+
+  // Press Escape to pause.
+  await page.keyboard.press("Escape");
+
+  // After a moment to let any in-flight frame settle, the sweep must be FROZEN:
+  // sample it, wait, and confirm it did not advance.
+  await page.waitForTimeout(200);
+  const pausedX = await page.evaluate(() => window.__luminesProbe?.sweepX ?? 0);
+  await page.waitForTimeout(600); // > one sweep column; would move if not paused
+  const laterX = await page.evaluate(() => window.__luminesProbe?.sweepX ?? 0);
+  expect(laterX, "sweepX must not advance while paused").toBe(pausedX);
+
+  // Resume and confirm it advances again — pause is resumable, not a stop.
+  await page.keyboard.press("Escape");
+  await expect
+    .poll(() => page.evaluate(() => window.__luminesProbe?.sweepX ?? 0), {
+      message: "sweepX should advance again after resume",
+      timeout: 4000,
+    })
+    .toBeGreaterThan(pausedX);
+
+  expect(pageErrors, `page errors during pause: ${pageErrors.join(" | ")}`).toEqual([]);
+});

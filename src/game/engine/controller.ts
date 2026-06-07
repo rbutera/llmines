@@ -9,6 +9,7 @@ import {
   gravityStep,
   hardDrop,
   isHeld,
+  SOFT_DROP_INTERVAL_MS,
   isResting,
   lockPiece,
   moveLeft,
@@ -184,6 +185,24 @@ export class GameController {
    */
   private softDropPulses = 0;
   /**
+   * Hold-to-sustain soft drop (production-only). True while the soft-drop key is
+   * HELD down (engaged by a fresh press, disengaged on key-up / lock / spawn).
+   * While engaged AND the spawn-hold has lapsed, gravity advances at the faster
+   * {@link SOFT_DROP_INTERVAL_MS} cadence instead of {@link GRAVITY_INTERVAL_MS},
+   * so a held key produces CONTINUOUS slow fall (faster than gravity, slower than
+   * a hard drop) rather than one row per press. Each sustained step still routes
+   * through the pure `softDrop` core op, so scoring + determinism are unchanged.
+   * Test mode leaves this false (the seam drives single steps), so existing tests
+   * are observationally identical.
+   */
+  private softDropSustained = false;
+  /**
+   * Paused (production-only). When true the rAF loop is cancelled and neither the
+   * sweep nor gravity advances; the active piece, grid, and score are preserved.
+   * Resuming re-anchors the sweep baseline (no rewind) and restarts the loop.
+   */
+  private paused = false;
+  /**
    * Render-only: the most recent hard-drop event (slam FX), surfaced through
    * {@link RenderState.lastHardDrop}. `id` is monotonic so the renderer fires the
    * slam exactly once. Captured in {@link hardDropStep} from the active piece's
@@ -239,6 +258,48 @@ export class GameController {
     }
   }
 
+  // ---- pause / resume (production loop only) --------------------------------
+
+  /**
+   * Pause play: cancel the rAF loop so neither the sweep nor gravity advances.
+   * The active piece, grid, and score are preserved. No-op in test mode (the
+   * loop is already quiescent), if not started, or if already paused.
+   */
+  pause(): void {
+    if (this.testMode || !this.started || this.paused) return;
+    this.paused = true;
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    this.emit();
+  }
+
+  /**
+   * Resume play after a pause. Re-anchor the sweep baseline so the next valid
+   * frame measures musical time from `now` (no rewind / discontinuous jump — the
+   * same re-anchor the suspend/re-suspend path uses), then restart the loop.
+   */
+  resume(): void {
+    if (this.testMode || !this.started || !this.paused) return;
+    this.paused = false;
+    // Re-anchor so the sweep continues forward from here rather than swallowing
+    // the paused span. lastClockNow<=0 makes the next runFrame re-baseline.
+    this.lastClockNow = 0;
+    this.startLoop();
+    this.emit();
+  }
+
+  /** Toggle paused state (Escape). */
+  togglePause(): void {
+    if (this.paused) this.resume();
+    else this.pause();
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
   /** Reset to a fresh game (optionally reseeded) and restart play. */
   restart(seed?: number): void {
     this.stop();
@@ -248,6 +309,8 @@ export class GameController {
     this.sweepStartT = 0;
     this.sweepColumnsConsumed = 0;
     this.activeBpm = 0;
+    this.paused = false;
+    this.softDropSustained = false;
     // Re-arm the gesture-resume so start() resumes the context again. The
     // AudioContext itself is already running, so resume() is a cheap no-op, but
     // the flag must not short-circuit the start() path.
@@ -294,6 +357,10 @@ export class GameController {
    * is unit-testable without rAF (see testProductionFrame).
    */
   private runFrame(): void {
+    // Paused: freeze everything. The rAF loop is already cancelled in production,
+    // but guard here too so a directly-driven frame (tests) cannot advance while
+    // paused. Do not emit (state is unchanged).
+    if (this.paused) return;
     const now = this.clock.now();
     // A suspended AudioContext reports now() === 0. This happens on the first
     // pre-resume frame, on the baseline-establishing frame right after resume,
@@ -377,12 +444,35 @@ export class GameController {
       return;
     }
 
+    // Hold-to-sustain soft drop: while the soft-drop key is held (and the spawn-
+    // hold has lapsed), descend at the faster SOFT_DROP_INTERVAL_MS cadence so the
+    // piece falls CONTINUOUSLY at soft-drop speed instead of one row per press.
+    // Otherwise use normal gravity. Each soft-drop step is scored via softDropStep
+    // (the pure softDrop core op), matching a tapped soft drop.
+    const interval = this.softDropSustained
+      ? SOFT_DROP_INTERVAL_MS
+      : GRAVITY_INTERVAL_MS;
+
     this.gravityAccumMs += dtMs;
-    while (this.gravityAccumMs >= GRAVITY_INTERVAL_MS) {
-      this.gravityAccumMs -= GRAVITY_INTERVAL_MS;
-      this.gravityTickAndSpawn();
+    while (this.gravityAccumMs >= interval) {
+      this.gravityAccumMs -= interval;
+      if (this.softDropSustained) {
+        this.sustainedSoftDropTick();
+      } else {
+        this.gravityTickAndSpawn();
+      }
       if (this.state.gameOver) break;
     }
+  }
+
+  /**
+   * One sustained-soft-drop gravity step: a scored {@link softDropStep} (the
+   * piece descends one row, banking +1) with production auto-spawn on lock. Keeps
+   * the same scoring + spawn behaviour as a tapped soft drop, just driven by the
+   * faster sustained cadence rather than a discrete press.
+   */
+  private sustainedSoftDropTick(): void {
+    this.softDropStep();
   }
 
   private gravityTickAndSpawn(): void {
@@ -393,6 +483,9 @@ export class GameController {
     this.state = state;
     if (locked) {
       this.gravityAccumMs = 0;
+      // Clear sustained mode on a natural lock too, for symmetry with the
+      // soft-drop lock path (the next piece's spawn-hold must be honoured).
+      this.softDropSustained = false;
       this.state = spawnFromQueue(this.state); // production auto-spawns
     }
   }
@@ -429,12 +522,26 @@ export class GameController {
     this.emit();
   }
 
-  /** A FRESH, deliberate soft-drop press: ends any hold and engages immediately. */
+  /**
+   * A FRESH, deliberate soft-drop press: ends any hold, does an immediate step,
+   * and ENGAGES sustained mode so HOLDING the key keeps the piece falling at
+   * soft-drop speed (see {@link advanceGravity}). Released by {@link
+   * releaseSoftDrop} (key-up) or cleared automatically on the next lock/spawn.
+   */
   pressSoftDrop(): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
+    if (!this.testMode) this.softDropSustained = true;
     this.state = releaseHold(this.state);
     this.softDropStep();
     this.emit();
+  }
+
+  /**
+   * Soft-drop key released: disengage sustained mode so the piece reverts to the
+   * normal gravity cadence. Production-only; no-op in test mode.
+   */
+  releaseSoftDrop(): void {
+    this.softDropSustained = false;
   }
 
   /** A FRESH, deliberate hard-drop press: ends any hold and drops immediately. */
@@ -465,6 +572,10 @@ export class GameController {
     if (locked && !this.testMode) {
       this.gravityAccumMs = 0;
       this.softDropEngaged = false;
+      // Clear sustained mode on lock so the NEXT piece's spawn-hold is honoured:
+      // the player must press soft-drop again to fast-fall it, matching the
+      // deliberate-placement model (a held key cannot cascade into a new piece).
+      this.softDropSustained = false;
       this.state = spawnFromQueue(this.state);
     }
   }
