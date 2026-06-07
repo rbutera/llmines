@@ -5,6 +5,7 @@ import {
   GRAVITY_INTERVAL_MS,
   gravityStep,
   hardDrop,
+  isResting,
   lockPiece,
   moveLeft,
   moveRight,
@@ -147,6 +148,15 @@ export class GameController {
       this.gravityTickAndSpawn();
       if (this.state.gameOver) break;
     }
+
+    // Immediate settle: once the active piece can no longer descend, lock it
+    // and spawn the next piece right away instead of waiting out the remaining
+    // gravity interval. Combined with the resting-piece fallProgress clamp in
+    // renderState(), this removes the hover/clip artifact at the bottom row.
+    if (!this.state.gameOver && isResting(this.state)) {
+      this.gravityAccumMs = 0;
+      this.state = spawnNext(lockPiece(this.state));
+    }
   }
 
   private gravityTickAndSpawn(): void {
@@ -199,9 +209,10 @@ export class GameController {
     return {
       grid: this.state.grid,
       active: this.state.active,
-      fallProgress: this.testMode
-        ? 0
-        : Math.max(0, Math.min(1, this.gravityAccumMs / interval)),
+      fallProgress:
+        this.testMode || isResting(this.state)
+          ? 0
+          : Math.max(0, Math.min(1, this.gravityAccumMs / interval)),
       score: this.state.score,
       gameOver: this.state.gameOver,
       sweepX: this.state.sweepX,
