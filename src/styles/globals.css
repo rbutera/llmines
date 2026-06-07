@@ -5,6 +5,16 @@
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
+/* Chrome theme tokens — mirror of src/game/theme/tokens.ts. The TS module is the
+   source of truth for the chrome palette (referenced by Tailwind arbitrary
+   values across the chrome); these CSS vars exist so keyframe-driven glow (the
+   score-pop) can use the SAME neon-purple accents the rest of the chrome uses. */
+:root {
+  --accent: #a855f7;
+  --accent-bright: #c45cff;
+  --accent-deep: #7c3aed;
+}
+
 /* Authoritative score "pop": a pure transform/glow on the testid element. The
    element is re-keyed by its value, replaying this each time the score changes.
    Only the transform/filter animate — the text content stays the exact integer,
@@ -16,7 +26,7 @@
   }
   35% {
     transform: scale(1.45);
-    text-shadow: 0 0 18px #37e0c9cc, 0 0 36px #ff5fb088;
+    text-shadow: 0 0 18px var(--accent-bright), 0 0 36px var(--accent-deep);
   }
   100% {
     transform: scale(1);

@@ -149,7 +149,7 @@ export function ThreeRenderer({ controller }: { controller: GameController }) {
         // (width follows from the aspect), with max-h/max-w guarding overflow.
         height: "100%",
         aspectRatio: BOARD_ASPECT,
-        boxShadow: "0 0 60px -15px #37e0c980",
+        boxShadow: "0 0 60px -15px #c45cff80",
       }}
     >
       {/* Settings panel — hidden until toggled so it never blocks play. */}

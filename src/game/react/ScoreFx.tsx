@@ -119,9 +119,9 @@ export function ScoreFx({ score }: { score: number }) {
       >
         <div
           ref={numRef}
-          className="bg-gradient-to-r from-[#9bf6e8] via-white to-[#ffc1e3] bg-clip-text font-mono text-5xl font-black tabular-nums text-transparent"
+          className="bg-gradient-to-r from-[#a855f7] via-white to-[#c45cff] bg-clip-text font-mono text-5xl font-black tabular-nums text-transparent"
           style={{
-            filter: "drop-shadow(0 0 16px #37e0c9aa)",
+            filter: "drop-shadow(0 0 16px #c45cffaa)",
             willChange: "transform, filter",
           }}
         >
@@ -159,7 +159,7 @@ function FloatDelta({ value, intensity }: { value: number; intensity: number }) 
       style={{
         transform: "translate(-50%, 6px)",
         fontSize: `${1.2 + intensity * 1.5}rem`,
-        textShadow: "0 0 12px #fff2a8cc, 0 0 24px #ff5fb088",
+        textShadow: "0 0 12px #fff2a8cc, 0 0 24px #c45cff88",
         willChange: "transform, opacity",
       }}
     >

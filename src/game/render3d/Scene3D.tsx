@@ -16,8 +16,7 @@ import { BackgroundField } from "./BackgroundField";
 import { Bursts, type BurstHandle } from "./Bursts";
 import { ChainWavefront, type ChainWavefrontHandle } from "./ChainWavefront";
 import { PreviewDock } from "./PreviewDock";
-import { SpeedLines } from "./SpeedLines";
-import { SlamFlash, type SlamHandle } from "./SlamFlash";
+import { DropShell, type DropShellHandle } from "./DropShell";
 import { surgeStyleForSkin } from "./surgeStyles";
 import { BOARD_H, BOARD_W, CELL, cellX, cellY } from "./layout";
 
@@ -127,8 +126,12 @@ export function Scene3D({
   const pendingSlamsRef = useRef<
     { cols: number[]; row: number; mag: number; distance: number }[]
   >([]);
-  const slamFlashRef = useRef<SlamHandle>(null);
+  const dropShellRef = useRef<DropShellHandle>(null);
   const shakeRef = useRef<number>(0);
+  // Live world (x,y) of the active piece centre — drives the 3D drop shell + its
+  // world-space after-image trail. Updated every frame from the snapshot; null
+  // when no piece is active so the shell hides.
+  const activeWorldRef = useRef<{ x: number; y: number } | null>(null);
   // Soft-drop trail: last pulse count we observed, and a 0..1 trail energy that
   // rises while soft-drop steps keep arriving and decays when they stop.
   const lastSoftPulseRef = useRef<number>(0);
@@ -352,19 +355,17 @@ export function Scene3D({
           );
           burstsRef.current.spawn(positions, count);
         }
-        // Fire the SLAM FLASH: bright impact bar at the landing row + a descent
-        // streak down the path the piece fell, so the hard-drop reads as a real
-        // impact + speed (item 4 rework), not just a faint dust puff.
-        if (slamFlashRef.current) {
+        // Fire the 3D IMPACT SHELL: an expanding box cage at the landing row, so
+        // the hard-drop reads as a 3D shock + force (not a flat 2D bar). Pairs
+        // with the kept screen-shake + spark puff.
+        if (dropShellRef.current) {
           const r = Math.min(ROWS - 1, Math.max(0, slam.row));
           const minC = Math.min(...slam.cols);
           const maxC = Math.max(...slam.cols);
           const cx = (cellX(minC) + cellX(maxC)) / 2;
-          const topRow = Math.max(0, r - slam.distance);
-          slamFlashRef.current.slam({
+          dropShellRef.current.impact({
             cx,
-            impactY: cellY(r),
-            topY: cellY(topRow),
+            cy: cellY(r),
             width: (maxC - minC + 1) * CELL,
             mag: slam.mag,
             intensity: settings.slamIntensity,
@@ -434,6 +435,7 @@ export function Scene3D({
     if (!grp) return;
     if (!rs?.active) {
       grp.position.y = 0;
+      activeWorldRef.current = null; // no piece -> drop shell hides
       return;
     }
     const { pos } = rs.active;
@@ -460,6 +462,16 @@ export function Scene3D({
     // beat/sweep term anywhere (beat only ever touches emissive).
     const fallOffset = Math.min(rs.fallProgress, roomBelow) * CELL;
     grp.position.y = cellY(pos.row) - fallOffset;
+
+    // Publish the active piece's CENTRE in world space for the 3D drop shell +
+    // its world-space after-image trail. The piece spans cols [pos.col, pos.col+1]
+    // and (visually) the top row baseline minus the smooth fall offset, over a 2x2
+    // footprint — so the centre is half a cell right of cellX(pos.col) and half a
+    // cell below the group's y.
+    activeWorldRef.current = {
+      x: cellX(pos.col) + CELL * 0.5,
+      y: grp.position.y - CELL * 0.5,
+    };
   });
 
   const half = useMemo(() => ({ w: BOARD_W, h: BOARD_H }), []);
@@ -523,22 +535,6 @@ export function Scene3D({
             marked={false}
           />
         ))}
-        {/* Soft-drop speed lines (PART 3): faint upward streaks centred on the
-            piece, energy from trailRef. Centred between the piece's two columns. */}
-        {settings.dropTrailEnabled && active.length > 0 && (
-          <group
-            position={[
-              (cellX(active[0]!.col) + cellX(active[active.length - 1]!.col)) / 2,
-              0,
-              0,
-            ]}
-          >
-            <SpeedLines
-              trailRef={trailRef}
-              intensity={settings.dropTrailIntensity}
-            />
-          </group>
-        )}
       </group>
 
       <SweepBar sweepXRef={sweepXRef} />
@@ -546,9 +542,22 @@ export function Scene3D({
       {/* Particle bursts on clears (pooled; gated on real clear events). */}
       {settings.burstEnabled && <Bursts ref={burstsRef} />}
 
-      {/* Hard-drop SLAM flash: impact bar + descent streak (item 4 rework;
-          pooled; fired once per new lastHardDrop.id). */}
-      {settings.slamEnabled && <SlamFlash ref={slamFlashRef} />}
+      {/* 3D DROP SHELL: a volumetric energy cage wrapping the falling piece, a
+          world-space 3D after-image trail in the column it fell through, and an
+          expanding 3D impact shell on a hard-drop landing (pooled; impact fired
+          once per new lastHardDrop.id). Replaces the old flat SlamFlash bar +
+          SpeedLines smear planes (which read as 2D decals under the ortho cam).
+          Mounted when EITHER drop trail OR slam is on; the continuous shell +
+          trail are gated internally by the energy ref (so with slam-only it stays
+          quiet until a hard-drop impact fires). */}
+      {(settings.dropTrailEnabled || settings.slamEnabled) && (
+        <DropShell
+          ref={dropShellRef}
+          energyRef={trailRef}
+          activeWorldRef={activeWorldRef}
+          intensity={settings.dropTrailIntensity}
+        />
+      )}
 
       {/* Chain-clear travelling wavefront (Phase 3; pooled; fires once per
           new lastChainClear.id, radiating outward by BFS distance). */}

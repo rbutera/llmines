@@ -34,7 +34,7 @@ export function CellGrid({ opacity }: { opacity: number }) {
 
   return (
     <lineSegments geometry={geom}>
-      <lineBasicMaterial color="#2a3550" transparent opacity={opacity} />
+      <lineBasicMaterial color="#3a2a5e" transparent opacity={opacity} />
     </lineSegments>
   );
 }

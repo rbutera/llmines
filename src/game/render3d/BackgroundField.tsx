@@ -51,8 +51,11 @@ const fragment = /* glsl */ `
       sin(p.y * 4.0 - t * 1.3) * 0.5 +
       sin((p.x + p.y) * 5.0 + t * 0.7) * 0.4;
     float r = length(p);
-    // base hue drifts slowly and shifts per skin
-    float hue = fract(0.55 + uSkin * 0.18 + t * 0.02 + flow * 0.05);
+    // Base hue anchored in the VIOLET/MAGENTA family so the background nebula
+    // matches the neon-purple board (the old 0.55 base read teal — a cohesion
+    // gap). Per-skin shift + drift are kept SMALL so every level stays in the
+    // purple world rather than wandering to teal/green. 0.78 ~ violet-magenta.
+    float hue = fract(0.78 + uSkin * 0.05 + t * 0.01 + flow * 0.03);
     vec3 col = hue2rgb(hue);
     // radial vignette so the centre (behind the board) stays calm/dark
     float vign = smoothstep(0.85, 0.15, r);

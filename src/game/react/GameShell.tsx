@@ -192,7 +192,7 @@ export function GameShell() {
 
   return (
     <main
-      className={`relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#070912] text-white ${
+      className={`relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#08060f] text-white ${
         // FIX 1: while playing, drop the reading-page padding so the board can
         // dominate the viewport (~90%). Start / game-over keep the padded column.
         phase === "playing" ? "p-0" : "px-4 py-8"
@@ -246,10 +246,10 @@ function Header() {
   return (
     <div className="mb-6 flex items-center justify-between gap-4">
       <div className="flex items-baseline gap-3">
-        <h1 className="bg-gradient-to-r from-[#37e0c9] to-[#ff5fb0] bg-clip-text text-3xl font-black tracking-tight text-transparent sm:text-4xl">
+        <h1 className="bg-gradient-to-r from-[#a855f7] to-[#c45cff] bg-clip-text text-3xl font-black tracking-tight text-transparent drop-shadow-[0_0_18px_rgba(196,92,255,0.35)] sm:text-4xl">
           LLMines
         </h1>
-        <span className="hidden text-xs tracking-widest text-white/40 uppercase sm:inline">
+        <span className="hidden text-xs tracking-widest text-[#a855f7]/60 uppercase sm:inline">
           a lumines-like
         </span>
       </div>
@@ -291,7 +291,7 @@ function VolumeControl({
           step={0.01}
           value={musicVolume}
           onChange={(e) => onVolumeChange(Number(e.target.value))}
-          className="w-full accent-[#37e0c9]"
+          className="w-full accent-[#c45cff]"
           aria-label="Music volume"
         />
         <span className="w-10 text-right font-mono text-xs tabular-nums text-white/60">
@@ -316,11 +316,11 @@ function StartScreen({
       aria-label="Start"
       className="grid items-start gap-6 md:grid-cols-[1fr_280px]"
     >
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-8 backdrop-blur">
+      <div className="rounded-2xl border border-[#a855f7]/20 bg-[#a855f7]/[0.06] p-8 shadow-[0_0_40px_-20px_rgba(168,85,247,0.6)] backdrop-blur">
         <h2 className="text-2xl font-bold">How to play</h2>
         <p className="mt-3 max-w-prose text-white/70">
           2×2 colour blocks fall onto the field. Line up four cells of the{" "}
-          <span className="text-[#37e0c9]">same colour</span> into a square. A
+          <span className="text-[#c45cff]">same colour</span> into a square. A
           timeline bar sweeps left-to-right in time with the music, clearing
           every square it crosses. Clear more squares in a single sweep to
           multiply your score. The game ends if the stack reaches the top.
@@ -329,7 +329,7 @@ function StartScreen({
           data-testid="start-button"
           onClick={onStart}
           autoFocus
-          className="mt-6 rounded-xl bg-gradient-to-r from-[#37e0c9] to-[#16b89f] px-8 py-3 text-lg font-bold text-[#04140f] shadow-lg transition hover:brightness-110 focus:ring-4 focus:ring-[#37e0c9]/40 focus:outline-none"
+          className="mt-6 rounded-xl bg-gradient-to-r from-[#a855f7] to-[#c45cff] px-8 py-3 text-lg font-bold text-white shadow-[0_0_30px_-6px_rgba(196,92,255,0.7)] transition hover:brightness-110 focus:ring-4 focus:ring-[#c45cff]/40 focus:outline-none"
         >
           Start game
         </button>
@@ -435,8 +435,8 @@ function PlayingScreen({
           >
             <div className="flex max-h-full w-[min(320px,80%)] flex-col gap-4 overflow-auto">
               {paused && (
-                <div className="rounded-xl border border-[#37e0c9]/30 bg-white/5 p-4 text-center backdrop-blur">
-                  <div className="text-lg font-black tracking-wide text-[#37e0c9]">
+                <div className="rounded-xl border border-[#c45cff]/30 bg-white/5 p-4 text-center backdrop-blur">
+                  <div className="text-lg font-black tracking-wide text-[#c45cff]">
                     Paused
                   </div>
                   <div className="mt-1 text-xs text-white/60">
@@ -543,8 +543,8 @@ function GameOverScreen({
       aria-label="Game over"
       className="mx-auto grid max-w-3xl items-start gap-6 md:grid-cols-[1fr_280px]"
     >
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-10 text-center backdrop-blur">
-        <h2 className="text-3xl font-black tracking-tight text-[#ff5fb0]">
+      <div className="rounded-2xl border border-[#c45cff]/20 bg-[#c45cff]/[0.06] p-10 text-center shadow-[0_0_40px_-20px_rgba(196,92,255,0.6)] backdrop-blur">
+        <h2 className="text-3xl font-black tracking-tight text-[#c45cff]">
           Game over
         </h2>
         <div className="mt-6 text-xs tracking-widest text-white/50 uppercase">
@@ -555,7 +555,7 @@ function GameOverScreen({
           data-testid="restart"
           onClick={onRestart}
           autoFocus
-          className="mt-8 rounded-xl bg-gradient-to-r from-[#ff5fb0] to-[#c93f87] px-8 py-3 text-lg font-bold text-white shadow-lg transition hover:brightness-110 focus:ring-4 focus:ring-[#ff5fb0]/40 focus:outline-none"
+          className="mt-8 rounded-xl bg-gradient-to-r from-[#a855f7] to-[#c45cff] px-8 py-3 text-lg font-bold text-white shadow-[0_0_30px_-6px_rgba(196,92,255,0.7)] transition hover:brightness-110 focus:ring-4 focus:ring-[#c45cff]/40 focus:outline-none"
         >
           Play again
         </button>
@@ -571,8 +571,8 @@ function GameOverScreen({
 function BackdropGlow() {
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0">
-      <div className="absolute -top-32 -left-24 h-96 w-96 rounded-full bg-[#37e0c9]/10 blur-3xl" />
-      <div className="absolute -right-24 -bottom-32 h-96 w-96 rounded-full bg-[#ff5fb0]/10 blur-3xl" />
+      <div className="absolute -top-32 -left-24 h-96 w-96 rounded-full bg-[#7c3aed]/15 blur-3xl" />
+      <div className="absolute -right-24 -bottom-32 h-96 w-96 rounded-full bg-[#c45cff]/12 blur-3xl" />
     </div>
   );
 }

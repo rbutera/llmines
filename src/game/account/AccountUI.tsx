@@ -12,7 +12,7 @@ export function AccountBar() {
       <button
         data-testid="signin"
         onClick={signIn}
-        className="flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-white/90 transition hover:bg-white/10 focus:ring-2 focus:ring-[#37e0c9]/40 focus:outline-none"
+        className="flex items-center gap-2 rounded-lg border border-[#a855f7]/25 bg-[#a855f7]/[0.08] px-4 py-2 text-sm font-semibold text-white/90 transition hover:bg-[#a855f7]/15 focus:ring-2 focus:ring-[#c45cff]/40 focus:outline-none"
       >
         <GoogleGlyph />
         Sign in
@@ -30,7 +30,7 @@ export function AccountBar() {
           className="h-8 w-8 rounded-full ring-1 ring-white/20"
         />
       ) : (
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-[#37e0c9] to-[#ff5fb0] text-sm font-black text-[#04140f]">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-[#a855f7] to-[#c45cff] text-sm font-black text-white">
           {user.name.charAt(0).toUpperCase()}
         </div>
       )}
@@ -40,7 +40,7 @@ export function AccountBar() {
       <button
         data-testid="signout"
         onClick={signOut}
-        className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 focus:ring-2 focus:ring-[#ff5fb0]/40 focus:outline-none"
+        className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/70 transition hover:bg-white/10 focus:ring-2 focus:ring-[#c45cff]/40 focus:outline-none"
       >
         Sign out
       </button>
@@ -58,7 +58,7 @@ export function PersonalBest() {
       <p className="text-sm text-white/50">
         <button
           onClick={signIn}
-          className="font-semibold text-[#37e0c9] underline-offset-2 hover:underline"
+          className="font-semibold text-[#c45cff] underline-offset-2 hover:underline"
         >
           Sign in
         </button>{" "}
@@ -74,7 +74,7 @@ export function PersonalBest() {
       </div>
       <div
         data-testid="personal-best"
-        className="mt-1 font-mono text-3xl font-black tabular-nums text-[#9bf6e8]"
+        className="mt-1 font-mono text-3xl font-black tabular-nums text-[#d8b4fe]"
       >
         {personalBest ?? 0}
       </div>
@@ -110,7 +110,7 @@ export function Leaderboard() {
                 </span>
                 <span className="font-semibold text-white/90">{entry.name}</span>
               </span>
-              <span className="font-mono font-black tabular-nums text-[#ffc1e3]">
+              <span className="font-mono font-black tabular-nums text-[#d8b4fe]">
                 {entry.best}
               </span>
             </li>
