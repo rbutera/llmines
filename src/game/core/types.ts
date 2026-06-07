@@ -125,4 +125,12 @@ export interface GameState {
   skinIndex: number;
   /** Squares cleared within the current skin (drives skin advancement). */
   clearsInSkin: number;
+  /**
+   * Soft-drop points accrued for the CURRENT piece but not yet banked. Real
+   * Lumines awards soft-drop points only when the piece settles (locks), as a
+   * single increment — never per descended row in realtime. `softDrop` adds one
+   * here per row descended; `lockPiece` flushes it into `score` and resets it to
+   * 0; spawning a new piece also resets it.
+   */
+  softDropBonus: number;
 }

@@ -5,6 +5,7 @@ import {
   countUpValue,
   scoreIntensity,
   shouldBurst,
+  shouldBurstOnClear,
 } from "./scoreFx";
 
 describe("score-fx model: shouldBurst", () => {
@@ -17,6 +18,18 @@ describe("score-fx model: shouldBurst", () => {
     expect(shouldBurst(4, 4)).toBe(false);
     expect(shouldBurst(12, 0)).toBe(false); // restart
     expect(shouldBurst(5, 3)).toBe(false);
+  });
+});
+
+describe("score-fx model: shouldBurstOnClear", () => {
+  it("fires only when cells were actually cleared this frame", () => {
+    expect(shouldBurstOnClear(1)).toBe(true);
+    expect(shouldBurstOnClear(4)).toBe(true);
+  });
+
+  it("does not fire when no cells cleared (soft-drop / settle score change)", () => {
+    expect(shouldBurstOnClear(0)).toBe(false);
+    expect(shouldBurstOnClear(-3)).toBe(false);
   });
 });
 

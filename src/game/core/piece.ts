@@ -117,6 +117,8 @@ export function spawnGeneratedPiece(
     ...state,
     active: { cells: gp.cells, pos, special: gp.special },
     hold: { active: true, remainingMs: HOLD_MS },
+    // A fresh piece starts with no pending soft-drop bonus.
+    softDropBonus: 0,
   };
 }
 
@@ -152,6 +154,8 @@ export function spawnPiece(state: GameState, cells: Piece): GameState {
     ...state,
     active: { cells, pos },
     hold: { active: true, remainingMs: HOLD_MS },
+    // A fresh piece starts with no pending soft-drop bonus.
+    softDropBonus: 0,
   };
 }
 
@@ -242,11 +246,16 @@ export function lockPiece(state: GameState): GameState {
   }
 
   const settled = settleSpecials(grid, specials);
+  // Bank any soft-drop points accrued for this piece exactly once, now that it
+  // has settled (real-Lumines semantics: soft-drop scores, but only on the
+  // lock, never per row in realtime). Reset the pending bonus for the next piece.
   return {
     ...state,
     grid: settled.grid,
     specials: settled.specials,
     active: null,
+    score: state.score + state.softDropBonus,
+    softDropBonus: 0,
   };
 }
 
@@ -300,8 +309,14 @@ export function gravityStep(state: GameState): {
 
 /**
  * Soft drop: one extra gravity step. When the piece actually descends a row
- * (i.e. it did not lock), award +1 point per the soft-drop scoring rule. A step
- * that locks the piece (it could not descend) scores nothing for that step.
+ * (i.e. it did not lock), ACCRUE +1 soft-drop point into `softDropBonus` rather
+ * than mutating the authoritative `score`. The accrued bonus is banked into
+ * `score` exactly once when the piece settles (see `lockPiece`) — so the score
+ * does NOT tick up in realtime during a slow drop, matching real Lumines.
+ *
+ * A step that locks the piece (it could not descend) does not accrue for that
+ * step, but `gravityStep` -> `lockPiece` flushes whatever was already accrued.
+ * The TOTAL for a drop is unchanged: N descended rows still bank +N on settle.
  */
 export function softDrop(state: GameState): {
   state: GameState;
@@ -309,7 +324,10 @@ export function softDrop(state: GameState): {
 } {
   const result = gravityStep(state);
   if (!result.locked) {
-    return { state: { ...result.state, score: result.state.score + 1 }, locked: false };
+    return {
+      state: { ...result.state, softDropBonus: result.state.softDropBonus + 1 },
+      locked: false,
+    };
   }
   return result;
 }

@@ -29,6 +29,7 @@ export function createGame(seed = 1): GameState {
     queue: [],
     skinIndex: 0,
     clearsInSkin: 0,
+    softDropBonus: 0,
   };
 }
 

@@ -1,7 +1,11 @@
 import { Application, Container, Graphics } from "pixi.js";
 import { BOARD_ASPECT, COLS, ROWS, type Cell, type Grid } from "../core";
 import type { GameController, RenderState } from "../engine/controller";
-import { burstParticleCount, scoreIntensity } from "../fx/scoreFx";
+import {
+  burstParticleCount,
+  scoreIntensity,
+  shouldBurstOnClear,
+} from "../fx/scoreFx";
 
 const CELL = 40;
 const BOARD_W = COLS * CELL; // 640
@@ -33,6 +37,27 @@ interface Flash {
   spark?: boolean;
   /** Per-particle fade rate (1/ms); sparks live a little longer than flashes. */
   decay?: number;
+}
+
+/** Count of non-null (occupied) cells in the settled grid. */
+function occupiedCount(grid: Grid): number {
+  let n = 0;
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      if ((grid[row]![col] ?? null) !== null) n++;
+    }
+  }
+  return n;
+}
+
+/**
+ * Number of settled cells removed between two frames. Settle never changes the
+ * occupied count and a lock only ADDS cells, so a net drop in occupied cells is
+ * exactly a square-clear (sweep deletion / chain flood) this frame. Pure;
+ * exported so the burst-gating decision is unit-testable without Pixi.
+ */
+export function clearedCellCount(prevGrid: Grid, newGrid: Grid): number {
+  return Math.max(0, occupiedCount(prevGrid) - occupiedCount(newGrid));
 }
 
 /** Per-column occupied rows, bottom-to-top, with colours. */
@@ -171,13 +196,22 @@ export class PixiRenderer {
   private onState(rs: RenderState): void {
     const markedSet = new Set(rs.marked.map((m) => m.row * COLS + m.col));
 
+    // Cells that vanished from the settled stack this frame. Settle never
+    // changes the occupied count and a lock only ADDS cells, so a net drop in
+    // occupied cells is precisely a square-clear (sweep deletion / chain flood)
+    // — the one event the center burst is reserved for.
+    const clearedCells = this.prevGrid
+      ? clearedCellCount(this.prevGrid, rs.grid)
+      : 0;
+
     if (this.prevGrid) {
       this.seedCollapse(this.prevGrid, rs.grid);
       this.seedClearFlashes(this.prevGrid, rs.grid);
     }
-    // A score increase fires an in-view burst scaled by the gain. prevScore
-    // starts at 0, so the initial state (score 0) and any reset never burst.
-    if (rs.score > this.prevScore) {
+    // The center score-gain burst fires ONLY on an actual square clear, not on
+    // soft-drop/settle score changes (those bank points without removing cells).
+    // It is still scaled by the score delta so a bigger clear bursts bigger.
+    if (shouldBurstOnClear(clearedCells) && rs.score > this.prevScore) {
       this.seedScoreBurst(rs.score - this.prevScore);
     }
     this.prevScore = rs.score;

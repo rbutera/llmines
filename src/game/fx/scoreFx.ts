@@ -23,6 +23,17 @@ export function shouldBurst(prev: number, next: number): boolean {
   return next > prev;
 }
 
+/**
+ * Whether to fire the center score-gain burst this frame. The burst is reserved
+ * for square-CLEAR events (cells deleted by a sweep), NOT for soft-drop or
+ * settle score changes — those bank points without clearing the board, so they
+ * must not spark in the middle of the play area. Gated purely on the
+ * cleared-cell count: positive => a sweep actually removed cells this frame.
+ */
+export function shouldBurstOnClear(clearedCells: number): boolean {
+  return clearedCells > 0;
+}
+
 /** Normalised 0..1 intensity for a delta; 0 for non-positive deltas. */
 export function scoreIntensity(delta: number, bigClear = BIG_CLEAR_DELTA): number {
   if (delta <= 0) return 0;
