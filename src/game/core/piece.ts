@@ -212,11 +212,27 @@ export function rotateCells(cells: Piece): Piece {
   ];
 }
 
+/**
+ * Where cellIndex k moves to under a CW rotation. cellIndex reads the 2x2 in
+ * row-major order (0=TL, 1=TR, 2=BL, 3=BR). rotateCells maps the cell at
+ * [[a,b],[c,d]] -> [[c,a],[d,b]], i.e. a(0)->TR(1), b(1)->BR(3), c(2)->TL(0),
+ * d(3)->BL(2). So the chain special must follow its cell, not its slot, or it
+ * vanishes / jumps on rotate.
+ */
+const ROTATE_CW_INDEX: readonly [0 | 1 | 2 | 3, 0 | 1 | 2 | 3, 0 | 1 | 2 | 3, 0 | 1 | 2 | 3] =
+  [1, 3, 0, 2];
+
 export function rotateCW(state: GameState): GameState {
   if (!state.active || state.gameOver) return state;
   const rotated = rotateCells(state.active.cells);
   if (!canPlace(state.grid, rotated, state.active.pos)) return state;
-  return { ...state, active: { cells: rotated, pos: state.active.pos } };
+  const special = state.active.special
+    ? { cellIndex: ROTATE_CW_INDEX[state.active.special.cellIndex] }
+    : undefined;
+  return {
+    ...state,
+    active: { cells: rotated, pos: state.active.pos, special },
+  };
 }
 
 /** Can the active piece descend one row? */

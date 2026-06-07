@@ -189,6 +189,31 @@ describe("piece mechanics (4.x)", () => {
     ]);
   });
 
+  it("rotateCW keeps the chain special and remaps its cellIndex to follow the cell", () => {
+    // Regression: rotating used to drop active.special entirely, so a gem block
+    // vanished on rotate. The special must follow its cell: 0->1, 1->3, 2->0, 3->2.
+    const remap = { 0: 1, 1: 3, 2: 0, 3: 2 } as const;
+    ([0, 1, 2, 3] as const).forEach((k) => {
+      const s = spawnPiece(createGame(), [
+        [0, 1],
+        [1, 0],
+      ]);
+      s.active!.special = { cellIndex: k };
+      const r = rotateCW(s);
+      expect(r.active?.special?.cellIndex).toBe(remap[k]);
+    });
+  });
+
+  it("four CW rotations restore the special's original cellIndex", () => {
+    let s = spawnPiece(createGame(), [
+      [0, 1],
+      [1, 0],
+    ]);
+    s.active!.special = { cellIndex: 2 };
+    for (let i = 0; i < 4; i++) s = rotateCW(s);
+    expect(s.active?.special?.cellIndex).toBe(2);
+  });
+
   it("gravity steps down then locks on the floor", () => {
     let s = withPiece(MONO_A);
     let locked = false;
