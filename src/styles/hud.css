@@ -63,8 +63,22 @@
   position: absolute;
   inset: 0;
 }
+/* The HUD floats above the fullscreen board. It MUST be a positioned, full-bleed
+   layer so its z-index actually stacks it over the canvas (a static element's
+   z-index is inert). Pointer-events pass THROUGH the glass to the board by
+   default; interactive controls (the pause button, overlay buttons) re-enable
+   their own pointer events. */
 .hud-layer {
+  position: absolute;
+  inset: 0;
   z-index: 3;
+  pointer-events: none;
+}
+.hud-layer button,
+.hud-layer input,
+.hud-layer a,
+.hud-layer [role="button"] {
+  pointer-events: auto;
 }
 .crt {
   z-index: 6;
