@@ -4,8 +4,8 @@
   "tempo": 126.048,
   "barSeconds": 1.90404,
   "sfxMode": "procedural",
-  "contentEndSeconds": 126.12,
-  "segmentCount": 5,
+  "contentEndSeconds": 197.33,
+  "segmentCount": 10,
   "segments": [
     {
       "index": 0,
@@ -91,6 +91,107 @@
     {
       "index": 4,
       "name": "verse2",
+      "role": "progression",
+      "bars": 8,
+      "lengthSeconds": 15.2323,
+      "bedMode": "startOnEnter",
+      "voxMode": "armedPhrase",
+      "voxEntryBars": [
+        0,
+        4
+      ],
+      "voxLoopable": false,
+      "gate": 2,
+      "excessCarry": "carry",
+      "isTerminalRideout": false,
+      "completionGate": 0,
+      "hasVox": true,
+      "bed": "seg4-bed.mp3",
+      "vox": "seg4-vox.mp3"
+    },
+    {
+      "index": 5,
+      "name": "build2",
+      "role": "progression",
+      "bars": 7,
+      "lengthSeconds": 13.3283,
+      "bedMode": "startOnEnter",
+      "voxMode": "armedPhrase",
+      "voxEntryBars": [
+        0
+      ],
+      "voxLoopable": false,
+      "gate": 2,
+      "excessCarry": "carry",
+      "isTerminalRideout": false,
+      "completionGate": 0,
+      "hasVox": true,
+      "bed": "seg5-bed.mp3",
+      "vox": "seg5-vox.mp3"
+    },
+    {
+      "index": 6,
+      "name": "chorus2",
+      "role": "looper",
+      "bars": 6,
+      "lengthSeconds": 11.4242,
+      "bedMode": "loopRunning",
+      "voxMode": "loopLayer",
+      "voxEntryBars": [
+        0
+      ],
+      "voxLoopable": true,
+      "gate": 5,
+      "excessCarry": "cap",
+      "isTerminalRideout": false,
+      "completionGate": 0,
+      "hasVox": true,
+      "bed": "seg6-bed.mp3",
+      "vox": "seg6-vox.mp3"
+    },
+    {
+      "index": 7,
+      "name": "bridge",
+      "role": "looper",
+      "bars": 16,
+      "lengthSeconds": 30.4646,
+      "bedMode": "loopRunning",
+      "voxMode": "loopLayer",
+      "voxEntryBars": [
+        0
+      ],
+      "voxLoopable": true,
+      "gate": 5,
+      "excessCarry": "cap",
+      "isTerminalRideout": false,
+      "completionGate": 0,
+      "hasVox": true,
+      "bed": "seg7-bed.mp3",
+      "vox": "seg7-vox.mp3"
+    },
+    {
+      "index": 8,
+      "name": "chorus3",
+      "role": "looper",
+      "bars": 8,
+      "lengthSeconds": 15.2323,
+      "bedMode": "loopRunning",
+      "voxMode": "loopLayer",
+      "voxEntryBars": [
+        0
+      ],
+      "voxLoopable": true,
+      "gate": 5,
+      "excessCarry": "cap",
+      "isTerminalRideout": false,
+      "completionGate": 0,
+      "hasVox": true,
+      "bed": "seg8-bed.mp3",
+      "vox": "seg8-vox.mp3"
+    },
+    {
+      "index": 9,
+      "name": "outro",
       "role": "terminal",
       "bars": 8,
       "lengthSeconds": 15.2323,
@@ -103,10 +204,10 @@
       "gate": 0,
       "excessCarry": "discard",
       "isTerminalRideout": true,
-      "completionGate": 0,
+      "completionGate": 4,
       "hasVox": true,
-      "bed": "seg4-bed.mp3",
-      "vox": "seg4-vox.mp3"
+      "bed": "seg9-bed.mp3",
+      "vox": "seg9-vox.mp3"
     }
   ]
 }

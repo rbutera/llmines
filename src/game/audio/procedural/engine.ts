@@ -446,16 +446,15 @@ export class InteractiveAudioEngine {
     master: Tone.Gain,
     manifest: TrackManifest,
   ): Promise<Segment[]> {
-    const bank: Segment[] = [];
-    for (let i = 0; i < manifest.segments.length; i++) {
+    // Load every section's bed + vox CONCURRENTLY (independent fetches): a full
+    // song is 10-12 sections × 2 players, and loading serially made Start wait on
+    // ~20 sequential decodes. Parallel load keeps the bed audible quickly.
+    const loadOne = async (i: number): Promise<Segment> => {
       const meta = manifest.segments[i]!;
       const seg: Segment = { meta };
-      const bedUrl = `${track.base}/${meta.bed}`;
       try {
-        const bedGain = new Tone.Gain(i === activeIndex ? 1 : 0).connect(
-          master,
-        );
-        const bed = await this.loadPlayer(bedUrl);
+        const bedGain = new Tone.Gain(i === activeIndex ? 1 : 0).connect(master);
+        const bed = await this.loadPlayer(`${track.base}/${meta.bed}`);
         if (bed) {
           bed.loop = true;
           bed.connect(bedGain);
@@ -487,9 +486,9 @@ export class InteractiveAudioEngine {
           // vox missing — reveal just won't fire
         }
       }
-      bank[i] = seg;
-    }
-    return bank;
+      return seg;
+    };
+    return Promise.all(manifest.segments.map((_, i) => loadOne(i)));
   }
 
   private async loadSfxSet(

@@ -16,7 +16,11 @@ export default defineConfig({
   // production-start guard + the v2.7 audio-structure probe proof both need the
   // REAL production bundle (audio enabled, no TEST_MODE).
   testMatch: /(production-start|audio-structure)\.spec\.ts/,
-  fullyParallel: true,
+  // Serial: the audio-structure specs run long in-page clear loops that would
+  // starve the rAF-driven sweep assertions in production-start if run in parallel
+  // against the single shared prod server.
+  fullyParallel: false,
+  workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "line" : "list",
