@@ -1,0 +1,132 @@
+{
+  "id": "song1",
+  "name": "Codigo Sin Final",
+  "tempo": 109.9568,
+  "barSeconds": 2.18268,
+  "sfxMode": "adlib",
+  "contentEndSeconds": 113.73,
+  "segmentCount": 6,
+  "segments": [
+    {
+      "index": 0,
+      "name": "intro",
+      "role": "looper",
+      "bars": 16,
+      "lengthSeconds": 34.9228,
+      "bedMode": "loopRunning",
+      "voxMode": "none",
+      "voxEntryBars": [
+        0
+      ],
+      "voxLoopable": false,
+      "gate": 6,
+      "excessCarry": "cap",
+      "isTerminalRideout": false,
+      "completionGate": 0,
+      "hasVox": false,
+      "bed": "seg0-bed.mp3",
+      "vox": null
+    },
+    {
+      "index": 1,
+      "name": "verse1",
+      "role": "progression",
+      "bars": 8,
+      "lengthSeconds": 17.4614,
+      "bedMode": "startOnEnter",
+      "voxMode": "armedPhrase",
+      "voxEntryBars": [
+        0,
+        4
+      ],
+      "voxLoopable": false,
+      "gate": 2,
+      "excessCarry": "carry",
+      "isTerminalRideout": false,
+      "completionGate": 0,
+      "hasVox": true,
+      "bed": "seg1-bed.mp3",
+      "vox": "seg1-vox.mp3"
+    },
+    {
+      "index": 2,
+      "name": "build",
+      "role": "progression",
+      "bars": 4,
+      "lengthSeconds": 8.7307,
+      "bedMode": "startOnEnter",
+      "voxMode": "armedPhrase",
+      "voxEntryBars": [
+        0
+      ],
+      "voxLoopable": false,
+      "gate": 2,
+      "excessCarry": "carry",
+      "isTerminalRideout": false,
+      "completionGate": 0,
+      "hasVox": true,
+      "bed": "seg2-bed.mp3",
+      "vox": "seg2-vox.mp3"
+    },
+    {
+      "index": 3,
+      "name": "chorus",
+      "role": "looper",
+      "bars": 8,
+      "lengthSeconds": 17.4614,
+      "bedMode": "loopRunning",
+      "voxMode": "loopLayer",
+      "voxEntryBars": [
+        0
+      ],
+      "voxLoopable": true,
+      "gate": 5,
+      "excessCarry": "cap",
+      "isTerminalRideout": false,
+      "completionGate": 0,
+      "hasVox": true,
+      "bed": "seg3-bed.mp3",
+      "vox": "seg3-vox.mp3"
+    },
+    {
+      "index": 4,
+      "name": "break",
+      "role": "looper",
+      "bars": 4,
+      "lengthSeconds": 8.7307,
+      "bedMode": "loopRunning",
+      "voxMode": "none",
+      "voxEntryBars": [
+        0
+      ],
+      "voxLoopable": false,
+      "gate": 6,
+      "excessCarry": "cap",
+      "isTerminalRideout": false,
+      "completionGate": 0,
+      "hasVox": false,
+      "bed": "seg4-bed.mp3",
+      "vox": null
+    },
+    {
+      "index": 5,
+      "name": "verse2",
+      "role": "terminal",
+      "bars": 8,
+      "lengthSeconds": 17.4614,
+      "bedMode": "loopRunning",
+      "voxMode": "loopLayer",
+      "voxEntryBars": [
+        0
+      ],
+      "voxLoopable": true,
+      "gate": 0,
+      "excessCarry": "discard",
+      "isTerminalRideout": true,
+      "completionGate": 0,
+      "hasVox": true,
+      "bed": "seg5-bed.mp3",
+      "vox": "seg5-vox.mp3"
+    }
+  ]
+}

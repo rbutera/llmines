@@ -1,142 +1,102 @@
 /**
- * Audio-mix presets. Each preset is two things:
+ * Audio-mix presets — v2.7.
  *
- *  1. A ROUTING table — per {@link AudioEvent} type, which voices fire on that
- *     action: a recorded ad-lib one-shot (`sfx`), a procedural synth blip
- *     (`blip`), both, or nothing; plus whether a chain fires a filter `riser`.
- *  2. An UNLOCK CURVE — how fast "clearing advances the song". Clears bump a
- *     `progression` scalar; it decays when idle; per-layer gain thresholds map
- *     progression onto how much of the recorded song is revealed.
+ * Each preset is two things:
  *
- * One engine reads the active preset, so switching mixes is instant (no
- * teardown). Pure data + pure helpers (no Tone import) so the routing + curve
- * are unit-testable in isolation.
+ *  1. A ROUTING table — per ACTION {@link AudioEvent} type, which voices fire: a
+ *     recorded ad-lib one-shot (`sfx`), a procedural in-key blip (`blip`), or both.
+ *     CLEARS (lineClear / chain) have NO routing — a clear is SILENT by design (it
+ *     only arms/reveals the vocal + advances the song; the engine adds a subtle
+ *     non-match bed duck). Mapping a clear to a sound is the v2.6 bug.
+ *  2. An UNLOCK CURVE — two knobs scaling the manifest's per-section gates: how
+ *     much in-section clearing reveals the vocal (`voxUnlockClears`) and a
+ *     `gateScale` multiplier on the advance gate (lower = the song moves faster).
+ *
+ * One engine reads the active preset, so switching mixes is instant. Pure data +
+ * pure helpers (no Tone import) so the routing + curve are unit-testable.
  */
 
 import type { AudioEvent } from "./engine";
 
 export type AudioMix = "A" | "B" | "C";
 
-/** Which voices an action triggers under a given preset. */
+/** Which voices an ACTION triggers under a given preset. */
 export interface VoiceRouting {
   /** Recorded ad-lib one-shot to play (key into the SFX pool), if any. */
   sfx?: SfxName;
-  /** Whether the procedural synth blip/voice for this action also fires. */
+  /** Whether the procedural in-key blip for this action also fires. */
   blip?: boolean;
-  /** Whether a chain fires the filter riser (only meaningful for `chain`). */
-  riser?: boolean;
 }
 
-/** The eight curated ad-lib slices (see public/audio/sfx-*.mp3). */
-export type SfxName =
-  | "move"
-  | "rotate"
-  | "lock"
-  | "match"
-  | "softdrop"
-  | "harddrop"
-  | "gem"
-  | "chain";
+/**
+ * The action SFX slices (public/audio/sfx-*.mp3). ACTIONS ONLY — there is
+ * deliberately NO clear/match/gem/chain SFX (a clear is silent). song1 supplies
+ * recorded ad-libs for these; song2 (sfxMode "procedural") uses in-key blips.
+ */
+export type SfxName = "move" | "rotate" | "softdrop" | "harddrop" | "stage";
 
-/** How clearing reveals the recorded song layers (the "build" curve). */
+/**
+ * How clearing reveals + advances the song. v2.7: per-section gates live in the
+ * MANIFEST; the preset only SCALES them, so all three mixes share one structural
+ * model and differ in pace/feel.
+ */
 export interface UnlockCurve {
-  // --- VERTICAL: vocal reveal within the active segment ---
-  /** Flat progression added by ANY clear (so even a 1-square clear steps audibly). */
-  perClear: number;
-  /** progression added per cleared square. */
-  perSquare: number;
-  /** progression added per combo step on a clear. */
-  perCombo: number;
-  /** progression added by a chain cascade (per cell, capped by the engine). */
-  perChain: number;
   /**
-   * progression removed each quarter-note ONCE the post-clear grace window has
-   * elapsed (the engine holds progression after each clear). Small, so a normal
-   * clear cadence net-builds the vocal instead of bleeding out between clears.
+   * In-section clearing weight needed to reveal the active section's vocal
+   * (loopLayer) or arm it (armedPhrase). Lower = the vocal comes in sooner.
    */
-  decayPerBeat: number;
-  /** [start, end] progression band over which the VOX layer fades 0 -> full. */
-  vocalBand: [number, number];
-
-  // --- HORIZONTAL: stepping forward through song segments ---
+  voxUnlockClears: number;
   /**
-   * Clearing-weight needed to advance ONE segment. Weight per clear is
-   * `1 + squares + combo` (chains: `2 + size`). Lower = the song moves through
-   * its sections faster. Tuned so a normal session crosses several segments in
-   * the first minute.
+   * Multiplier on each section's manifest `gate` (the clears to advance off that
+   * section). <1 = faster through the song, >1 = slower / dwell longer.
    */
-  clearsPerSegment: number;
+  gateScale: number;
 }
 
 export interface AudioPreset {
   mix: AudioMix;
   label: string;
-  /** Routing per event type. Missing entry = silence for that action. */
-  routing: Record<AudioEvent["type"], VoiceRouting>;
-  curve: UnlockCurve;
+  /** Routing per ACTION event type. Clears are absent (silent by design). */
+  routing: Partial<Record<AudioEvent["type"], VoiceRouting>>;
+  /** In-section vocal-reveal threshold. */
+  voxUnlockClears: number;
+  /** Multiplier on the manifest advance gates. */
+  gateScale: number;
   /** Whether the master filter tracks intensity (B/C feel more reactive). */
   intensityReactive: boolean;
 }
 
-/**
- * A — Subtle. Gentle, slow reveal; ad-libs only on the big musical moments;
- * movement stays light procedural blips. Rotate still makes a (blip) sound.
- */
+/** A — Subtle. Gentle, slow reveal; ad-libs only on rotate/drop; movement is light blips. */
 const PRESET_A: AudioPreset = {
   mix: "A",
   label: "A · Subtle",
   routing: {
     move: { blip: true },
-    rotate: { blip: true },
-    softDrop: { blip: true },
-    lock: { blip: true },
-    lineClear: { sfx: "match" },
-    chain: { sfx: "chain" },
+    rotate: { sfx: "rotate" },
+    softDrop: { sfx: "softdrop" },
+    lock: { sfx: "harddrop" },
   },
-  curve: {
-    perClear: 0.12,
-    perSquare: 0.06,
-    perCombo: 0.05,
-    perChain: 0.12,
-    decayPerBeat: 0.014,
-    vocalBand: [0.1, 0.55],
-    clearsPerSegment: 5, // gentler horizontal advance
-  },
+  voxUnlockClears: 3,
+  gateScale: 1.3, // dwell longer in each section
   intensityReactive: false,
 };
 
-/**
- * B — Reactive (default). Responsive reveal that tracks momentum; ad-libs on
- * matches + hard-drops + chains; rotate gets a soft ad-lib; intensity-reactive
- * filter. The most representative "this is the game's sound" mix.
- */
+/** B — Reactive (default). Responsive reveal; ad-libs on the main actions; reactive filter. */
 const PRESET_B: AudioPreset = {
   mix: "B",
   label: "B · Reactive",
   routing: {
     move: { blip: true },
     rotate: { sfx: "rotate" },
-    softDrop: { blip: true },
+    softDrop: { sfx: "softdrop" },
     lock: { sfx: "harddrop" },
-    lineClear: { sfx: "match", blip: true },
-    chain: { sfx: "chain", riser: true },
   },
-  curve: {
-    perClear: 0.18,
-    perSquare: 0.08,
-    perCombo: 0.07,
-    perChain: 0.18,
-    decayPerBeat: 0.02,
-    vocalBand: [0.05, 0.45], // vox audibly in after ~1 clear, full after ~2
-    clearsPerSegment: 3, // a normal session crosses several segments in the first minute
-  },
+  voxUnlockClears: 2,
+  gateScale: 1.0,
   intensityReactive: true,
 };
 
-/**
- * C — Maximal. Aggressive reveal (full mix on a hot streak); ad-libs on EVERY
- * action layered over procedural blips; chain risers on. Loudest, busiest mix.
- */
+/** C — Maximal. Aggressive reveal; ad-libs on every action layered over blips; fastest advance. */
 const PRESET_C: AudioPreset = {
   mix: "C",
   label: "C · Maximal",
@@ -144,19 +104,10 @@ const PRESET_C: AudioPreset = {
     move: { sfx: "move", blip: true },
     rotate: { sfx: "rotate", blip: true },
     softDrop: { sfx: "softdrop", blip: true },
-    lock: { sfx: "lock", blip: true },
-    lineClear: { sfx: "match", blip: true },
-    chain: { sfx: "chain", blip: true, riser: true },
+    lock: { sfx: "harddrop", blip: true },
   },
-  curve: {
-    perClear: 0.28,
-    perSquare: 0.12,
-    perCombo: 0.1,
-    perChain: 0.28,
-    decayPerBeat: 0.016,
-    vocalBand: [0.03, 0.32], // vox slams in fast
-    clearsPerSegment: 2, // aggressive horizontal advance
-  },
+  voxUnlockClears: 1,
+  gateScale: 0.7, // move through the song faster
   intensityReactive: true,
 };
 
@@ -166,7 +117,7 @@ export const PRESETS: Record<AudioMix, AudioPreset> = {
   C: PRESET_C,
 };
 
-/** Default mix: B (Reactive) — the most representative of the game's sound. */
+/** Default mix: B (Reactive). */
 export const DEFAULT_MIX: AudioMix = "B";
 
 /** Narrow an arbitrary string to a valid {@link AudioMix} (defaults to B). */
@@ -174,18 +125,23 @@ export function asAudioMix(v: unknown): AudioMix {
   return v === "A" || v === "B" || v === "C" ? v : DEFAULT_MIX;
 }
 
-/** The voice routing for one event under a preset (empty object = silence). */
+/**
+ * The voice routing for one event under a preset (empty object = silence). Clears
+ * always route to silence (no entry in `routing`).
+ */
 export function routeEvent(preset: AudioPreset, ev: AudioEvent): VoiceRouting {
   return preset.routing[ev.type] ?? {};
 }
 
 /**
- * Map a progression value (0..1) onto a layer gain (0..1) given the layer's
- * [start, end] reveal band: silent below start, full above end, linear between.
- * Pure — drives the smooth layer ramps without any Tone dependency.
+ * Map a value (0..1) onto a layer gain (0..1) given a [start, end] band: silent
+ * below start, full above end, linear between. Pure.
  */
-export function layerGain(progression: number, [start, end]: [number, number]): number {
-  if (progression <= start) return 0;
-  if (progression >= end) return 1;
-  return (progression - start) / (end - start);
+export function layerGain(
+  value: number,
+  [start, end]: [number, number],
+): number {
+  if (value <= start) return 0;
+  if (value >= end) return 1;
+  return (value - start) / (end - start);
 }

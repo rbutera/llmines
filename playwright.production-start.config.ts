@@ -13,7 +13,9 @@ const DIST = ".next-prod";
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /production-start\.spec\.ts/,
+  // production-start guard + the v2.7 audio-structure probe proof both need the
+  // REAL production bundle (audio enabled, no TEST_MODE).
+  testMatch: /(production-start|audio-structure)\.spec\.ts/,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
