@@ -1,0 +1,108 @@
+{
+  "id": "song2",
+  "name": "Verde el Pipeline",
+  "tempo": 126.048,
+  "barSeconds": 1.90404,
+  "segBars": 8,
+  "musicStart": 0.163,
+  "musicEnd": 126.117,
+  "segmentCount": 8,
+  "segments": [
+    {
+      "index": 0,
+      "bars": 8,
+      "lengthSeconds": 15.2323,
+      "startSeconds": 0.1625,
+      "character": "intro",
+      "hasVox": false,
+      "bedRms": 0.09213,
+      "voxRms": 0.0,
+      "bed": "seg0-bed.mp3",
+      "vox": "seg0-vox.mp3"
+    },
+    {
+      "index": 1,
+      "bars": 8,
+      "lengthSeconds": 15.2323,
+      "startSeconds": 15.3948,
+      "character": "intro",
+      "hasVox": false,
+      "bedRms": 0.16062,
+      "voxRms": 2e-05,
+      "bed": "seg1-bed.mp3",
+      "vox": "seg1-vox.mp3"
+    },
+    {
+      "index": 2,
+      "bars": 8,
+      "lengthSeconds": 15.2323,
+      "startSeconds": 30.6271,
+      "character": "chorus",
+      "hasVox": true,
+      "bedRms": 0.18323,
+      "voxRms": 0.11182,
+      "bed": "seg2-bed.mp3",
+      "vox": "seg2-vox.mp3"
+    },
+    {
+      "index": 3,
+      "bars": 8,
+      "lengthSeconds": 15.2323,
+      "startSeconds": 45.8594,
+      "character": "chorus",
+      "hasVox": true,
+      "bedRms": 0.11426,
+      "voxRms": 0.12245,
+      "bed": "seg3-bed.mp3",
+      "vox": "seg3-vox.mp3"
+    },
+    {
+      "index": 4,
+      "bars": 8,
+      "lengthSeconds": 15.2323,
+      "startSeconds": 61.0917,
+      "character": "chorus",
+      "hasVox": true,
+      "bedRms": 0.21257,
+      "voxRms": 0.06339,
+      "bed": "seg4-bed.mp3",
+      "vox": "seg4-vox.mp3"
+    },
+    {
+      "index": 5,
+      "bars": 8,
+      "lengthSeconds": 15.2323,
+      "startSeconds": 76.324,
+      "character": "chorus",
+      "hasVox": true,
+      "bedRms": 0.2095,
+      "voxRms": 0.11487,
+      "bed": "seg5-bed.mp3",
+      "vox": "seg5-vox.mp3"
+    },
+    {
+      "index": 6,
+      "bars": 8,
+      "lengthSeconds": 15.2323,
+      "startSeconds": 91.5563,
+      "character": "chorus",
+      "hasVox": true,
+      "bedRms": 0.11327,
+      "voxRms": 0.10085,
+      "bed": "seg6-bed.mp3",
+      "vox": "seg6-vox.mp3"
+    },
+    {
+      "index": 7,
+      "bars": 10,
+      "lengthSeconds": 19.0403,
+      "startSeconds": 106.7886,
+      "character": "break/outro",
+      "hasVox": false,
+      "bedRms": 0.12853,
+      "voxRms": 0.0,
+      "bed": "seg7-bed.mp3",
+      "vox": "seg7-vox.mp3"
+    }
+  ]
+}

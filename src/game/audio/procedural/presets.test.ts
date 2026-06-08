@@ -39,10 +39,22 @@ describe("audio presets", () => {
     }
   });
 
-  it("A is sparse on movement ad-libs; C fires an ad-lib on every action", () => {
-    // A: no recorded ad-lib on move / rotate (they stay procedural blips).
+  it("the four brief actions map DISTINCT one-shots in every preset", () => {
+    // rotate / fast-drop (lock) / small-drop (softDrop) / clear-stage (lineClear)
+    for (const mix of ["A", "B", "C"] as AudioMix[]) {
+      const p = PRESETS[mix];
+      expect(routeEvent(p, { type: "rotate" }).sfx, `${mix} rotate`).toBe("rotate");
+      expect(routeEvent(p, { type: "lock" }).sfx, `${mix} fast-drop`).toBe("harddrop");
+      expect(routeEvent(p, { type: "softDrop" }).sfx, `${mix} small-drop`).toBe("softdrop");
+      expect(routeEvent(p, { type: "lineClear", squares: 1, combo: 0 }).sfx, `${mix} clear`).toBe(
+        "match",
+      );
+    }
+  });
+
+  it("A stays sparse on plain MOVE (no ad-lib); C fires an ad-lib on every action", () => {
+    // A: a plain move stays a procedural blip (the brief's four actions excluded).
     expect(routeEvent(PRESETS.A, { type: "move" }).sfx).toBeUndefined();
-    expect(routeEvent(PRESETS.A, { type: "rotate" }).sfx).toBeUndefined();
     // C: every action type maps a recorded ad-lib.
     for (const ev of ACTIONS) {
       expect(routeEvent(PRESETS.C, ev).sfx, `C/${ev.type} should map an ad-lib`).toBeDefined();
@@ -70,38 +82,19 @@ describe("audio presets", () => {
     expect(layerGain(1, [0.2, 0.6])).toBe(1);
   });
 
-  it("reveals the VOX MORE slowly under A than C (per-clear bump + earlier band)", () => {
-    // A's per-clear vertical bump is smaller than C's...
-    const bump = (mix: AudioMix) =>
-      PRESETS[mix].curve.perClear + 1 * PRESETS[mix].curve.perSquare;
-    expect(bump("A")).toBeLessThan(bump("C"));
-    // ...and after ONE typical clear, A's vox is quieter than C's (not saturated).
-    const voxAfterOne = (mix: AudioMix) =>
-      layerGain(bump(mix), PRESETS[mix].curve.vocalBand);
-    expect(voxAfterOne("A")).toBeLessThan(voxAfterOne("C"));
+  it("unlocks the VOX sooner (fewer in-segment clears) under C than A", () => {
+    // voxUnlockClears: A gentlest, C slammiest -> A needs MORE in-segment clearing.
+    expect(PRESETS.A.curve.voxUnlockClears).toBeGreaterThan(PRESETS.C.curve.voxUnlockClears);
+    expect(PRESETS.B.curve.voxUnlockClears).toBeGreaterThanOrEqual(PRESETS.C.curve.voxUnlockClears);
   });
 
-  it("advances segments faster under C than A for the same clears (horizontal)", () => {
-    // weight per clear = 1 + squares + combo; segment index = floor(sum/threshold)
-    const segAfter = (mix: AudioMix, clears: number, squares = 1, combo = 0) => {
-      const per = PRESETS[mix].curve.clearsPerSegment;
-      const weight = 1 + squares + combo;
-      return Math.floor((clears * weight) / per);
-    };
-    // After 6 single clears, C should be on a LATER segment than A.
-    expect(segAfter("C", 6)).toBeGreaterThan(segAfter("A", 6));
-    // And a handful of clears must move the song forward at all under B.
-    expect(segAfter("B", 6)).toBeGreaterThan(0);
-  });
-
-  it("every preset reaches full vox within a few clears (not subtle)", () => {
-    for (const mix of ["A", "B", "C"] as AudioMix[]) {
-      const c = PRESETS[mix].curve;
-      let p = 0;
-      // 4 typical clears (squares=1, combo=0)
-      for (let i = 0; i < 4; i++) p = Math.min(1, p + c.perClear + c.perSquare);
-      const vox = layerGain(p, c.vocalBand);
-      expect(vox, `${mix} vox should be clearly audible after 4 clears`).toBeGreaterThan(0.5);
-    }
+  it("advances segments faster under C than A for the same clears (forward-only)", () => {
+    // Threshold to reach segment N is N*clearsPerSegment; lower per = faster.
+    expect(PRESETS.C.curve.clearsPerSegment).toBeLessThan(PRESETS.A.curve.clearsPerSegment);
+    // A handful of typical clears (weight 2 each) must be enough to move B forward.
+    const weightPerClear = 1 + 1 + 0;
+    const clearsToStep = (mix: AudioMix) =>
+      Math.ceil(PRESETS[mix].curve.clearsPerSegment / weightPerClear);
+    expect(clearsToStep("B")).toBeLessThanOrEqual(4);
   });
 });

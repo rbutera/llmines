@@ -1,0 +1,96 @@
+{
+  "id": "song1",
+  "name": "Especifico Primero",
+  "tempo": 109.957,
+  "barSeconds": 2.18268,
+  "segBars": 8,
+  "musicStart": 0.058,
+  "musicEnd": 113.728,
+  "segmentCount": 7,
+  "segments": [
+    {
+      "index": 0,
+      "bars": 8,
+      "lengthSeconds": 17.4615,
+      "startSeconds": 0.058,
+      "character": "chorus",
+      "hasVox": true,
+      "bedRms": 0.10481,
+      "voxRms": 0.07792,
+      "bed": "seg0-bed.mp3",
+      "vox": "seg0-vox.mp3"
+    },
+    {
+      "index": 1,
+      "bars": 8,
+      "lengthSeconds": 17.4614,
+      "startSeconds": 17.5195,
+      "character": "chorus",
+      "hasVox": true,
+      "bedRms": 0.17096,
+      "voxRms": 0.08404,
+      "bed": "seg1-bed.mp3",
+      "vox": "seg1-vox.mp3"
+    },
+    {
+      "index": 2,
+      "bars": 8,
+      "lengthSeconds": 17.4614,
+      "startSeconds": 34.9809,
+      "character": "chorus",
+      "hasVox": true,
+      "bedRms": 0.09163,
+      "voxRms": 0.14854,
+      "bed": "seg2-bed.mp3",
+      "vox": "seg2-vox.mp3"
+    },
+    {
+      "index": 3,
+      "bars": 8,
+      "lengthSeconds": 17.4614,
+      "startSeconds": 52.4423,
+      "character": "chorus",
+      "hasVox": true,
+      "bedRms": 0.13529,
+      "voxRms": 0.11673,
+      "bed": "seg3-bed.mp3",
+      "vox": "seg3-vox.mp3"
+    },
+    {
+      "index": 4,
+      "bars": 8,
+      "lengthSeconds": 17.4614,
+      "startSeconds": 69.9037,
+      "character": "chorus",
+      "hasVox": true,
+      "bedRms": 0.17532,
+      "voxRms": 0.07161,
+      "bed": "seg4-bed.mp3",
+      "vox": "seg4-vox.mp3"
+    },
+    {
+      "index": 5,
+      "bars": 8,
+      "lengthSeconds": 17.4614,
+      "startSeconds": 87.3651,
+      "character": "verse",
+      "hasVox": true,
+      "bedRms": 0.06658,
+      "voxRms": 0.09479,
+      "bed": "seg5-bed.mp3",
+      "vox": "seg5-vox.mp3"
+    },
+    {
+      "index": 6,
+      "bars": 4,
+      "lengthSeconds": 8.7307,
+      "startSeconds": 104.8265,
+      "character": "verse",
+      "hasVox": true,
+      "bedRms": 0.0,
+      "voxRms": 0.13035,
+      "bed": "seg6-bed.mp3",
+      "vox": "seg6-vox.mp3"
+    }
+  ]
+}

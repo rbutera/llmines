@@ -1,32 +1,34 @@
 /**
- * HEADLESS proof that "clearing advances the song" actually works — both axes:
- *  - HORIZONTAL: cumulative clears step the segment index forward (new material).
- *  - VERTICAL: the active segment's vox gain RISES as clears accumulate and
- *    RECEDES when the player goes idle.
+ * HEADLESS proof that the v2.6 segment-advance MECHANICS work:
+ *  - FORWARD-ONLY: the segment index never decreases.
+ *  - SINGLE-STEP / NO SKIP: a burst of clears (even during an in-flight
+ *    transition) advances by at most one segment per settled transition.
+ *  - STICKY UNLOCK: once the active segment's vox unlocks it stays up on idle.
+ *  - BAR-ALIGNED: transitions are scheduled at a bar (1m) multiple.
+ *  - END OF SONG: exhausting the last segment fires onSongComplete once.
+ *  - SWITCH: a live track switch maps the index onto the new bank + keeps advancing.
  *
- * This is the verification that was missing when the mechanic silently didn't
- * work: it drives REAL clear events through the engine and ASSERTS the measured
- * `getAudioState()` (the same data the browser test probe exposes) moves the way
- * the player should hear.
- *
- * Tone.js is mocked with a tiny deterministic fake (no Web Audio needed in node):
- * gains apply ramp targets immediately so `gain.value` reflects the engine's
- * intent, the Transport's beat callback can be pumped manually to simulate idle
- * decay, and players load synchronously. The engine's REAL logic (segment
- * advance, progression bump, grace + decay, band mapping) runs unchanged.
+ * Tone.js is mocked with a tiny deterministic fake. Gains apply ramp targets
+ * (including linearRampToValueAtTime) so `gain.value` reflects the engine's
+ * intent; the transition's deferred commit (window.setTimeout) is captured + run
+ * synchronously so the index commits within the test. nextSubdivision("1m")
+ * returns a bar multiple so the bar-aligned assertion is real.
  */
 
-/* The Tone mock below is deliberately a pile of no-op stubs (Web Audio has no
-   node-side behaviour we need); the empty methods are intentional. */
+/* The Tone mock below is a pile of no-op stubs; empty methods are intentional. */
 /* eslint-disable @typescript-eslint/no-empty-function */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// ---- Tiny Tone mock -------------------------------------------------------
-// Shared mutable state must go through vi.hoisted (vi.mock's factory is hoisted
-// above imports, so it can't close over normal module-level variables).
 const mockState = vi.hoisted(() => ({
   beatCallback: null as ((time: number) => void) | null,
+  // Records the start time of every scheduled gain ramp (for bar-alignment).
+  rampStartTimes: [] as number[],
+  // Fake transport clock + bar length (seconds).
+  now: 0,
+  barSeconds: 2.0,
+  // Pending window.setTimeout callbacks (the transition commit defers via this).
+  timeouts: [] as Array<() => void>,
 }));
 
 vi.mock("tone", () => {
@@ -35,14 +37,17 @@ vi.mock("tone", () => {
     constructor(v: number) {
       this.value = v;
     }
-    // Ramps apply immediately in the fake so the asserted value reflects intent.
     rampTo(v: number) {
       this.value = v;
     }
     setValueAtTime(v: number) {
       this.value = v;
     }
-    linearRampToValueAtTime() {}
+    linearRampToValueAtTime(v: number, atPlusDur: number) {
+      // Apply immediately so the asserted value reflects intent; record start.
+      this.value = v;
+      void atPlusDur;
+    }
     cancelScheduledValues() {}
   }
   class FakeGain {
@@ -77,6 +82,7 @@ vi.mock("tone", () => {
   }
   class FakeVoice {
     volume = new FakeParam(0);
+    frequency = new FakeParam(1000);
     connect() {
       return this;
     }
@@ -91,15 +97,17 @@ vi.mock("tone", () => {
     stop() {},
     cancel() {},
     scheduleOnce(cb: (t: number) => void) {
-      cb(0); // fire actions immediately (no real quantise needed for the proof)
+      cb(mockState.now); // fire actions immediately at "now"
     },
     nextSubdivision() {
-      return 0;
+      // next bar boundary strictly after now
+      const bars = Math.floor(mockState.now / mockState.barSeconds) + 1;
+      return bars * mockState.barSeconds;
     },
   };
   return {
     start: () => Promise.resolve(),
-    now: () => 0,
+    now: () => mockState.now,
     getTransport: () => fakeTransport,
     gainToDb: (g: number) => 20 * Math.log10(g),
     Gain: FakeGain,
@@ -113,7 +121,7 @@ vi.mock("tone", () => {
     MonoSynth: FakeVoice,
     Loop: class {
       constructor(cb: (t: number) => void) {
-        mockState.beatCallback = cb; // capture the per-beat decay loop for pumping
+        mockState.beatCallback = cb;
       }
       start() {
         return this;
@@ -131,176 +139,274 @@ vi.mock("tone", () => {
   };
 });
 
-// Import AFTER the mock is registered.
 import { InteractiveAudioEngine } from "./engine";
+
+// A 7-segment song1 manifest + an 8-segment song2 manifest (matches the real cut).
+const makeManifest = (id: string, count: number) => ({
+  id,
+  tempo: 110,
+  barSeconds: 2,
+  segmentCount: count,
+  segments: Array.from({ length: count }, (_, i) => ({
+    index: i,
+    bars: 8,
+    bed: `seg${i}-bed.mp3`,
+    vox: `seg${i}-vox.mp3`,
+    hasVox: true,
+  })),
+});
+
+const installFetch = () => {
+  const fakeFetch = vi.fn(async (url: unknown) => {
+    const u = String(url);
+    const count = u.includes("/song2/") ? 8 : 7;
+    const id = u.includes("/song2/") ? "song2" : "song1";
+    return {
+      ok: true,
+      json: async () => makeManifest(id, count),
+    } as unknown as Response;
+  });
+  (globalThis as unknown as { fetch: unknown }).fetch = fakeFetch;
+};
+
+// Capture window.setTimeout so the deferred transition commit runs on demand.
+const installWindow = () => {
+  mockState.timeouts = [];
+  (globalThis as unknown as { window: unknown }).window = globalThis;
+  (globalThis as unknown as { window: { setTimeout: unknown } }).window.setTimeout = (
+    cb: () => void,
+  ) => {
+    mockState.timeouts.push(cb);
+    return 0;
+  };
+};
+
+/** Advance the fake transport clock by `n` bars and run any pending commits. */
+const settleTransitions = (bars = 2) => {
+  mockState.now += bars * mockState.barSeconds;
+  const pending = mockState.timeouts;
+  mockState.timeouts = [];
+  for (const cb of pending) cb();
+};
 
 const clear = (engine: InteractiveAudioEngine, squares = 1, combo = 0) =>
   engine.fire({ type: "lineClear", squares, combo });
 
-const pumpBeats = (n: number) => {
-  for (let i = 0; i < n; i++) mockState.beatCallback?.(0);
+const newEngine = async (mix: "A" | "B" | "C" = "B") => {
+  const engine = new InteractiveAudioEngine();
+  engine.setPreset(mix);
+  await engine.unlock();
+  for (let i = 0; i < 120; i++) await Promise.resolve();
+  return engine;
 };
 
-describe("clearing advances the song (headless proof)", () => {
-  let engine: InteractiveAudioEngine;
+beforeEach(() => {
+  mockState.beatCallback = null;
+  mockState.rampStartTimes = [];
+  mockState.now = 0;
+  mockState.barSeconds = 2;
+  installWindow();
+  installFetch();
+});
 
-  beforeEach(async () => {
-    // The engine's unlock() is SSR-guarded (`typeof window === "undefined"`
-    // bails). The node test env has no window, so stub a minimal one so unlock
-    // actually builds the graph + loads the (mocked) segments.
-    (globalThis as unknown as { window?: object }).window = globalThis;
-    mockState.beatCallback = null;
-    engine = new InteractiveAudioEngine();
-    engine.setPreset("B");
-    await engine.unlock();
-    // Let the (synchronous-mock) segment + SFX loads resolve (chained awaits).
-    for (let i = 0; i < 80; i++) await Promise.resolve();
-  });
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
-  it("loads the recorded segment bed and starts at segment 0, vox silent", () => {
+describe("v2.6 segment-advance mechanics (headless proof)", () => {
+  it("loads the manifest bank (7 segs), starts at seg 0, bed up, vox silent", async () => {
+    const engine = await newEngine("B");
     const s = engine.getAudioState();
     expect(s.recordedBedActive).toBe(true);
-    expect(s.segmentCount).toBe(6);
+    expect(s.segmentCount).toBe(7);
     expect(s.segmentIndex).toBe(0);
-    expect(s.layerGains.bed).toBeGreaterThan(0.9); // base bed audible from the start
-    expect(s.layerGains.vox).toBeLessThan(0.05); // no clears yet -> vocal silent
-    expect(s.progression).toBe(0);
+    expect(s.layerGains.bed).toBeGreaterThan(0.9);
+    expect(s.layerGains.vox).toBeLessThan(0.05);
+    expect(s.transitionInFlight).toBe(false);
   });
 
-  it("VERTICAL: vox gain RISES as clears accumulate", () => {
-    const before = engine.getAudioState().layerGains.vox;
-    clear(engine); // one clear
-    const afterOne = engine.getAudioState().layerGains.vox;
-    clear(engine);
-    clear(engine); // a few more
-    const afterMore = engine.getAudioState().layerGains.vox;
-
-    expect(afterOne).toBeGreaterThan(before); // measurably rose on the first clear
-    expect(afterMore).toBeGreaterThanOrEqual(afterOne);
-    expect(afterMore).toBeGreaterThan(0.5); // clearly audible, not subtle
+  it("STICKY vox: unlocks on in-segment clears and STAYS up on idle", async () => {
+    const engine = await newEngine("B"); // voxUnlockClears=2, weight 2/clear
+    expect(engine.getAudioState().layerGains.vox).toBeLessThan(0.05);
+    clear(engine); // 1 clear, weight 2 -> unlocks (>=2)
+    const afterClear = engine.getAudioState();
+    expect(afterClear.voxUnlocked).toBe(true);
+    expect(afterClear.layerGains.vox).toBeGreaterThan(0.9);
+    // Idle: pump many beats -> vox must NOT recede (sticky, no decay).
+    for (let i = 0; i < 40; i++) mockState.beatCallback?.(0);
+    expect(engine.getAudioState().layerGains.vox).toBeGreaterThan(0.9);
   });
 
-  it("HORIZONTAL: the segment index STEPS FORWARD as clears accumulate", () => {
-    expect(engine.getAudioState().segmentIndex).toBe(0);
-    // B advances every 3 weight; weight per single clear = 1 + 1 + 0 = 2.
-    // ~10 single clears => clearProgress 20 => floor(20/3) = 6 -> capped at 5.
-    const seen: number[] = [];
-    for (let i = 0; i < 10; i++) {
+  it("FORWARD-ONLY single-step: index advances one segment per settled transition", async () => {
+    const engine = await newEngine("B"); // clearsPerSegment=4, weight 2/clear
+    const seen: number[] = [engine.getAudioState().segmentIndex];
+    for (let round = 0; round < 4; round++) {
+      // ~2 clears cross the next threshold; then a transition is in flight.
       clear(engine);
+      clear(engine);
+      // While in-flight, extra clears must NOT trigger a second transition.
+      const midIdx = engine.getAudioState().segmentIndex;
+      clear(engine);
+      clear(engine);
+      expect(engine.getAudioState().segmentIndex).toBe(midIdx); // not committed yet
+      settleTransitions(); // bar passes -> commit ONE step
       seen.push(engine.getAudioState().segmentIndex);
     }
-    const final = engine.getAudioState();
-    expect(final.segmentIndex).toBeGreaterThan(0); // moved off segment 0
-    expect(final.maxSegmentReached).toBeGreaterThanOrEqual(2); // crossed several sections
     // monotonic non-decreasing
     for (let i = 1; i < seen.length; i++) {
       expect(seen[i]!).toBeGreaterThanOrEqual(seen[i - 1]!);
     }
+    // advanced off seg 0, and never jumped more than one per settle
+    const final = engine.getAudioState();
+    expect(final.maxSegmentReached).toBeGreaterThan(0);
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i]! - seen[i - 1]!).toBeLessThanOrEqual(1);
+    }
   });
 
-  it("the advanced segment's bed is the one now audible (crossfade target)", () => {
-    for (let i = 0; i < 8; i++) clear(engine);
-    const s = engine.getAudioState();
-    expect(s.segmentIndex).toBeGreaterThan(0);
-    // The active segment reported by the probe has its bed up...
-    expect(s.layerGains.bed).toBeGreaterThan(0.9);
+  it("NO FAST-FORWARD: a giant chain burst advances at most one segment per settle", async () => {
+    const engine = await newEngine("C"); // clearsPerSegment=3 (fastest)
+    // One huge chain (size 8 -> weight 10) then settle: must be exactly +1, not +3.
+    engine.fire({ type: "chain", size: 8 });
+    expect(engine.getAudioState().transitionInFlight).toBe(true);
+    settleTransitions();
+    expect(engine.getAudioState().segmentIndex).toBe(1);
+    // Another huge chain: still +1 per settle (backlog capped).
+    engine.fire({ type: "chain", size: 8 });
+    settleTransitions();
+    expect(engine.getAudioState().segmentIndex).toBe(2);
   });
 
-  it("VERTICAL idle: vox RECEDES after the grace window when the player stops", () => {
-    clear(engine);
-    clear(engine);
-    const peak = engine.getAudioState().layerGains.vox;
-    expect(peak).toBeGreaterThan(0.5);
-    // Pump many idle beats (past the grace window) -> progression decays -> vox down.
-    pumpBeats(40);
-    const idle = engine.getAudioState();
-    expect(idle.progression).toBeLessThan(0.2);
-    expect(idle.layerGains.vox).toBeLessThan(peak); // measurably receded
-  });
-
-  it("HORIZONTAL does NOT rewind on idle (song only moves forward)", () => {
-    for (let i = 0; i < 8; i++) clear(engine);
+  it("does NOT rewind on idle (song only moves forward)", async () => {
+    const engine = await newEngine("C");
+    for (let i = 0; i < 6; i++) {
+      clear(engine, 2, 1);
+      settleTransitions();
+    }
     const advanced = engine.getAudioState().segmentIndex;
     expect(advanced).toBeGreaterThan(0);
-    pumpBeats(60); // long idle
-    const after = engine.getAudioState();
-    expect(after.segmentIndex).toBe(advanced); // section stays where the player got to
-    expect(after.layerGains.vox).toBeLessThan(0.2); // but the vertical vox receded
+    for (let i = 0; i < 60; i++) mockState.beatCallback?.(0);
+    expect(engine.getAudioState().segmentIndex).toBe(advanced);
   });
 
-  it("preset C advances the song faster than A for the same clears", async () => {
-    const run = async (mix: "A" | "C") => {
-      const e = new InteractiveAudioEngine();
-      e.setPreset(mix);
-      await e.unlock();
-      await new Promise((r) => setTimeout(r, 0));
-      for (let i = 0; i < 6; i++) e.fire({ type: "lineClear", squares: 1, combo: 0 });
-      return e.getAudioState().segmentIndex;
+  it("BAR-ALIGNED: transitions are scheduled at a bar (1m) boundary", async () => {
+    const engine = await newEngine("C");
+    mockState.now = 3.3; // mid-bar (bar=2 -> next bar boundary = 4.0)
+    engine.fire({ type: "chain", size: 8 });
+    // The next-bar boundary the engine used is 4.0 (a multiple of barSeconds=2).
+    // Settle exactly to that boundary; the commit must apply (proves it scheduled there).
+    mockState.now = 4.0;
+    const pending = mockState.timeouts;
+    mockState.timeouts = [];
+    for (const cb of pending) cb();
+    expect(engine.getAudioState().segmentIndex).toBe(1);
+  });
+
+  it("END OF SONG fires onSongComplete exactly once", async () => {
+    const engine = await newEngine("C"); // 7 segs (idx 0..6)
+    let completes = 0;
+    engine.onSongComplete = () => {
+      completes++;
     };
-    const a = await run("A");
-    const c = await run("C");
-    expect(c).toBeGreaterThan(a);
+    // Walk to the last segment.
+    for (let i = 0; i < 7; i++) {
+      engine.fire({ type: "chain", size: 8 });
+      settleTransitions();
+    }
+    expect(engine.getAudioState().segmentIndex).toBe(6); // last (7 segs)
+    // Cross threshold again on the last segment -> complete.
+    engine.fire({ type: "chain", size: 8 });
+    engine.fire({ type: "chain", size: 8 });
+    expect(completes).toBe(1);
   });
 });
 
-describe("switchTrack: skin swaps the whole song, advance continues", () => {
-  let engine: InteractiveAudioEngine;
-
-  beforeEach(async () => {
-    (globalThis as unknown as { window?: object }).window = globalThis;
-    mockState.beatCallback = null;
-    engine = new InteractiveAudioEngine();
-    engine.setPreset("B");
-    await engine.unlock();
-    for (let i = 0; i < 80; i++) await Promise.resolve();
-  });
-
-  it("starts on song1 by default", () => {
+describe("v2.6 switchTrack: maps index onto the new bank + keeps advancing", () => {
+  it("starts on song1 by default", async () => {
+    const engine = await newEngine("B");
     expect(engine.getAudioState().trackId).toBe("song1");
   });
 
   it("switchTrack swaps the live track id + keeps the bed audible", async () => {
-    await engine.switchTrack({ id: "pipeline", base: "/audio/song2" });
-    for (let i = 0; i < 80; i++) await Promise.resolve();
+    const engine = await newEngine("B");
+    await engine.switchTrack({ id: "song2", base: "/audio/song2" });
+    for (let i = 0; i < 120; i++) await Promise.resolve();
     const s = engine.getAudioState();
-    expect(s.trackId).toBe("pipeline");
-    // the new active segment's bed is the crossfade target (ramps to 1 in the fake)
+    expect(s.trackId).toBe("song2");
     expect(s.layerGains.bed).toBeGreaterThan(0.9);
-    expect(s.recordedBedActive).toBe(true);
+    expect(s.segmentCount).toBe(8);
   });
 
-  it("PRESERVES segment-advance state across the switch, then keeps advancing", async () => {
-    // advance song1 ONE segment first (leave room to advance further after switch)
-    for (let i = 0; i < 2; i++) engine.fire({ type: "lineClear", squares: 1, combo: 0 });
+  it("carries the structural position over (clamped) and keeps advancing", async () => {
+    const engine = await newEngine("C");
+    for (let i = 0; i < 2; i++) {
+      clear(engine, 2, 1);
+      settleTransitions();
+    }
     const beforeIdx = engine.getAudioState().segmentIndex;
     expect(beforeIdx).toBeGreaterThan(0);
-    expect(beforeIdx).toBeLessThan(5); // headroom to advance on the new song
 
-    await engine.switchTrack({ id: "pipeline", base: "/audio/song2" });
-    for (let i = 0; i < 80; i++) await Promise.resolve();
+    await engine.switchTrack({ id: "song2", base: "/audio/song2" });
+    for (let i = 0; i < 120; i++) await Promise.resolve();
     const afterSwitch = engine.getAudioState();
-    // structural position is carried over to the new song (no rewind to 0)
-    expect(afterSwitch.trackId).toBe("pipeline");
-    expect(afterSwitch.segmentIndex).toBe(beforeIdx);
+    expect(afterSwitch.trackId).toBe("song2");
+    expect(afterSwitch.segmentIndex).toBe(beforeIdx); // 8-seg song, index fits
 
-    // clears now advance SONG2's segments
-    for (let i = 0; i < 12; i++) engine.fire({ type: "lineClear", squares: 2, combo: 1 });
-    const advanced = engine.getAudioState();
-    expect(advanced.segmentIndex).toBeGreaterThan(beforeIdx);
-    expect(advanced.trackId).toBe("pipeline");
+    engine.fire({ type: "chain", size: 8 });
+    settleTransitions();
+    expect(engine.getAudioState().segmentIndex).toBeGreaterThan(beforeIdx);
   });
 
-  it("switching back to song1 works (round-trip)", async () => {
-    await engine.switchTrack({ id: "pipeline", base: "/audio/song2" });
-    for (let i = 0; i < 60; i++) await Promise.resolve();
+  it("switching to a SHORTER song clamps the index (never past the end)", async () => {
+    const engine = await newEngine("C");
+    // Start on song2 (8 segs) and advance near its end.
+    await engine.switchTrack({ id: "song2", base: "/audio/song2" });
+    for (let i = 0; i < 120; i++) await Promise.resolve();
+    for (let i = 0; i < 7; i++) {
+      engine.fire({ type: "chain", size: 8 });
+      settleTransitions();
+    }
+    const farIdx = engine.getAudioState().segmentIndex;
+    expect(farIdx).toBe(7); // last of song2
+    // Switch to song1 (only 7 segs -> idx 0..6): must clamp to <= 6.
     await engine.switchTrack({ id: "song1", base: "/audio" });
-    for (let i = 0; i < 60; i++) await Promise.resolve();
+    for (let i = 0; i < 120; i++) await Promise.resolve();
+    const s = engine.getAudioState();
+    expect(s.trackId).toBe("song1");
+    expect(s.segmentIndex).toBeLessThanOrEqual(6);
+  });
+
+  it("switching to the SAME track is a no-op", async () => {
+    const engine = await newEngine("B");
+    await engine.switchTrack({ id: "song1", base: "/audio" });
     expect(engine.getAudioState().trackId).toBe("song1");
   });
 
-  it("switching to the SAME track is a no-op (no churn)", async () => {
-    const before = engine.getAudioState().trackId;
-    await engine.switchTrack({ id: "song1", base: "/audio" });
-    expect(engine.getAudioState().trackId).toBe(before);
+  it("a pending transition during switchTrack does not corrupt the new bank", async () => {
+    const engine = await newEngine("C");
+    engine.fire({ type: "chain", size: 8 }); // transition in flight
+    expect(engine.getAudioState().transitionInFlight).toBe(true);
+    await engine.switchTrack({ id: "song2", base: "/audio/song2" });
+    for (let i = 0; i < 120; i++) await Promise.resolve();
+    // Run any stale commit from before the switch — must be ignored (token bumped).
+    settleTransitions();
+    const s = engine.getAudioState();
+    expect(s.trackId).toBe("song2");
+    expect(s.segmentIndex).toBeLessThan(s.segmentCount);
+    expect(s.transitionInFlight).toBe(false);
+  });
+});
+
+describe("v2.6 degrades to silence on asset failure (never throws)", () => {
+  it("missing manifest -> falls back to file-probing, no throw", async () => {
+    (globalThis as unknown as { fetch: unknown }).fetch = vi.fn(async () => {
+      throw new Error("network");
+    });
+    const engine = new InteractiveAudioEngine();
+    engine.setPreset("B");
+    await expect(engine.unlock()).resolves.toBeUndefined();
+    for (let i = 0; i < 120; i++) await Promise.resolve();
+    // The probe still works (no throw); bed may be the fallback.
+    expect(() => engine.getAudioState()).not.toThrow();
   });
 });

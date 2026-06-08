@@ -38,32 +38,27 @@ export type SfxName =
   | "gem"
   | "chain";
 
-/** How clearing reveals the recorded song layers (the "build" curve). */
+/**
+ * How clearing reveals + advances the recorded song. v2.6: the vocal reveal is
+ * STICKY per segment (no decay), so only two knobs remain — how much in-segment
+ * clearing unlocks the vocal, and how much accumulated clearing steps a segment.
+ */
 export interface UnlockCurve {
-  // --- VERTICAL: vocal reveal within the active segment ---
-  /** Flat progression added by ANY clear (so even a 1-square clear steps audibly). */
-  perClear: number;
-  /** progression added per cleared square. */
-  perSquare: number;
-  /** progression added per combo step on a clear. */
-  perCombo: number;
-  /** progression added by a chain cascade (per cell, capped by the engine). */
-  perChain: number;
+  // --- VERTICAL: sticky vocal unlock within the active segment ---
   /**
-   * progression removed each quarter-note ONCE the post-clear grace window has
-   * elapsed (the engine holds progression after each clear). Small, so a normal
-   * clear cadence net-builds the vocal instead of bleeding out between clears.
+   * Clearing-weight (within the current segment) needed to unlock the vocal
+   * layer. Weight per clear is `1 + squares + combo` (chains: `2 + size`). Once
+   * unlocked the vocal STAYS for that section (no idle decay). Lower = the vocal
+   * comes in sooner.
    */
-  decayPerBeat: number;
-  /** [start, end] progression band over which the VOX layer fades 0 -> full. */
-  vocalBand: [number, number];
+  voxUnlockClears: number;
 
   // --- HORIZONTAL: stepping forward through song segments ---
   /**
-   * Clearing-weight needed to advance ONE segment. Weight per clear is
-   * `1 + squares + combo` (chains: `2 + size`). Lower = the song moves through
-   * its sections faster. Tuned so a normal session crosses several segments in
-   * the first minute.
+   * Clearing-weight needed to advance ONE segment (threshold is
+   * `(segmentIndex+1)*clearsPerSegment`). Lower = the song moves through its
+   * sections faster. Advance is forward-only + single-step + in-flight-locked,
+   * so this cannot be spammed to fast-forward.
    */
   clearsPerSegment: number;
 }
@@ -87,20 +82,15 @@ const PRESET_A: AudioPreset = {
   label: "A · Subtle",
   routing: {
     move: { blip: true },
-    rotate: { blip: true },
-    softDrop: { blip: true },
-    lock: { blip: true },
-    lineClear: { sfx: "match" },
+    rotate: { sfx: "rotate" }, // rotate must make a (distinct) sound in every preset
+    softDrop: { sfx: "softdrop" }, // small-drop SFX
+    lock: { sfx: "harddrop" }, // fast-drop slam SFX
+    lineClear: { sfx: "match" }, // clear-stage SFX
     chain: { sfx: "chain" },
   },
   curve: {
-    perClear: 0.12,
-    perSquare: 0.06,
-    perCombo: 0.05,
-    perChain: 0.12,
-    decayPerBeat: 0.014,
-    vocalBand: [0.1, 0.55],
-    clearsPerSegment: 5, // gentler horizontal advance
+    voxUnlockClears: 3, // gentle: vocal unlocks after a few in-segment clears
+    clearsPerSegment: 6, // gentler horizontal advance
   },
   intensityReactive: false,
 };
@@ -116,19 +106,14 @@ const PRESET_B: AudioPreset = {
   routing: {
     move: { blip: true },
     rotate: { sfx: "rotate" },
-    softDrop: { blip: true },
-    lock: { sfx: "harddrop" },
-    lineClear: { sfx: "match", blip: true },
+    softDrop: { sfx: "softdrop" }, // small-drop SFX (distinct from rotate/harddrop)
+    lock: { sfx: "harddrop" }, // fast-drop slam SFX
+    lineClear: { sfx: "match", blip: true }, // clear-stage SFX
     chain: { sfx: "chain", riser: true },
   },
   curve: {
-    perClear: 0.18,
-    perSquare: 0.08,
-    perCombo: 0.07,
-    perChain: 0.18,
-    decayPerBeat: 0.02,
-    vocalBand: [0.05, 0.45], // vox audibly in after ~1 clear, full after ~2
-    clearsPerSegment: 3, // a normal session crosses several segments in the first minute
+    voxUnlockClears: 2, // responsive: vocal in after a couple of in-segment clears
+    clearsPerSegment: 4, // a normal session steps through sections over the run
   },
   intensityReactive: true,
 };
@@ -143,19 +128,14 @@ const PRESET_C: AudioPreset = {
   routing: {
     move: { sfx: "move", blip: true },
     rotate: { sfx: "rotate", blip: true },
-    softDrop: { sfx: "softdrop", blip: true },
-    lock: { sfx: "lock", blip: true },
-    lineClear: { sfx: "match", blip: true },
+    softDrop: { sfx: "softdrop", blip: true }, // small-drop
+    lock: { sfx: "harddrop", blip: true }, // fast-drop slam (consistent across presets)
+    lineClear: { sfx: "match", blip: true }, // clear-stage
     chain: { sfx: "chain", blip: true, riser: true },
   },
   curve: {
-    perClear: 0.28,
-    perSquare: 0.12,
-    perCombo: 0.1,
-    perChain: 0.28,
-    decayPerBeat: 0.016,
-    vocalBand: [0.03, 0.32], // vox slams in fast
-    clearsPerSegment: 2, // aggressive horizontal advance
+    voxUnlockClears: 1, // vocal slams in on the first in-segment clear
+    clearsPerSegment: 3, // aggressive horizontal advance
   },
   intensityReactive: true,
 };
