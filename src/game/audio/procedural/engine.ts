@@ -1,38 +1,30 @@
 /**
- * Interactive-audio engine for LLMines — v2.7 STRUCTURE-AWARE loop-vs-play model.
+ * Interactive-audio ENGINE for LLMines — manifest-driven, 4-layer, loop-quantized,
+ * segment-advancing model (Waves 2-4). Replaces the v2.7 per-segment bed+vox model.
  *
- * Goal: make playing the game FEEL like the soundtrack RESPONDS to you and moves
- * through the real song MUSICALLY. The recorded song is cut on its ACTUAL
- * structure (scripts/cut-v27-segments.py): each section is a bar-aligned chunk
- * tagged with a role + playback modes the engine reads from the manifest.
+ * ── The model in one paragraph ───────────────────────────────────────────────
+ * Each song is a sequence of SEGMENTS. Every segment is pre-rendered at three
+ * TIERS — tier0 = layer-1 bed (perc+bass), tier1 = +layer-2 instrumentation,
+ * tier2 = +layer-3 vocals. Layer 4 (ad-lib SFX) is fired by gameplay, never by the
+ * song. The "4 layers" are delivered as pre-rendered tier files (NOT live stem
+ * summing) — this is the no-hiss mechanic: at steady state exactly ONE bed player
+ * has non-zero gain (≤2 across a crossfade), so the runtime never sums ~22 stems.
  *
- * ── Why v2.7 (the v2.6 bug) ──────────────────────────────────────────────────
- * v2.6 tiled the song into UNIFORM 8-bar windows with no structural awareness and
- * advanced linearly, so sections reassembled in the wrong order and vocals started
- * mid-phrase. It also hardcoded BPM, lost the back half, and played a "match" SFX
- * on every clear. v2.7 fixes all of these:
+ * Two orthogonal progressions, both quantized to loop boundaries:
+ *  - VERTICAL (tier reveal): a tier change is ARMED when enough score lands in the
+ *    current loop and SWAPS on the next loop boundary via an equal-power crossfade
+ *    of two tier files. Lean-forward bias: a dry spell HOLDS the tier and only
+ *    sheds after `shedAfterPasses` passes (set high → effectively bias up).
+ *  - HORIZONTAL (segment advance): at tier2 AND segmentScore ≥ advanceThreshold the
+ *    engine advances to the next segment at the END of the current loop. Forward-
+ *    only, single-step (a burst never skips), in-flight locked by a transitionToken.
+ *    LOOPER segments hold+loop; PROGRESSION segments play through; TERMINAL fires
+ *    onSongComplete once.
  *
- *  - PER-SECTION ROLE: `looper` (intro/break/outro/chorus-backing) repeats
- *    indefinitely as the background bed; `progression` (verses/builds) plays
- *    through and advances on clears; `terminal` is the final ride-out.
- *  - PHASE-CORRECT ENTRY (the core fix): a `loopRunning` bed is prestarted and
- *    gain-gated (loopers — genuinely loopable); a `startOnEnter` bed is (re)started
- *    at OFFSET 0 on the transition bar (progressions — so they never fade in at an
- *    arbitrary loop phase, which was v2.6's mid-phrase bug).
- *  - ARMED-PHRASE VOCALS: for a progression, a clear ARMS the next vocal phrase
- *    and the engine triggers it at the next bar boundary (its phrase start), not
- *    mid-word. For a looper backing vocal (`loopLayer`) the vox is gain-revealed.
- *  - CLEAR IS SILENT: a clear has NO sound of its own — it only arms/reveals the
- *    vocal and feeds the forward-advance accumulator. (A subtle non-match bed duck
- *    acknowledges the clear; never a match SFX.)
- *  - LOCAL SECTION PROGRESS gates the forward-only, single-step, in-flight-locked
- *    advance (no fast-forward). End of song fires `onSongComplete` once.
- *  - BPM is read from the manifest, not hardcoded.
- *
- * SSR-safe: nothing touches Tone until {@link InteractiveAudioEngine.unlock} runs
- * on a real user gesture (Start). Every Tone call is guarded so a failure degrades
- * to silence — it must NEVER throw into the game (the production-start e2e asserts
- * 0 console errors).
+ * SSR-safe: nothing touches Tone until {@link InteractiveAudioEngine.unlock} runs on
+ * a real user gesture (Start). Every Tone call is guarded so a failure degrades to
+ * SILENCE — it must NEVER throw into the game (the production-start e2e asserts 0
+ * console errors). A missing/malformed manifest or missing tier asset → silence.
  */
 
 import * as Tone from "tone";
@@ -44,93 +36,36 @@ import {
   routeEvent,
   type SfxName,
 } from "./presets";
-import { scaleNote } from "./scale";
 
-/** Fallback BPM if a manifest can't be read (procedural bed only). */
+/** Fallback BPM until a manifest is read. */
 const FALLBACK_BPM = 110;
-/** C#4 — action blips ring above the bed root so they cut through. */
-const BLIP_BASE = 61;
-/** Seconds for a layer-gain ramp (vox reveal + segment crossfade). */
-const LAYER_RAMP_S = 0.4;
-/** Carry-over vox floor into a new section when the previous vox was unlocked. */
-const VOX_FLOOR = 0.25;
-/** Default base path for the recorded audio assets (song 1, flat under /audio). */
+/** Default base path for the audio assets + the single manifest. */
 const ASSET_BASE = "/audio";
+/** Equal-power tier/segment crossfade duration (seconds). */
+const XFADE_S = 0.4;
+/** A near-instant ramp (used for fresh bed entry). */
+const SNAP_S = 0.012;
 
-/** Section role drives loop-vs-advance behavior. */
-export type SectionRole = "looper" | "progression" | "terminal";
-/** How a section's bed is played. */
-export type BedMode = "loopRunning" | "startOnEnter";
-/** How a section's vocal is revealed. */
-export type VoxMode = "none" | "loopLayer" | "armedPhrase";
-/** How excess clear-progress beyond a section's gate is handled. */
-export type ExcessCarry = "carry" | "cap" | "discard";
+/** Segment role drives loop-vs-advance behavior. */
+export type SegmentType = "LOOPER" | "PROGRESSION" | "TERMINAL";
 
 /**
- * A TRACK is one full recorded soundtrack under a single asset directory, with a
- * structure `manifest.json` describing the bank. Song 1 lives flat under `/audio`;
- * song 2 ("Verde el Pipeline", phonk) under `/audio/song2`.
+ * A TRACK is one full soundtrack. In the manifest-driven model a track is
+ * identified by its `id`; `base` is retained for back-compat with the skin/host
+ * seam (skins build TrackBundles) but the segment data is resolved from the single
+ * `/audio/manifest.json` by song id (with a `base`→song-dir fallback).
  */
 export interface TrackBundle {
   id: string;
   base: string;
 }
 
-/** Song 1 — the default flat-`/audio` track. */
+/** Song 1 — the default track. */
 export const TRACK_SONG1: TrackBundle = { id: "song1", base: ASSET_BASE };
 
 /** Build a TrackBundle for a per-song asset directory (e.g. "/audio/song2"). */
 export function makeTrack(id: string, base: string): TrackBundle {
   return { id, base };
-}
-
-/** One section's metadata from the per-song structure manifest. */
-interface ManifestSegment {
-  index: number;
-  name: string;
-  role: SectionRole;
-  bars: number;
-  lengthSeconds: number;
-  bedMode: BedMode;
-  voxMode: VoxMode;
-  voxEntryBars: number[];
-  voxLoopable: boolean;
-  gate: number;
-  excessCarry: ExcessCarry;
-  isTerminalRideout: boolean;
-  completionGate: number;
-  hasVox: boolean;
-  bed: string;
-  vox: string | null;
-}
-interface TrackManifest {
-  id: string;
-  name: string;
-  tempo: number;
-  barSeconds: number;
-  sfxMode: "adlib" | "procedural";
-  segmentCount: number;
-  segments: ManifestSegment[];
-}
-
-/** One loaded section: bed + vox players + gain nodes + the manifest metadata. */
-interface Segment {
-  meta: ManifestSegment;
-  bedPlayer?: Tone.Player;
-  voxPlayer?: Tone.Player;
-  bedGain?: Tone.Gain;
-  voxGain?: Tone.Gain;
-}
-
-/** Build the action ad-lib SFX file paths for a track's asset directory. */
-function sfxFilesFor(base: string): Record<SfxName, string> {
-  return {
-    move: `${base}/sfx-move.mp3`,
-    rotate: `${base}/sfx-rotate.mp3`,
-    softdrop: `${base}/sfx-softdrop.mp3`,
-    harddrop: `${base}/sfx-harddrop.mp3`,
-    stage: `${base}/sfx-stage.mp3`,
-  };
 }
 
 /** A coarse "what just happened" describing one game action, fed to the engine. */
@@ -141,6 +76,80 @@ export type AudioEvent =
   | { type: "lock" }
   | { type: "lineClear"; squares: number; combo: number }
   | { type: "chain"; size: number };
+
+// ── manifest shape (data contract from Wave 1) ──────────────────────────────
+
+interface ManifestTiers {
+  tier0: string;
+  tier1: string;
+  tier2: string;
+}
+interface ManifestSegment {
+  id: string;
+  type: SegmentType;
+  bars: number;
+  lengthSeconds: number;
+  character?: string;
+  tiers: ManifestTiers;
+}
+interface ManifestSfx {
+  move?: string;
+  rotate?: string;
+  softdrop?: string;
+  drop?: string;
+  stage?: string;
+}
+interface ManifestSong {
+  id: string;
+  title?: string;
+  tempo: number;
+  barSeconds: number;
+  segments: ManifestSegment[];
+  sfx?: ManifestSfx;
+}
+interface AudioManifest {
+  version?: string;
+  songs: ManifestSong[];
+}
+
+/** Tier index. */
+type Tier = 0 | 1 | 2;
+
+/**
+ * One LOADED segment: a tier player + gain per tier (only the active segment's are
+ * loaded; the rest are lazy). `meta` is the manifest segment + the resolved
+ * absolute tier URLs and the segment's loop length in bars.
+ */
+interface LoadedSegment {
+  meta: ManifestSegment;
+  tierPlayers: (Tone.Player | undefined)[]; // [tier0, tier1, tier2]
+  tierGains: (Tone.Gain | undefined)[];
+  loaded: boolean;
+}
+
+/** Resolve the {move,rotate,softdrop,harddrop,stage} SfxName set from manifest sfx. */
+function sfxUrlFor(
+  name: SfxName,
+  sfx: ManifestSfx | undefined,
+  base: string,
+): string | undefined {
+  if (!sfx) return undefined;
+  // presets call hard-drop "harddrop"; the manifest names it "drop". Every other
+  // SfxName is also a ManifestSfx key, so this maps the one mismatch.
+  const key: keyof ManifestSfx = name === "harddrop" ? "drop" : name;
+  const rel = sfx[key];
+  return rel ? `${base}/${rel}` : undefined;
+}
+
+/** Per-layer add thresholds + bias-up shed + advance gate, scaled by the preset. */
+interface Curve {
+  /** Score-in-loop needed to ARM tier 0->1 and 1->2. */
+  addThreshold: [number, number];
+  /** Loop passes with no qualifying score before a single shed (high = bias up). */
+  shedAfterPasses: number;
+  /** Monotonic segmentScore needed (at tier2) to advance to the next segment. */
+  advanceThreshold: number;
+}
 
 /**
  * Owns all Tone nodes + the Transport. One instance per GameShell. All public
@@ -154,67 +163,43 @@ export class InteractiveAudioEngine {
   private bpm = FALLBACK_BPM;
 
   private master?: Tone.Gain;
-  private filter?: Tone.Filter;
 
-  private segments: Segment[] = [];
+  private manifest?: AudioManifest;
+  private song?: ManifestSong;
+  private currentTrack: TrackBundle = TRACK_SONG1;
+  private switching = false;
+  private bedReady = false;
+
+  /** All segments of the active song; only `loaded` ones have live players. */
+  private segments: LoadedSegment[] = [];
   private segmentIndex = 0;
   private maxSegmentReached = 0;
-  private recordedBedActive = false;
 
-  private currentTrack: TrackBundle = TRACK_SONG1;
-  private manifest?: TrackManifest;
-  private switching = false;
+  // ── Loop-quantize (vertical tier) state, for the ACTIVE segment ─────────────
+  private tier: Tier = 0;
+  private armedTier: Tier = 0;
+  private scoreSinceLastPass = 0;
+  private passesSinceScore = 0;
+  /** A tier crossfade is mid-flight (between two tier files of the same segment). */
+  private tierFading = false;
 
-  private sfxPlayers: Partial<Record<SfxName, Tone.Player>> = {};
-
-  // Procedural fallback bed voices (used only if the recorded base fails).
-  private kick?: Tone.MembraneSynth;
-  private snare?: Tone.NoiseSynth;
-  private hat?: Tone.NoiseSynth;
-  private bass?: Tone.MonoSynth;
-  private arp?: Tone.PolySynth;
-  private pad?: Tone.PolySynth;
-  private padGain?: Tone.Gain;
-
-  // Procedural action voices (blips — always available; song2's primary SFX layer).
-  private blip?: Tone.PolySynth;
-  private thud?: Tone.MembraneSynth;
-
-  private lastTriggerTime = 0;
-  private loops: Tone.Loop[] = [];
-  private seq?: Tone.Sequence<number | null>;
-  private intensity = 0;
-
-  // ── Horizontal advance (LOCAL section progress) ─────────────────────────────
-  /** Clearing weight accumulated WITHIN the active section (reset on entry). */
-  private sectionClearProgress = 0;
-  /** Excess carried INTO the next section from the previous (per excessCarry). */
-  private carriedProgress = 0;
+  // ── Horizontal segment-advance state ────────────────────────────────────────
+  /** Monotonic score within the active segment (reset on segment entry). */
+  private segmentScore = 0;
   private transitionInFlight = false;
   private transitionToken = 0;
-  /** Index a transition is moving toward (so clears mid-transition attribute right). */
+  /** Index a transition is moving toward. */
   private pendingSegmentIndex: number | null = null;
-  /** Transport event ids scheduled for an in-flight transition (cancel on invalidate). */
-  private pendingTransportEvents: number[] = [];
+  /** Transport event ids scheduled for the active loop quantize (cancelled on reset). */
+  private scheduledEvents: number[] = [];
+
   onSongComplete?: () => void;
   private songCompleted = false;
 
-  // ── Vertical (vocal) reveal ─────────────────────────────────────────────────
-  private activeVoxUnlocked = false;
-  private prevVoxUnlocked = false;
-  /** A clear has armed the next vocal phrase (progression armedPhrase mode). */
-  private voxArmed = false;
-  /** Transport ids for an armed-phrase trigger (cancelled on section change). */
-  private pendingVoxEvents: number[] = [];
+  // ── public config ───────────────────────────────────────────────────────────
 
   setPreset(mix: AudioMix): void {
     this.preset = PRESETS[mix];
-    try {
-      this.applyVoxReveal();
-      this.applyIntensity();
-    } catch {
-      // best-effort
-    }
   }
 
   getPreset(): AudioMix {
@@ -231,35 +216,51 @@ export class InteractiveAudioEngine {
     return this.currentTrack.id;
   }
 
-  /** The active segment, or undefined. */
-  private active(): Segment | undefined {
+  /** The active loaded segment, or undefined. */
+  private active(): LoadedSegment | undefined {
     return this.segments[this.segmentIndex];
   }
 
+  /** The active preset's loop-quantize curve (no decay fields — D-spec). */
+  private curve(): Curve {
+    const c = this.preset.curve;
+    return {
+      addThreshold: [
+        Math.max(1, c.addThreshold[0]),
+        Math.max(1, c.addThreshold[1]),
+      ],
+      shedAfterPasses: Math.max(1, c.shedAfterPasses),
+      advanceThreshold: Math.max(1, c.advanceThreshold),
+    };
+  }
+
   /**
-   * Live audio state for the test probe (MECHANICS are HEADLESS-VERIFIABLE).
-   * Actual audio-param gains are read (not targets) so a verification proves the
-   * ramps really moved. Reports the active section ROLE + bed mode so looper-holds
-   * vs progression-advances are assertable.
+   * Live audio state for the test probe (mechanics are HEADLESS-VERIFIABLE).
+   * `activeStems` = count of bed tier players at non-zero gain (proves the no-hiss
+   * bound). Gains are READ (not targets) so a verification proves ramps moved.
    */
   getAudioState(): {
     segmentIndex: number;
     maxSegmentReached: number;
     segmentCount: number;
-    activeRole: SectionRole | null;
-    activeBedMode: BedMode | null;
     transitionInFlight: boolean;
-    pendingSegmentIndex: number | null;
-    sectionClearProgress: number;
-    voxUnlocked: boolean;
-    voxArmed: boolean;
-    recordedBedActive: boolean;
-    bpm: number;
-    layerGains: { bed: number; vox: number };
-    intensity: number;
+    segmentScore: number;
+    tier: Tier;
+    armedTier: Tier;
+    layerGains: number[];
+    activeStems: number;
     trackId: string;
-    /** @deprecated back-compat: vox gain target. */
-    progression: number;
+    bpm: number;
+    /** @deprecated back-compat with the old probe consumers. */
+    activeRole: string | null;
+    /** @deprecated back-compat. */
+    recordedBedActive: boolean;
+    /** @deprecated back-compat. */
+    voxUnlocked: boolean;
+    /** @deprecated back-compat. */
+    voxArmed: boolean;
+    /** @deprecated back-compat: {bed,vox}-shaped view of the active tier gains. */
+    bedVox: { bed: number; vox: number };
   } {
     const read = (g: Tone.Gain | undefined): number => {
       try {
@@ -269,127 +270,64 @@ export class InteractiveAudioEngine {
       }
     };
     const a = this.active();
-    const voxGain = read(a?.voxGain);
+    const gains = [0, 1, 2].map((t) => read(a?.tierGains[t]));
+    // count non-zero-gain bed players across ALL segments (proves the bound).
+    let activeStems = 0;
+    for (const seg of this.segments) {
+      for (let t = 0; t < 3; t++) {
+        if (seg.tierPlayers[t] && read(seg.tierGains[t]) > 0.001) activeStems++;
+      }
+    }
     return {
       segmentIndex: this.segmentIndex,
       maxSegmentReached: this.maxSegmentReached,
       segmentCount: this.segments.length,
-      activeRole: a?.meta.role ?? null,
-      activeBedMode: a?.meta.bedMode ?? null,
       transitionInFlight: this.transitionInFlight,
-      pendingSegmentIndex: this.pendingSegmentIndex,
-      sectionClearProgress: this.sectionClearProgress,
-      voxUnlocked: this.activeVoxUnlocked,
-      voxArmed: this.voxArmed,
-      recordedBedActive: this.recordedBedActive,
-      bpm: this.bpm,
-      layerGains: { bed: read(a?.bedGain), vox: voxGain },
-      intensity: this.intensity,
+      segmentScore: this.segmentScore,
+      tier: this.tier,
+      armedTier: this.armedTier,
+      layerGains: gains,
+      activeStems,
       trackId: this.currentTrack.id,
-      progression: voxGain,
+      bpm: this.bpm,
+      activeRole: a?.meta.type ?? null,
+      recordedBedActive: this.bedReady,
+      voxUnlocked: this.tier >= 2,
+      voxArmed: this.armedTier >= 2,
+      bedVox: { bed: Math.min(1, gains[0]! + gains[1]!), vox: gains[2]! },
     };
   }
+
+  // ── lifecycle ────────────────────────────────────────────────────────────────
 
   async unlock(): Promise<void> {
     if (this.started) return;
     if (typeof window === "undefined") return;
     try {
       await Tone.start();
-      this.build();
+      this.master = new Tone.Gain(this.volume).toDestination();
       const t = Tone.getTransport();
-      t.bpm.value = this.bpm; // provisional; manifest updates it once loaded
+      t.bpm.value = this.bpm;
       t.swing = 0;
       t.start();
       this.started = true;
       this.applyVolume();
-      void this.loadRecorded();
+      void this.loadSong(this.currentTrack);
     } catch {
       this.started = false;
     }
   }
 
-  private build(): void {
-    this.master = new Tone.Gain(this.volume).toDestination();
-    this.filter = new Tone.Filter({
-      type: "lowpass",
-      frequency: 1400,
-      Q: 0.7,
-    }).connect(this.master);
-    this.buildProceduralBed();
-    this.buildActionVoices();
-    this.buildProceduralBedLoops();
+  // ── manifest + lazy segment load ───────────────────────────────────────────
 
-    const decay = new Tone.Loop((time) => {
-      this.intensity = Math.max(0, this.intensity - 0.06);
-      this.applyIntensity(time);
-    }, "4n").start(0);
-    this.loops.push(decay);
-  }
-
-  // ---- timing helpers ------------------------------------------------------
-
-  /** Next bar-boundary transport time (safe fallback to now). */
-  private nextBar(): number {
+  private async loadManifest(): Promise<AudioManifest | undefined> {
     try {
-      return Tone.getTransport().nextSubdivision("1m");
-    } catch {
-      return Tone.now();
-    }
-  }
-
-  /**
-   * Schedule a gain ramp to `target` over `dur`, starting at transport time `at`,
-   * using cancel→setValueAtTime(current,at)→linearRampToValueAtTime so the START
-   * time is real (and assertable as a bar multiple), not an immediate jump.
-   */
-  private rampGain(
-    g: Tone.Gain | undefined,
-    target: number,
-    dur: number,
-    at?: number,
-  ): void {
-    if (!g) return;
-    try {
-      const now = Tone.now();
-      const start = at != null ? Math.max(at, now) : now;
-      const cur = g.gain.value;
-      g.gain.cancelScheduledValues(start);
-      g.gain.setValueAtTime(cur, start);
-      g.gain.linearRampToValueAtTime(target, start + dur);
-    } catch {
-      try {
-        g.gain.rampTo(target, dur);
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  /** Cancel any scheduled automation on a gain (used when invalidating a transition). */
-  private cancelGain(g: Tone.Gain | undefined): void {
-    if (!g) return;
-    try {
-      const now = Tone.now();
-      const cur = g.gain.value;
-      g.gain.cancelScheduledValues(now);
-      g.gain.setValueAtTime(cur, now);
-    } catch {
-      // ignore
-    }
-  }
-
-  // ---- manifest + asset loading -------------------------------------------
-
-  private async loadManifest(
-    track: TrackBundle,
-  ): Promise<TrackManifest | undefined> {
-    try {
-      const res = await fetch(`${track.base}/manifest.json`, {
+      const res = await fetch(`${ASSET_BASE}/manifest.json`, {
         cache: "force-cache",
       });
       if (!res.ok) return undefined;
-      const m = (await res.json()) as TrackManifest;
-      if (!m || !Array.isArray(m.segments) || m.segments.length === 0)
+      const m = (await res.json()) as AudioManifest;
+      if (!m || !Array.isArray(m.songs) || m.songs.length === 0)
         return undefined;
       return m;
     } catch {
@@ -397,121 +335,64 @@ export class InteractiveAudioEngine {
     }
   }
 
-  private async loadRecorded(): Promise<void> {
-    const master = this.master;
-    if (!master) return;
-    const track = this.currentTrack;
-    const manifest = await this.loadManifest(track);
-    if (!manifest) return; // no structured assets — procedural bed keeps running
-    const bank = await this.loadSegmentBank(
-      track,
-      this.segmentIndex,
-      master,
-      manifest,
-    );
-    if (this.currentTrack.id !== track.id) {
-      this.disposeBank(bank);
-      return;
-    }
-    this.manifest = manifest;
-    this.applyManifestTempo(manifest);
-    if (bank[this.segmentIndex]?.bedPlayer && !this.recordedBedActive) {
-      this.recordedBedActive = true;
-      this.fadeProceduralBed(0);
-    }
-    this.segments = bank;
-    this.enterSection(this.segmentIndex, this.nextBar(), /*fresh*/ true);
-    if (this.currentTrack.id === track.id) {
-      this.sfxPlayers = await this.loadSfxSet(track, master);
-    }
+  /** Resolve a song from the manifest for a track (by id, then base dir). */
+  private resolveSong(
+    manifest: AudioManifest,
+    track: TrackBundle,
+  ): ManifestSong | undefined {
+    const byId = manifest.songs.find((s) => s.id === track.id);
+    if (byId) return byId;
+    // skins use ids like "pipeline" with base "/audio/song2"; fall back to the
+    // last path segment of base (song2) so the skin seam still resolves.
+    const dir = track.base.split("/").filter(Boolean).pop();
+    const byDir = manifest.songs.find((s) => s.id === dir);
+    return byDir ?? manifest.songs[0];
   }
 
-  private applyManifestTempo(m: TrackManifest): void {
-    this.bpm = m.tempo > 0 ? m.tempo : this.bpm;
-    try {
-      Tone.getTransport().bpm.value = this.bpm;
-    } catch {
-      // ignore
-    }
+  /** Build the empty (unloaded) segment list for a song. */
+  private buildSegments(song: ManifestSong): LoadedSegment[] {
+    return song.segments.map((meta) => ({
+      meta,
+      tierPlayers: [undefined, undefined, undefined],
+      tierGains: [undefined, undefined, undefined],
+      loaded: false,
+    }));
   }
 
   /**
-   * Load a full segment bank. A `loopRunning` bed is started looping synced to the
-   * transport (phase-running, gain-gated). A `startOnEnter` bed is NOT started here
-   * — it is started at offset 0 on entry so it enters phase-correct.
+   * Lazily load a segment's three tier players (idempotent). Each tier is a synced
+   * loop at gain 0; the active tier is gained up by the caller. A failed fetch
+   * leaves that tier silent (degrade, never throw).
    */
-  private async loadSegmentBank(
-    track: TrackBundle,
-    activeIndex: number,
-    master: Tone.Gain,
-    manifest: TrackManifest,
-  ): Promise<Segment[]> {
-    // Load every section's bed + vox CONCURRENTLY (independent fetches): a full
-    // song is 10-12 sections × 2 players, and loading serially made Start wait on
-    // ~20 sequential decodes. Parallel load keeps the bed audible quickly.
-    const loadOne = async (i: number): Promise<Segment> => {
-      const meta = manifest.segments[i]!;
-      const seg: Segment = { meta };
-      try {
-        const bedGain = new Tone.Gain(i === activeIndex ? 1 : 0).connect(master);
-        const bed = await this.loadPlayer(`${track.base}/${meta.bed}`);
-        if (bed) {
-          bed.loop = true;
-          bed.connect(bedGain);
-          if (meta.bedMode === "loopRunning") {
-            bed.sync().start(0); // phase-running with the transport
-          }
-          seg.bedPlayer = bed;
-          seg.bedGain = bedGain;
-        } else {
-          bedGain.dispose();
-        }
-      } catch {
-        // bed missing — that section just won't play
-      }
-      if (meta.hasVox && meta.vox) {
+  private async loadSegment(index: number): Promise<void> {
+    const master = this.master;
+    const seg = this.segments[index];
+    if (!master || !seg || seg.loaded) return;
+    seg.loaded = true; // claim early so concurrent prefetch doesn't double-load
+    const tierUrls = [
+      `${ASSET_BASE}/${seg.meta.tiers.tier0}`,
+      `${ASSET_BASE}/${seg.meta.tiers.tier1}`,
+      `${ASSET_BASE}/${seg.meta.tiers.tier2}`,
+    ];
+    await Promise.all(
+      tierUrls.map(async (url, t) => {
         try {
-          const voxGain = new Tone.Gain(0).connect(master);
-          const vox = await this.loadPlayer(`${track.base}/${meta.vox}`);
-          if (vox) {
-            vox.loop = meta.voxMode === "loopLayer";
-            vox.connect(voxGain);
-            if (meta.voxMode === "loopLayer") vox.sync().start(0);
-            seg.voxPlayer = vox;
-            seg.voxGain = voxGain;
+          const gain = new Tone.Gain(0).connect(master);
+          const player = await this.loadPlayer(url);
+          if (player) {
+            player.loop = true;
+            player.connect(gain);
+            player.sync().start(0); // phase-running with the transport, gated to 0
+            seg.tierPlayers[t] = player;
+            seg.tierGains[t] = gain;
           } else {
-            voxGain.dispose();
+            gain.dispose();
           }
         } catch {
-          // vox missing — reveal just won't fire
+          // tier missing — that tier just won't play
         }
-      }
-      return seg;
-    };
-    return Promise.all(manifest.segments.map((_, i) => loadOne(i)));
-  }
-
-  private async loadSfxSet(
-    track: TrackBundle,
-    master: Tone.Gain,
-  ): Promise<Partial<Record<SfxName, Tone.Player>>> {
-    const out: Partial<Record<SfxName, Tone.Player>> = {};
-    // Procedural-SFX songs (song2) deliberately use the in-key blip layer, not
-    // recorded one-shots: skip loading recorded SFX so actions fall back to blips.
-    if (this.manifest?.sfxMode === "procedural") return out;
-    const files = sfxFilesFor(track.base);
-    for (const name of Object.keys(files) as SfxName[]) {
-      try {
-        const p = await this.loadPlayer(files[name]);
-        if (p) {
-          p.connect(master);
-          out[name] = p;
-        }
-      } catch {
-        // missing SFX falls back to a procedural blip at play time
-      }
-    }
-    return out;
+      }),
+    );
   }
 
   private loadPlayer(url: string): Promise<Tone.Player | null> {
@@ -535,342 +416,258 @@ export class InteractiveAudioEngine {
     });
   }
 
-  private disposeBank(bank: Segment[]): void {
-    for (const seg of bank) {
-      for (const n of [
-        seg.bedPlayer,
-        seg.voxPlayer,
-        seg.bedGain,
-        seg.voxGain,
-      ]) {
-        try {
-          n?.dispose();
-        } catch {
-          // ignore
-        }
-      }
+  /** Load the song bank: manifest → song → load intro segment → enter it. */
+  private async loadSong(track: TrackBundle): Promise<void> {
+    const master = this.master;
+    if (!master) return;
+    const manifest = await this.loadManifest();
+    if (!manifest) return; // degrade to silence
+    const song = this.resolveSong(manifest, track);
+    if (!song || song.segments.length === 0) return;
+    if (this.currentTrack.id !== track.id) return; // a switch superseded us
+
+    this.manifest = manifest;
+    this.song = song;
+    this.segments = this.buildSegments(song);
+    this.segmentIndex = 0;
+    this.maxSegmentReached = 0;
+    this.applyTempo(song);
+
+    // Initial load = intro tiers only (lazy per-segment).
+    await this.loadSegment(0);
+    if (this.currentTrack.id !== track.id) {
+      this.disposeAll();
+      return;
+    }
+    this.enterSegment(0, /*fresh*/ true);
+    this.bedReady = true;
+    void this.prefetch(1);
+    this.scheduleLoopTick();
+  }
+
+  private applyTempo(song: ManifestSong): void {
+    this.bpm = song.tempo > 0 ? song.tempo : this.bpm;
+    try {
+      Tone.getTransport().bpm.value = this.bpm;
+    } catch {
+      // ignore
     }
   }
 
-  // ---- section entry (PHASE-CORRECT) --------------------------------------
+  /** Prefetch (lazy-load) a segment ahead of reaching it. Best-effort. */
+  private async prefetch(index: number): Promise<void> {
+    if (index < 0 || index >= this.segments.length) return;
+    await this.loadSegment(index);
+  }
+
+  // ── segment entry + tier state ──────────────────────────────────────────────
 
   /**
-   * Enter section `index` at transport time `at`. PHASE-CORRECT: a `startOnEnter`
-   * bed is (re)started at offset 0 so it enters at its musical start (the v2.6
-   * mid-phrase fix); a `loopRunning` bed is already phase-running, just gain it up.
-   * Resets the local section progress + vocal-arm state for the new section.
+   * Enter segment `index`. Tier resets per the lean-forward energy floor: a fresh
+   * intro floors at tier1 (honor Wave 1 flag: s1-intro tier0 is silent) and a
+   * mid-song entry coming off tier2 also enters at tier1 to keep momentum;
+   * otherwise tier0 (each section re-earns its arrangement).
    */
-  private enterSection(index: number, at: number, fresh: boolean): void {
+  private enterSegment(index: number, fresh: boolean, prevTier: Tier = 0): void {
     const seg = this.segments[index];
     if (!seg) return;
 
-    // Clear any armed-phrase pending triggers from the previous section.
-    this.clearPendingVox();
+    // Energy floor: never let the first heard segment be silent; carry momentum.
+    let startTier: Tier = 0;
+    if (fresh) startTier = 1; // lean-forward "enter at tier1" (also covers s1-intro)
+    else if (prevTier >= 2) startTier = 1;
 
-    if (seg.meta.bedMode === "startOnEnter" && seg.bedPlayer) {
-      try {
-        seg.bedPlayer.stop();
-        seg.bedPlayer.loop = true;
-        // start at offset 0 on the bar boundary -> musical start, never mid-phrase
-        seg.bedPlayer.start(at, 0);
-      } catch {
-        // ignore
-      }
-    }
-    this.rampGain(seg.bedGain, 1, fresh ? 0.01 : LAYER_RAMP_S, at);
+    // Clamp to a tier that actually loaded (degrade gracefully).
+    startTier = this.lowestAvailableAtOrBelow(seg, startTier);
 
-    // Vocal: carry-over floor if the previous section's vocal was unlocked.
-    this.activeVoxUnlocked = false;
-    this.voxArmed = false;
-    const floor = this.prevVoxUnlocked ? VOX_FLOOR : 0;
-    if (seg.meta.voxMode === "loopLayer") {
-      this.rampGain(seg.voxGain, floor, LAYER_RAMP_S, at);
-    } else {
-      // armedPhrase / none start silent; armed-phrase waits for a clear.
-      this.rampGain(seg.voxGain, 0, 0.05, at);
-    }
+    this.tier = startTier;
+    this.armedTier = startTier;
+    this.scoreSinceLastPass = 0;
+    this.passesSinceScore = 0;
+    this.segmentScore = 0;
+    this.tierFading = false;
 
-    // Reset local progress; absorb any excess carried from the previous section.
-    this.sectionClearProgress = this.carriedProgress;
-    this.carriedProgress = 0;
-  }
-
-  // ---- event play ----------------------------------------------------------
-
-  fire(ev: AudioEvent): void {
-    if (!this.started || this.muted) return;
-    try {
-      Tone.getTransport().scheduleOnce((time) => {
-        this.play(ev, time);
-      }, "@16n");
-    } catch {
-      // ignore — audio is best-effort
+    // Gain up exactly the start tier; everything else hard-zero.
+    const at = fresh ? Tone.now() : this.nextBar();
+    for (let t = 0; t < 3; t++) {
+      const target = t === startTier ? 1 : 0;
+      this.rampGain(seg.tierGains[t], target, fresh ? SNAP_S : XFADE_S, at);
     }
   }
 
-  private safeTime(time: number, span = 0): number {
-    const base = Math.max(time, this.lastTriggerTime + 0.001);
-    this.lastTriggerTime = base + span;
-    return base;
-  }
-
-  private trig(fn: () => void): void {
-    try {
-      fn();
-    } catch {
-      // dropped note — never surfaces to the game
+  /** The highest loaded tier ≤ desired (so a missing tier file never silences). */
+  private lowestAvailableAtOrBelow(seg: LoadedSegment, desired: Tier): Tier {
+    const order: Tier[] = [0, 1, 2];
+    // walk DOWN from desired, then (if all below are missing) UP to any loaded tier.
+    for (const t of [...order.slice(0, desired + 1)].reverse()) {
+      if (seg.tierPlayers[t]) return t;
     }
+    for (const t of order) {
+      if (seg.tierPlayers[t]) return t;
+    }
+    return 0;
   }
 
-  private playSfx(name: SfxName, time: number, velocity = 1): boolean {
-    const p = this.sfxPlayers[name];
-    if (!p) return false;
-    this.trig(() => {
-      p.volume.value = Tone.gainToDb(Math.max(0.0001, Math.min(1, velocity)));
-      p.start(time);
-    });
-    return true;
-  }
+  // ── the loop tick: the ONLY place tiers change / segments advance ───────────
 
   /**
-   * The sound for an action. CLEAR IS SILENT: lineClear/chain fire NO sound of
-   * their own — they only arm/reveal vocals + feed the advance accumulator (a
-   * subtle bed duck acknowledges the clear). Non-clear actions fire their mapped
-   * ad-lib (song1) or procedural blip (song2 / fallback).
+   * Schedule a recurring callback on the ACTIVE segment's loop boundary. Tone's
+   * Transport fires `scheduleRepeat` at a fixed interval; we align it to the
+   * segment's whole-bar loop length so every fire is a loop boundary. Re-scheduled
+   * when the active segment (and thus loop length) changes.
    */
-  private play(ev: AudioEvent, rawTime: number): void {
-    const time = this.safeTime(rawTime);
-
-    if (ev.type === "lineClear") {
-      this.bumpIntensity(0.25 + ev.squares * 0.05 + ev.combo * 0.08);
-      this.clearDuck(time);
-      this.onClear(1 + ev.squares + ev.combo, time);
-      return;
-    }
-    if (ev.type === "chain") {
-      this.bumpIntensity(0.6);
-      this.clearDuck(time);
-      this.onClear(2 + Math.min(8, ev.size), time);
-      return;
-    }
-
-    // Non-clear actions: route to recorded ad-lib and/or procedural blip.
-    const route = routeEvent(this.preset, ev);
-    let sfxFired = false;
-    if (route.sfx) sfxFired = this.playSfx(route.sfx, time, 0.85);
-    const wantBlip =
-      route.blip === true ||
-      (route.sfx != null && !sfxFired) ||
-      !this.recordedBedActive;
-    if (wantBlip || this.manifest?.sfxMode === "procedural")
-      this.playBlip(ev, time);
-  }
-
-  /**
-   * Subtle NON-match acknowledgment of a clear (D15): a brief bed duck on the
-   * master filter — never a match SFX. Keeps the clear feeling connected without
-   * giving clearing its own sound.
-   */
-  private clearDuck(time: number): void {
-    const f = this.filter;
-    if (!f) return;
-    try {
-      const base =
-        1400 + this.intensity * (this.preset.intensityReactive ? 4000 : 800);
-      f.frequency.cancelScheduledValues(time);
-      f.frequency.setValueAtTime(base * 0.6, time);
-      f.frequency.linearRampToValueAtTime(base, time + 0.18);
-    } catch {
-      // ignore
-    }
-  }
-
-  // ---- clear handling: arm vocals + advance (LOCAL progress) --------------
-
-  private onClear(weight: number, time: number): void {
-    if (this.segments.length === 0) return;
-    this.sectionClearProgress += weight;
-
+  private scheduleLoopTick(): void {
+    this.clearScheduled();
     const seg = this.active();
     if (!seg) return;
-
-    // Vocal state as it was BEFORE this clear (so the clear that first arms a
-    // progression's vocal does not also advance off it).
-    const voxWasLive = this.activeVoxUnlocked || this.voxArmed;
-
-    // VERTICAL: reveal/arm the vocal for the active section.
-    this.revealVocal(seg);
-
-    // HORIZONTAL: forward-only, single-step, in-flight-locked.
-    if (this.transitionInFlight) return;
-
-    const gate = Math.max(1, this.gateFor(seg.meta));
-    if (this.sectionClearProgress < gate) return;
-
-    // A PROGRESSION must let its vocal phrase play before advancing: don't step on
-    // the same clear that first arms/reveals the vocal — give the section a beat so
-    // the vocal is actually heard (matches "vocals layer on clear, THEN advance").
-    if (
-      seg.meta.role === "progression" &&
-      seg.meta.voxMode !== "none" &&
-      !voxWasLive
-    ) {
-      return;
-    }
-
-    const last = this.segments.length - 1;
-    if (seg.meta.isTerminalRideout || this.segmentIndex >= last) {
-      // Terminal: complete only if a completionGate is set (>0); else ride out.
-      const cg = seg.meta.completionGate;
-      if (cg > 0 && this.sectionClearProgress >= cg && !this.songCompleted) {
-        this.complete();
-      }
-      return;
-    }
-
-    // Compute carry per this section's policy, then step.
-    const excess = this.sectionClearProgress - gate;
-    this.carriedProgress = this.carryExcess(seg.meta, excess, gate);
-    this.stepSegment(this.segmentIndex + 1, time);
-  }
-
-  /** The clear-gate for a section, preset-scaled. */
-  private gateFor(meta: ManifestSegment): number {
-    return Math.max(1, Math.round(meta.gate * this.preset.gateScale));
-  }
-
-  private carryExcess(
-    meta: ManifestSegment,
-    excess: number,
-    gate: number,
-  ): number {
-    switch (meta.excessCarry) {
-      case "carry":
-        return Math.max(0, Math.min(excess, gate)); // carry up to one gate's worth
-      case "cap":
-        return Math.min(Math.max(0, excess), 1);
-      default:
-        return 0; // discard
-    }
-  }
-
-  /** Reveal the active section's vocal: loopLayer = gain up; armedPhrase = arm. */
-  private revealVocal(seg: Segment): void {
-    if (seg.meta.voxMode === "loopLayer") {
-      if (
-        !this.activeVoxUnlocked &&
-        this.sectionClearProgress >= this.voxUnlockClears()
-      ) {
-        this.activeVoxUnlocked = true;
-        this.applyVoxReveal(this.nextBar());
-      }
-    } else if (seg.meta.voxMode === "armedPhrase") {
-      if (!this.activeVoxUnlocked && !this.voxArmed) {
-        this.armVocalPhrase(seg);
-      }
-    }
-  }
-
-  private voxUnlockClears(): number {
-    return Math.max(1, Math.round(this.preset.voxUnlockClears));
-  }
-
-  /**
-   * ARMED-PHRASE (D10): a clear arms the vocal; fire it at the next bar boundary
-   * (its phrase start), never mid-word. The section bed is bar-aligned, so the bar
-   * boundary lands the phrase at a bar.
-   */
-  private armVocalPhrase(seg: Segment): void {
-    this.voxArmed = true;
-    if (!seg.voxPlayer || !seg.voxGain) {
-      // no vocal asset: mark unlocked so the probe reflects intent
-      this.activeVoxUnlocked = true;
-      return;
-    }
+    const loopBars = Math.max(1, Math.round(seg.meta.bars));
+    const interval = `${loopBars}m`;
     try {
-      const id = Tone.getTransport().scheduleOnce((t) => {
-        if (this.active() !== seg) return; // section changed — drop
-        try {
-          seg.voxPlayer?.stop();
-          seg.voxPlayer?.start(t, 0); // phrase from its start
-        } catch {
-          // ignore
-        }
-        this.activeVoxUnlocked = true;
-        this.rampGain(seg.voxGain, 1, LAYER_RAMP_S, t);
-      }, "@1m");
-      this.pendingVoxEvents.push(id);
+      const id = Tone.getTransport().scheduleRepeat(
+        (time) => this.onLoopBoundary(time),
+        interval,
+        // start one interval out so the first tick is a real boundary, not t=0.
+        `+${interval}`,
+      );
+      this.scheduledEvents.push(id);
     } catch {
-      // ignore
+      // no transport — quantize disabled; engine still plays the bed silently
     }
   }
 
-  private clearPendingVox(): void {
-    for (const id of this.pendingVoxEvents) {
+  private clearScheduled(): void {
+    for (const id of this.scheduledEvents) {
       try {
         Tone.getTransport().clear(id);
       } catch {
         // ignore
       }
     }
-    this.pendingVoxEvents = [];
+    this.scheduledEvents = [];
   }
 
-  // ---- forward-only segment step (AUDIO-CLOCK commit) ---------------------
+  /**
+   * Fired at the active segment's loop boundary — the ONLY place a tier swaps or a
+   * segment advance commits. `time` is the boundary's audio-clock time.
+   */
+  private onLoopBoundary(time: number): void {
+    const seg = this.active();
+    if (!seg) return;
+
+    // 1) HORIZONTAL: if a transition is armed, advance now (end of current loop).
+    if (this.shouldAdvance(seg)) {
+      this.advanceSegment(time);
+      return; // advancing re-enters the next segment + reschedules its loop tick
+    }
+
+    // 2) VERTICAL: evaluate the armed tier for THIS pass, then swap on this boundary.
+    this.evaluateTier(seg);
+    if (this.armedTier !== this.tier) {
+      this.swapTier(seg, this.armedTier, time);
+    }
+
+    // 3) reset the per-pass accumulator + track dry spell.
+    if (this.scoreSinceLastPass <= 0) this.passesSinceScore++;
+    else this.passesSinceScore = 0;
+    this.scoreSinceLastPass = 0;
+  }
+
+  /** Arm-on-pass: decide armedTier for the upcoming swap (bias up). */
+  private evaluateTier(seg: LoadedSegment): void {
+    const c = this.curve();
+    if (this.tierFading) return; // don't re-arm mid-fade
+    // addThreshold[0] arms 0->1, [1] arms 1->2 (only indices 0/1 are read; tier 2
+    // is the cap and never arms up).
+    const addGate = this.tier === 0 ? c.addThreshold[0] : c.addThreshold[1];
+    if (this.tier < 2 && this.scoreSinceLastPass >= addGate) {
+      this.armedTier = (this.tier + 1) as Tier;
+    } else if (
+      this.tier > 0 &&
+      this.passesSinceScore >= c.shedAfterPasses
+    ) {
+      this.armedTier = (this.tier - 1) as Tier; // worst case shed (rare; bias up)
+    } else {
+      this.armedTier = this.tier; // HOLD
+    }
+    // never arm a tier whose file failed to load.
+    if (this.armedTier > this.tier && !seg.tierPlayers[this.armedTier]) {
+      this.armedTier = this.tier;
+    }
+  }
+
+  /** Equal-power crossfade from the current tier file to `to` on this boundary. */
+  private swapTier(seg: LoadedSegment, to: Tier, at: number): void {
+    if (to === this.tier) return;
+    const from = this.tier;
+    this.tierFading = true;
+    // equal-power: linear gain ramps on already-normalized tier renders read as a
+    // smooth blend (the tiers are layered renders of the same bed, so a linear
+    // crossfade does not dip — the shared bed stays at full through the swap).
+    this.rampGain(seg.tierGains[from], 0, XFADE_S, at);
+    this.rampGain(seg.tierGains[to], 1, XFADE_S, at);
+    this.tier = to;
+    // settle: clear the fading flag after the crossfade lands.
+    this.afterSettle(at + XFADE_S + 0.02, () => {
+      this.tierFading = false;
+    });
+  }
+
+  // ── horizontal advance ──────────────────────────────────────────────────────
+
+  /** Advance gate: tier2 reached AND segmentScore ≥ advanceThreshold, not last. */
+  private shouldAdvance(seg: LoadedSegment): boolean {
+    if (this.transitionInFlight) return false;
+    if (seg.meta.type === "TERMINAL") return false;
+    if (this.segmentIndex >= this.segments.length - 1) return false;
+    if (this.tier < 2) return false;
+    return this.segmentScore >= this.curve().advanceThreshold;
+  }
 
   /**
-   * FORWARD-ONLY single step: crossfade active bed out / next bed in on the next
-   * bar boundary, ENTER the next section phase-correct, and COMMIT the index on the
-   * AUDIO CLOCK (a Transport callback) — with a setTimeout fallback — guarded by a
-   * token so a switchTrack/reset/dispose can't let a stale callback land.
+   * FORWARD-ONLY single-step advance, committed on the loop boundary `at`. Crossfade
+   * the current segment's active tier out and the next segment's start tier in,
+   * then dispose the segment left behind after the fade settles (no-hiss: past
+   * players gone). Token-guarded so a switchTrack/dispose can't land a stale commit.
    */
-  private stepSegment(index: number, time: number): void {
-    void time;
-    const from = this.active();
+  private advanceSegment(at: number): void {
+    const index = this.segmentIndex + 1;
     const to = this.segments[index];
+    const from = this.active();
     if (!to) return;
 
     this.transitionInFlight = true;
     this.pendingSegmentIndex = index;
     const token = ++this.transitionToken;
+    const prevTier = this.tier;
+    const fromIndex = this.segmentIndex;
 
-    const at = this.nextBar();
-    const xf = LAYER_RAMP_S;
-    this.prevVoxUnlocked = this.activeVoxUnlocked;
-    this.rampGain(from?.bedGain, 0, xf, at);
-    this.rampGain(from?.voxGain, 0, xf, at);
-    // enterSection ramps the new bed up + (re)starts a startOnEnter bed at offset 0.
-    this.enterSection(index, at, /*fresh*/ false);
+    // If the next segment hasn't finished loading, advance still happens (it will
+    // be silent until its players arrive); kick a load just in case.
+    void this.loadSegment(index);
 
-    const commit = () => {
+    // Fade the current active tier out.
+    this.rampGain(from?.tierGains[this.tier], 0, XFADE_S, at);
+
+    // Enter the destination phase-correct (sets tier/armedTier + gains the start
+    // tier up over the crossfade), carrying the energy floor from prevTier.
+    this.segmentIndex = index;
+    this.maxSegmentReached = Math.max(this.maxSegmentReached, index);
+    this.enterSegment(index, /*fresh*/ false, prevTier);
+
+    // Reschedule the loop tick for the NEW segment's loop length.
+    this.scheduleLoopTick();
+
+    this.afterSettle(at + XFADE_S + 0.05, () => {
       if (token !== this.transitionToken) return;
-      this.segmentIndex = index;
-      this.maxSegmentReached = Math.max(this.maxSegmentReached, index);
       this.transitionInFlight = false;
       this.pendingSegmentIndex = null;
-    };
-    // Commit on the audio clock at the crossfade settle point; setTimeout fallback.
-    try {
-      const id = Tone.getTransport().scheduleOnce(
-        () => commit(),
-        at + xf + 0.02,
-      );
-      this.pendingTransportEvents.push(id);
-    } catch {
-      // ignore — fallback below covers it
-    }
-    let settleMs = (xf + 0.2) * 1000;
-    try {
-      settleMs = Math.max(0, at - Tone.now() + xf) * 1000 + 150;
-    } catch {
-      // keep default
-    }
-    try {
-      if (typeof window !== "undefined") window.setTimeout(commit, settleMs);
-      else commit();
-    } catch {
-      commit();
-    }
+      // dispose the segment we left (forward-only — never re-entered).
+      this.disposeSegment(fromIndex);
+      // prefetch the one after the new active segment.
+      void this.prefetch(index + 1);
+      // TERMINAL reached → song complete (fires once).
+      if (to.meta.type === "TERMINAL") this.complete();
+    });
   }
 
   private complete(): void {
@@ -883,79 +680,222 @@ export class InteractiveAudioEngine {
     }
   }
 
-  // ---- live track switch ---------------------------------------------------
+  // ── event handling: clears feed both accumulators; actions fire SFX ─────────
+
+  fire(ev: AudioEvent): void {
+    if (!this.started || this.muted) return;
+    try {
+      Tone.getTransport().scheduleOnce((time) => {
+        this.play(ev, time);
+      }, "@16n");
+    } catch {
+      // best-effort
+    }
+  }
 
   /**
-   * Live-swap the soundtrack with a beat-aligned crossfade. Loads the new track's
-   * bank + SFX, crossfades on the next bar. Invalidates any pending transition and
-   * CANCELS its scheduled ramps (token guards stale JS, not stale Web Audio
-   * automation — D11). A startOnEnter destination is entered phase-correct.
+   * Route an event. Clears (lineClear/chain) are SILENT — they only feed the tier
+   * + segment accumulators. Actions fire their mapped Layer-4 ad-lib one-shot.
+   */
+  private play(ev: AudioEvent, time: number): void {
+    if (ev.type === "lineClear") {
+      this.onScore(1 + ev.squares + ev.combo);
+      return;
+    }
+    if (ev.type === "chain") {
+      this.onScore(2 + Math.min(8, ev.size));
+      return;
+    }
+    const route = routeEvent(this.preset, ev);
+    if (route.sfx) this.playSfx(route.sfx, time, 0.85);
+  }
+
+  /** Feed both the per-pass tier accumulator and the monotonic segment score. */
+  private onScore(weight: number): void {
+    if (this.segments.length === 0) return;
+    this.scoreSinceLastPass += weight;
+    this.segmentScore += weight;
+    // Backlog cap: one huge chain banks at most one extra step's worth of score
+    // beyond the advance gate, so a burst can't pre-load multiple advances.
+    const cap = this.curve().advanceThreshold * 2;
+    if (this.segmentScore > cap) this.segmentScore = cap;
+  }
+
+  // ── Layer-4 SFX (lazy single players, loaded per active song) ───────────────
+
+  private sfxPlayers: Partial<Record<SfxName, Tone.Player>> = {};
+
+  private playSfx(name: SfxName, time: number, velocity = 1): void {
+    const p = this.sfxPlayers[name];
+    if (!p) {
+      // lazy-load the one-shot the first time it's needed.
+      void this.ensureSfx(name);
+      return;
+    }
+    try {
+      p.volume.value = Tone.gainToDb(Math.max(0.0001, Math.min(1, velocity)));
+      p.start(time);
+    } catch {
+      // dropped one-shot never surfaces to the game
+    }
+  }
+
+  private async ensureSfx(name: SfxName): Promise<void> {
+    const master = this.master;
+    const song = this.song;
+    if (!master || !song || this.sfxPlayers[name]) return;
+    const url = sfxUrlFor(name, song.sfx, ASSET_BASE);
+    if (!url) return;
+    const p = await this.loadPlayer(url);
+    if (p && !this.sfxPlayers[name]) {
+      p.connect(master);
+      this.sfxPlayers[name] = p;
+    } else if (p) {
+      p.dispose();
+    }
+  }
+
+  // ── timing + gain helpers ────────────────────────────────────────────────────
+
+  /** Next bar-boundary transport time (safe fallback to now). */
+  private nextBar(): number {
+    try {
+      return Tone.getTransport().nextSubdivision("1m");
+    } catch {
+      return this.toneNow();
+    }
+  }
+
+  private toneNow(): number {
+    try {
+      return Tone.now();
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Ramp a gain to `target` over `dur` starting at transport time `at`, using
+   * cancel→setValueAtTime(current,at)→linearRampToValueAtTime so the START time is
+   * real (assertable as a bar multiple), not an immediate jump.
+   */
+  private rampGain(
+    g: Tone.Gain | undefined,
+    target: number,
+    dur: number,
+    at?: number,
+  ): void {
+    if (!g) return;
+    try {
+      const now = this.toneNow();
+      const start = at != null ? Math.max(at, now) : now;
+      const cur = g.gain.value;
+      g.gain.cancelScheduledValues(start);
+      g.gain.setValueAtTime(cur, start);
+      g.gain.linearRampToValueAtTime(target, start + dur);
+    } catch {
+      try {
+        g.gain.rampTo(target, dur);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  /** Run `fn` after audio-clock time `at` (transport callback + setTimeout fallback). */
+  private afterSettle(at: number, fn: () => void): void {
+    let ran = false;
+    const once = () => {
+      if (ran) return;
+      ran = true;
+      fn();
+    };
+    try {
+      const id = Tone.getTransport().scheduleOnce(() => once(), at);
+      this.scheduledEvents.push(id);
+    } catch {
+      // fall through to setTimeout
+    }
+    let ms = (XFADE_S + 0.2) * 1000;
+    try {
+      ms = Math.max(0, at - this.toneNow()) * 1000 + 60;
+    } catch {
+      // keep default
+    }
+    try {
+      if (typeof window !== "undefined") window.setTimeout(once, ms);
+      else once();
+    } catch {
+      once();
+    }
+  }
+
+  // ── live track switch (skin swap) ────────────────────────────────────────────
+
+  /**
+   * Live-swap the soundtrack: load the new song's intro, bar-aligned equal-power
+   * bed crossfade, dispose the old bank. Invalidates any in-flight transition.
+   * Self-guarded so a failed switch keeps the old song running (never silence).
    */
   async switchTrack(track: TrackBundle, seconds = 1.5): Promise<void> {
     if (typeof window === "undefined") return;
-    if (!this.started || !this.recordedBedActive) {
+    if (!this.started || !this.bedReady) {
       this.currentTrack = track;
       return;
     }
     if (track.id === this.currentTrack.id) return;
     if (this.switching) return;
     const master = this.master;
-    if (!master) return;
+    const manifest = this.manifest;
+    if (!master || !manifest) return;
     this.switching = true;
 
-    // Invalidate + CANCEL any pending transition's audio automation.
+    // invalidate any pending transition + cancel the loop tick.
     this.transitionToken++;
     this.transitionInFlight = false;
-    this.invalidatePending();
+    this.pendingSegmentIndex = null;
+    this.clearScheduled();
 
     try {
-      const newManifest = await this.loadManifest(track);
-      if (!newManifest) {
+      const song = this.resolveSong(manifest, track);
+      if (!song || song.segments.length === 0) {
         this.switching = false;
         return;
       }
-      const provisionalIdx = Math.min(
-        this.segmentIndex,
-        newManifest.segments.length - 1,
-      );
-      const newBank = await this.loadSegmentBank(
-        track,
-        provisionalIdx,
-        master,
-        newManifest,
-      );
-      const newSfx = await this.loadSfxSet(track, master);
-      const idx = Math.min(provisionalIdx, Math.max(0, newBank.length - 1));
-
-      const oldBank = this.segments;
+      const oldSegments = this.segments;
       const oldSfx = this.sfxPlayers;
-      const from = oldBank[this.segmentIndex];
-      const at = this.nextBar();
+      const from = oldSegments[this.segmentIndex];
 
-      this.rampGain(from?.bedGain, 0, seconds, at);
-      this.rampGain(from?.voxGain, 0, seconds, at);
-
-      // Swap live refs, then ENTER the destination phase-correct.
-      this.segments = newBank;
-      this.sfxPlayers = newSfx;
+      // Build + load the new song's intro before crossfading.
+      const newSegments = this.buildSegments(song);
+      this.segments = newSegments;
+      this.song = song;
       this.currentTrack = track;
-      this.manifest = newManifest;
-      this.applyManifestTempo(newManifest);
-      this.segmentIndex = idx;
-      this.maxSegmentReached = Math.max(this.maxSegmentReached, idx);
+      this.sfxPlayers = {};
       this.songCompleted = false;
-      this.carriedProgress = 0;
-      this.enterSection(idx, at, /*fresh*/ false);
-      this.rampGain(newBank[idx]?.bedGain, 1, seconds, at);
-
-      let disposeDelayMs: number;
-      try {
-        disposeDelayMs = Math.max(0, at - Tone.now() + seconds) * 1000 + 500;
-      } catch {
-        disposeDelayMs = Math.ceil((seconds + 0.6) * 1000) + 400;
+      this.segmentIndex = 0;
+      this.maxSegmentReached = 0;
+      this.applyTempo(song);
+      await this.loadSegment(0);
+      if (this.currentTrack.id !== track.id) {
+        // a newer switch superseded us
+        this.switching = false;
+        return;
       }
-      window.setTimeout(() => {
-        this.disposeBank(oldBank);
+
+      const at = this.nextBar();
+      // fade the OLD active tier out, enter the new song's intro in.
+      this.rampGain(from?.tierGains[this.tier], 0, seconds, at);
+      this.enterSegment(0, /*fresh*/ false);
+      // override the fresh-entry snap with the longer skin crossfade on tier-in.
+      this.rampGain(newSegments[0]?.tierGains[this.tier], 1, seconds, at);
+      this.scheduleLoopTick();
+      void this.prefetch(1);
+
+      // dispose the old bank after the crossfade settles.
+      const disposeAt = at + seconds + 0.1;
+      this.afterSettle(disposeAt, () => {
+        for (const seg of oldSegments) this.disposeLoaded(seg);
         for (const n of Object.values(oldSfx)) {
           try {
             n?.dispose();
@@ -963,250 +903,44 @@ export class InteractiveAudioEngine {
             // ignore
           }
         }
-      }, disposeDelayMs);
+      });
     } catch {
-      // keep the old track running (never crash / never go silent)
+      // keep the old track running
     } finally {
       this.switching = false;
     }
   }
 
-  /** Cancel pending transition transport events + their ramps. */
-  private invalidatePending(): void {
-    for (const id of this.pendingTransportEvents) {
+  // ── disposal ─────────────────────────────────────────────────────────────────
+
+  private disposeLoaded(seg: LoadedSegment | undefined): void {
+    if (!seg) return;
+    for (let t = 0; t < 3; t++) {
       try {
-        Tone.getTransport().clear(id);
+        seg.tierPlayers[t]?.dispose();
       } catch {
         // ignore
       }
-    }
-    this.pendingTransportEvents = [];
-    this.clearPendingVox();
-    const a = this.active();
-    this.cancelGain(a?.bedGain);
-    this.cancelGain(a?.voxGain);
-    if (this.pendingSegmentIndex != null) {
-      const p = this.segments[this.pendingSegmentIndex];
-      this.cancelGain(p?.bedGain);
-      this.cancelGain(p?.voxGain);
-    }
-    this.pendingSegmentIndex = null;
-  }
-
-  // ---- procedural fallback bed + action voices ----------------------------
-
-  private buildProceduralBed(): void {
-    const filter = this.filter!;
-    this.kick = new Tone.MembraneSynth({
-      pitchDecay: 0.03,
-      octaves: 5,
-      envelope: { attack: 0.001, decay: 0.4, sustain: 0.0, release: 0.2 },
-      volume: -6,
-    }).connect(filter);
-    this.snare = new Tone.NoiseSynth({
-      noise: { type: "white" },
-      envelope: { attack: 0.001, decay: 0.18, sustain: 0 },
-      volume: -16,
-    }).connect(filter);
-    this.hat = new Tone.NoiseSynth({
-      noise: { type: "white" },
-      envelope: { attack: 0.001, decay: 0.04, sustain: 0 },
-      volume: -26,
-    }).connect(filter);
-    this.bass = new Tone.MonoSynth({
-      oscillator: { type: "sawtooth" },
-      filter: { Q: 2, type: "lowpass", rolloff: -24 },
-      filterEnvelope: {
-        attack: 0.01,
-        decay: 0.2,
-        sustain: 0.3,
-        release: 0.4,
-        baseFrequency: 120,
-        octaves: 2.4,
-      },
-      envelope: { attack: 0.01, decay: 0.2, sustain: 0.4, release: 0.3 },
-      volume: -12,
-    }).connect(filter);
-    this.arp = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: "triangle" },
-      envelope: { attack: 0.005, decay: 0.12, sustain: 0.05, release: 0.18 },
-      volume: -22,
-    }).connect(filter);
-    this.padGain = new Tone.Gain(0).connect(filter);
-    this.pad = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: "fatsawtooth", count: 3, spread: 28 },
-      envelope: { attack: 0.8, decay: 0.4, sustain: 0.7, release: 1.6 },
-      volume: -20,
-    }).connect(this.padGain);
-  }
-
-  private buildActionVoices(): void {
-    const filter = this.filter!;
-    this.blip = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: "triangle" },
-      envelope: { attack: 0.002, decay: 0.09, sustain: 0, release: 0.07 },
-      volume: -12,
-    }).connect(this.master!);
-    this.thud = new Tone.MembraneSynth({
-      pitchDecay: 0.05,
-      octaves: 3,
-      envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.2 },
-      volume: -8,
-    }).connect(filter);
-  }
-
-  private fadeProceduralBed(level: number): void {
-    const targets: (
-      | Tone.MembraneSynth
-      | Tone.NoiseSynth
-      | Tone.MonoSynth
-      | Tone.PolySynth
-    )[] = [];
-    if (this.kick) targets.push(this.kick);
-    if (this.snare) targets.push(this.snare);
-    if (this.hat) targets.push(this.hat);
-    if (this.bass) targets.push(this.bass);
-    if (this.arp) targets.push(this.arp);
-    for (const t of targets) {
       try {
-        t.volume.rampTo(level <= 0 ? -60 : t.volume.value, 0.5);
+        seg.tierGains[t]?.dispose();
       } catch {
         // ignore
       }
+      seg.tierPlayers[t] = undefined;
+      seg.tierGains[t] = undefined;
     }
-    if (level <= 0) {
-      try {
-        this.padGain?.gain.rampTo(0, 0.5);
-      } catch {
-        // ignore
-      }
-    }
+    seg.loaded = false;
   }
 
-  private buildProceduralBedLoops(): void {
-    this.loops.push(
-      new Tone.Loop((time) => {
-        this.trig(() => this.kick?.triggerAttackRelease("C#1", "8n", time));
-      }, "4n").start(0),
-    );
-    this.loops.push(
-      new Tone.Loop((time) => {
-        this.trig(() => this.snare?.triggerAttackRelease("16n", time));
-      }, "2n").start("4n"),
-    );
-    this.loops.push(
-      new Tone.Loop((time) => {
-        this.trig(() => this.hat?.triggerAttackRelease("32n", time, 0.6));
-      }, "8n").start("8n"),
-    );
-    const bassPhrase: (number | null)[] = [
-      0,
-      null,
-      0,
-      0,
-      null,
-      5,
-      null,
-      3,
-      0,
-      null,
-      0,
-      null,
-      6,
-      null,
-      4,
-      null,
-    ];
-    this.seq = new Tone.Sequence(
-      (time, deg) => {
-        if (deg === null) return;
-        this.trig(() =>
-          this.bass?.triggerAttackRelease(scaleNote(deg), "16n", time),
-        );
-      },
-      bassPhrase,
-      "16n",
-    ).start(0);
+  private disposeSegment(index: number): void {
+    this.disposeLoaded(this.segments[index]);
   }
 
-  /** Procedural in-key action tone (song2's primary SFX layer / song1 fallback). */
-  private playBlip(ev: AudioEvent, time: number): void {
-    switch (ev.type) {
-      case "move": {
-        const d = scaleNote(2 + (Math.random() < 0.5 ? 0 : 1), BLIP_BASE);
-        this.trig(() => this.blip?.triggerAttackRelease(d, "32n", time, 0.35));
-        break;
-      }
-      case "rotate": {
-        const d = 4 + Math.floor(Math.random() * 3);
-        this.trig(() =>
-          this.blip?.triggerAttackRelease(
-            scaleNote(d, BLIP_BASE),
-            "32n",
-            time,
-            0.5,
-          ),
-        );
-        break;
-      }
-      case "softDrop": {
-        this.trig(() =>
-          this.blip?.triggerAttackRelease(
-            scaleNote(1, BLIP_BASE),
-            "64n",
-            time,
-            0.3,
-          ),
-        );
-        break;
-      }
-      case "lock": {
-        this.trig(() =>
-          this.thud?.triggerAttackRelease("C#1", "8n", time, 0.6),
-        );
-        break;
-      }
-      default:
-        break; // clears are silent
-    }
+  private disposeAll(): void {
+    for (const seg of this.segments) this.disposeLoaded(seg);
   }
 
-  private bumpIntensity(by: number): void {
-    this.intensity = Math.max(0, Math.min(1, this.intensity + by));
-  }
-
-  private applyVoxReveal(at?: number): void {
-    const a = this.active();
-    const g = a?.voxGain;
-    if (!g) return;
-    const target = this.activeVoxUnlocked
-      ? 1
-      : this.prevVoxUnlocked
-        ? VOX_FLOOR
-        : 0;
-    this.rampGain(g, target, LAYER_RAMP_S, at);
-  }
-
-  private applyIntensity(time?: number): void {
-    const i = this.intensity;
-    try {
-      const reactive = this.preset.intensityReactive;
-      const baseHz = reactive ? 1000 : 1600;
-      const span = reactive ? 4000 : 1000;
-      if (time != null)
-        this.filter?.frequency.rampTo(baseHz + i * span, 0.4, time);
-      else this.filter?.frequency.rampTo(baseHz + i * span, 0.4);
-      if (!this.recordedBedActive) {
-        const padLevel = Math.max(0, (i - 0.4) / 0.6) * 0.5;
-        if (time != null) this.padGain?.gain.rampTo(padLevel, 0.6, time);
-        else this.padGain?.gain.rampTo(padLevel, 0.6);
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  // ---- volume / mute -------------------------------------------------------
+  // ── volume / mute ─────────────────────────────────────────────────────────────
 
   setVolume(v: number): void {
     this.volume = Math.max(0, Math.min(1, v));
@@ -1234,7 +968,8 @@ export class InteractiveAudioEngine {
   dispose(): void {
     this.transitionToken++;
     this.transitionInFlight = false;
-    this.invalidatePending();
+    this.pendingSegmentIndex = null;
+    this.clearScheduled();
     try {
       const t = Tone.getTransport();
       t.stop();
@@ -1242,53 +977,34 @@ export class InteractiveAudioEngine {
     } catch {
       // ignore
     }
-    for (const l of this.loops) {
-      try {
-        l.dispose();
-      } catch {
-        // ignore
-      }
-    }
-    this.loops = [];
-    try {
-      this.seq?.dispose();
-    } catch {
-      // ignore
-    }
-    this.disposeBank(this.segments);
-    const nodes: (Tone.ToneAudioNode | undefined)[] = [
-      ...Object.values(this.sfxPlayers),
-      this.kick,
-      this.snare,
-      this.hat,
-      this.bass,
-      this.arp,
-      this.pad,
-      this.padGain,
-      this.blip,
-      this.thud,
-      this.filter,
-      this.master,
-    ];
-    for (const n of nodes) {
+    this.disposeAll();
+    for (const n of Object.values(this.sfxPlayers)) {
       try {
         n?.dispose();
       } catch {
         // ignore
       }
     }
+    try {
+      this.master?.dispose();
+    } catch {
+      // ignore
+    }
     this.segments = [];
     this.sfxPlayers = {};
-    this.recordedBedActive = false;
+    this.song = undefined;
+    this.manifest = undefined;
+    this.master = undefined;
+    this.bedReady = false;
     this.segmentIndex = 0;
     this.maxSegmentReached = 0;
-    this.sectionClearProgress = 0;
-    this.carriedProgress = 0;
-    this.activeVoxUnlocked = false;
-    this.prevVoxUnlocked = false;
-    this.voxArmed = false;
+    this.tier = 0;
+    this.armedTier = 0;
+    this.scoreSinceLastPass = 0;
+    this.passesSinceScore = 0;
+    this.segmentScore = 0;
+    this.tierFading = false;
     this.songCompleted = false;
-    this.intensity = 0;
     this.started = false;
   }
 }

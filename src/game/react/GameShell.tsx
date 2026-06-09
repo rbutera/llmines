@@ -104,6 +104,10 @@ export function GameShell() {
   const skinSwitch = useSkinSwitch((skin) => {
     void audioEngineRef.current?.switchTrack(skin.track);
   });
+  // Keep a live ref to the skin-cycle so the engine's onSongComplete (set once at
+  // mount) always advances the CURRENT skin, not a stale closure.
+  const cycleSkinRef = useRef(skinSwitch.cycleSkin);
+  cycleSkinRef.current = skinSwitch.cycleSkin;
 
   // Account seam: submit the final score on game over (signed-in only). Held in
   // refs so the mount-once subscription always sees the current values.
@@ -126,6 +130,10 @@ export function GameShell() {
       const engine = new InteractiveAudioEngine();
       audioEngineRef.current = engine;
       audioDeriverRef.current = new AudioEventDeriver();
+      // When a song rides out to its TERMINAL segment, advance the skin (which
+      // crossfades to the next song's bed via switchTrack). Cycling the skin keeps
+      // the colour world + soundtrack in lock step.
+      engine.onSongComplete = () => cycleSkinRef.current();
       // Opt-in dev hook (URL `?audiodev=1` only): expose a handle to drive audio
       // events directly. Absent in normal use so production stays clean.
       if (window.location.search.includes("audiodev=1")) {

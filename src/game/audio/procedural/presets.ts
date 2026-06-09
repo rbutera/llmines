@@ -53,16 +53,47 @@ export interface UnlockCurve {
   gateScale: number;
 }
 
+/**
+ * The loop-quantize curve fields for the manifest-driven engine. NO decay fields
+ * (the engine biases UP — it holds, then sheds only after `shedAfterPasses`).
+ */
+export interface PresetCurve {
+  /**
+   * Per-tier score-in-loop needed to ARM the next tier: index 0 = arm 0->1, index
+   * 1 = arm 1->2. Lower = the arrangement blooms sooner.
+   */
+  addThreshold: [number, number];
+  /**
+   * Loop passes with no qualifying score before the engine sheds ONE tier. Set HIGH
+   * to bias up (a dry spell holds the arrangement rather than thinning it).
+   */
+  shedAfterPasses: number;
+  /**
+   * Monotonic segment score needed (at tier2) to advance to the next segment.
+   * Lower = walk through the song faster.
+   */
+  advanceThreshold: number;
+}
+
 export interface AudioPreset {
   mix: AudioMix;
   label: string;
   /** Routing per ACTION event type. Clears are absent (silent by design). */
   routing: Partial<Record<AudioEvent["type"], VoiceRouting>>;
-  /** In-section vocal-reveal threshold. */
+  /** Loop-quantize curve: per-layer add thresholds, bias-up shed, advance gate. */
+  curve: PresetCurve;
+  /**
+   * @deprecated v2.7 vocal-reveal threshold. The manifest-driven engine reveals
+   * tier-3 vocals via {@link PresetCurve.addThreshold}; retained so the curve fields
+   * still order A>B>C (sooner) and back-compat consumers don't break.
+   */
   voxUnlockClears: number;
-  /** Multiplier on the manifest advance gates. */
+  /**
+   * @deprecated v2.7 multiplier on per-section gates. Retained for ordering + back
+   * compat; the engine reads {@link PresetCurve} for the real thresholds.
+   */
   gateScale: number;
-  /** Whether the master filter tracks intensity (B/C feel more reactive). */
+  /** Whether the feel is the more-reactive variant (B/C bias up harder). */
   intensityReactive: boolean;
 }
 
@@ -75,6 +106,11 @@ const PRESET_A: AudioPreset = {
     rotate: { sfx: "rotate" },
     softDrop: { sfx: "softdrop" },
     lock: { sfx: "harddrop" },
+  },
+  curve: {
+    addThreshold: [8, 12], // bloom slowly: more clearing per tier
+    shedAfterPasses: 6, // sheds sooner than B/C, but still biased up
+    advanceThreshold: 16, // dwell longer in each section
   },
   voxUnlockClears: 3,
   gateScale: 1.3, // dwell longer in each section
@@ -91,6 +127,11 @@ const PRESET_B: AudioPreset = {
     softDrop: { sfx: "softdrop" },
     lock: { sfx: "harddrop" },
   },
+  curve: {
+    addThreshold: [6, 9],
+    shedAfterPasses: 8, // bias up: a dry spell holds the arrangement
+    advanceThreshold: 12,
+  },
   voxUnlockClears: 2,
   gateScale: 1.0,
   intensityReactive: true,
@@ -105,6 +146,11 @@ const PRESET_C: AudioPreset = {
     rotate: { sfx: "rotate", blip: true },
     softDrop: { sfx: "softdrop", blip: true },
     lock: { sfx: "harddrop", blip: true },
+  },
+  curve: {
+    addThreshold: [4, 6], // arrangement blooms fast under aggressive play
+    shedAfterPasses: 10, // strongest bias up: almost never sheds
+    advanceThreshold: 8, // move through the song faster
   },
   voxUnlockClears: 1,
   gateScale: 0.7, // move through the song faster
