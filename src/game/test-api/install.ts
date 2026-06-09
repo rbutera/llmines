@@ -4,10 +4,25 @@ import type { GameController } from "../engine/controller";
 
 /** Deterministic auth hooks (TEST_MODE only) — drive the mock identity. */
 export interface LuminesAuthApi {
-  /** Mock-authenticate as this identity. `subject` is the server-derived id. */
-  signIn(identity: { name: string; subject: string }): void;
+  /**
+   * Mock a Google sign-in. `subject` is the server-derived id; `displayName` is
+   * the Google display name used to suggest a username (never persisted);
+   * `email` is the only PII persisted. After this the player still needs to
+   * choose a username (see `chooseUsername`).
+   */
+  signIn(payload: {
+    subject: string;
+    displayName: string;
+    email?: string;
+  }): void;
   /** Return to the unauthenticated state. */
   signOut(): void;
+  /** The collision-numbered username suggestion for the current identity. */
+  suggestedUsername(): string | null;
+  /** Whether the current identity still needs to choose a username. */
+  needsUsername(): boolean;
+  /** Choose/change the username (validated + unique). Throws on failure. */
+  chooseUsername(username: string): string;
 }
 
 /** The deterministic interface exposed at `window.__lumines` in test mode. */
@@ -70,8 +85,16 @@ export function installTestApi(controller: GameController): () => void {
     pressSoftDrop: () => controller.testPressSoftDrop(),
     pressHardDrop: () => controller.testPressHardDrop(),
     auth: {
-      signIn: (identity) => mockStore.signIn(identity),
+      signIn: (payload) =>
+        mockStore.signIn({
+          subject: payload.subject,
+          displayName: payload.displayName,
+          email: payload.email ?? `${payload.subject}@test.local`,
+        }),
       signOut: () => mockStore.signOut(),
+      suggestedUsername: () => mockStore.suggestedUsername(),
+      needsUsername: () => mockStore.needsUsername(),
+      chooseUsername: (username) => mockStore.chooseUsername(username),
     },
     endGame: (score) => controller.testEndGame(score),
     clockAdvance: (dtMs) => controller.testClockAdvance(dtMs),

@@ -5,13 +5,19 @@ import { AuthContext, ScoresContext } from "./context";
 import { mockStore } from "./mock-store";
 import type { AuthApi, ScoresApi } from "./types";
 
-/** Default identity used when the `signin` button is clicked in TEST_MODE (the
- * automated suite instead drives `window.__lumines.auth.signIn(...)`). */
-const DEFAULT_MOCK_IDENTITY = { subject: "player-local", name: "Player" };
+/** Default Google payload used when the `signin` button is clicked in TEST_MODE
+ * (the automated suite instead drives `window.__lumines.auth.signIn(...)`). */
+const DEFAULT_MOCK_SIGNIN = {
+  subject: "player-local",
+  email: "player@local.test",
+  displayName: "Player One",
+};
 
 /**
- * TEST_MODE provider: backs `useAuth`/`useScores` with the in-memory mockStore.
- * No network, no env. Re-renders whenever the store changes.
+ * TEST_MODE / dev-seam provider: backs `useAuth`/`useScores` with the in-memory
+ * mockStore. No network, no env. Re-renders whenever the store changes. This is
+ * the seam used to exercise the full username flow + screens locally without a
+ * Convex deployment or a live Google OAuth client.
  */
 export function MockAccountProvider({
   children,
@@ -24,8 +30,12 @@ export function MockAccountProvider({
 
   const auth: AuthApi = {
     user: mockStore.getIdentity(),
-    signIn: () => mockStore.signIn(DEFAULT_MOCK_IDENTITY),
+    needsUsername: mockStore.needsUsername(),
+    signIn: () => mockStore.signIn(DEFAULT_MOCK_SIGNIN),
     signOut: () => mockStore.signOut(),
+    suggestedUsername: mockStore.suggestedUsername(),
+    checkUsername: (u: string) => mockStore.checkUsername(u),
+    chooseUsername: async (u: string) => mockStore.chooseUsername(u),
   };
 
   const scores: ScoresApi = {

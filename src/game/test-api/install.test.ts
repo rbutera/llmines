@@ -10,17 +10,43 @@ describe("window.__lumines account seam (TEST_MODE hooks)", () => {
     delete window.__lumines;
   });
 
-  it("auth.signIn/out drive the mock identity", () => {
+  it("auth.signIn/out drive the mock identity (needs a username first)", () => {
     const c = new GameController({ testMode: true });
     const uninstall = installTestApi(c);
     const api = window.__lumines!;
 
-    api.auth.signIn({ name: "Alice", subject: "alice" });
-    expect(mockStore.getIdentity()).toEqual({ name: "Alice", subject: "alice" });
+    api.auth.signIn({
+      subject: "alice",
+      displayName: "Alice",
+      email: "a@x.com",
+    });
+    expect(mockStore.getIdentity()).toMatchObject({
+      subject: "alice",
+      email: "a@x.com",
+      displayName: "Alice",
+      username: null,
+    });
+    expect(api.auth.needsUsername()).toBe(true);
 
     api.auth.signOut();
     expect(mockStore.getIdentity()).toBe(null);
     uninstall();
+  });
+
+  it("auth username hooks: suggest -> choose clears needsUsername", () => {
+    const c = new GameController({ testMode: true });
+    installTestApi(c);
+    const api = window.__lumines!;
+
+    api.auth.signIn({
+      subject: "alice",
+      displayName: "Alice",
+      email: "a@x.com",
+    });
+    expect(api.auth.suggestedUsername()).toBe("Alice");
+    api.auth.chooseUsername("AceAlice");
+    expect(api.auth.needsUsername()).toBe(false);
+    expect(mockStore.getIdentity()?.username).toBe("AceAlice");
   });
 
   it("signed-in submit writes to the mock; signed-out writes nothing", () => {
@@ -32,11 +58,15 @@ describe("window.__lumines account seam (TEST_MODE hooks)", () => {
     mockStore.submitScore(500);
     expect(mockStore.topN()).toEqual([]);
 
-    // Signed in via the hook: submit attributes to that identity.
-    api.auth.signIn({ name: "Bob", subject: "bob" });
+    // Signed in + username chosen: submit attributes to that identity, and the
+    // leaderboard shows the chosen username.
+    api.auth.signIn({ subject: "bob", displayName: "Bob", email: "b@x.com" });
+    api.auth.chooseUsername("Bobby");
     mockStore.submitScore(40);
     expect(mockStore.personalBest()).toBe(40);
-    expect(mockStore.topN()).toEqual([{ subject: "bob", name: "Bob", best: 40 }]);
+    expect(mockStore.topN()).toEqual([
+      { subject: "bob", name: "Bobby", best: 40 },
+    ]);
   });
 
   it("endGame drives the real game-over path with an exact score", () => {

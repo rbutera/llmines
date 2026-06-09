@@ -28,6 +28,7 @@ import { GameCanvas } from "./GameCanvas";
 import { ScoreFx } from "./ScoreFx";
 import { GameOverView, PauseOverlay, ControlsOverlay } from "./hud/overlays";
 import { PlayHud, StartView } from "./hud/screens";
+import { LeaderboardOverlay, UsernameSelect } from "./hud/account-screens";
 
 type Phase = "start" | "playing" | "gameover";
 
@@ -50,6 +51,7 @@ export function GameShell() {
   const [phase, setPhase] = useState<Phase>("start");
   const [paused, setPaused] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [score, setScore] = useState(0);
   const [hud, setHud] = useState<{
     queue: GeneratedPiece[];
@@ -105,7 +107,7 @@ export function GameShell() {
 
   // Account seam: submit the final score on game over (signed-in only). Held in
   // refs so the mount-once subscription always sees the current values.
-  const { user, signIn, signOut } = useAuth();
+  const { user, needsUsername, signIn, signOut } = useAuth();
   const { submitScore, personalBest, leaderboard } = useScores();
   const submitRef = useRef(submitScore);
   submitRef.current = submitScore;
@@ -523,8 +525,9 @@ export function GameShell() {
               onControls={() => setControlsOpen(true)}
               onSign={user ? signOut : signIn}
               onCycleSkin={() => skinSwitch.cycleSkin()}
+              onLeaderboard={() => setLeaderboardOpen(true)}
               signedIn={!!user}
-              signedInName={user?.name ?? null}
+              signedInName={user?.username ?? null}
               personalBest={personalBest}
               globalTop={globalTop}
               skinLabel={skinLabel}
@@ -579,6 +582,19 @@ export function GameShell() {
           signedIn={!!user}
           onAgain={handleRestart}
           onTitle={goToTitle}
+          onLeaderboard={() => setLeaderboardOpen(true)}
+        />
+      )}
+
+      {/* USERNAME SELECT — shown after first sign-in, before play. Highest
+          overlay so the player picks a callsign before anything else. */}
+      {needsUsername && <UsernameSelect onDone={() => undefined} />}
+
+      {/* LEADERBOARD — reachable from Start + Game Over. */}
+      {leaderboardOpen && (
+        <LeaderboardOverlay
+          onClose={() => setLeaderboardOpen(false)}
+          highlightSubject={user?.subject ?? null}
         />
       )}
 

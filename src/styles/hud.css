@@ -666,6 +666,38 @@ input[type="range"].rng::-moz-range-thumb {
   color: var(--ink-faint);
 }
 
+/* cockpit text field (username select) */
+.field {
+  font-family: inherit;
+  color: var(--ink);
+  background: linear-gradient(160deg, var(--card-lo), oklch(0.04 0 0 / 0.9));
+  border: 1px solid var(--line);
+  border-radius: 0;
+  letter-spacing: 0.06em;
+  box-shadow:
+    inset 1.5px 1.5px 0 oklch(0.02 0 0 / 0.85),
+    inset -1.5px -1.5px 0 oklch(0.45 0.1 var(--hue) / 0.25);
+  transition:
+    box-shadow 0.12s,
+    border-color 0.12s;
+}
+.field::placeholder {
+  color: var(--ink-faint);
+}
+.field:focus {
+  outline: none;
+  border-color: var(--hud-accent-hi);
+  box-shadow:
+    inset 1.5px 1.5px 0 oklch(0.02 0 0 / 0.85),
+    0 0 18px oklch(0.7 0.16 var(--hue) / 0.35);
+}
+.field.bad {
+  border-color: oklch(0.62 0.2 25);
+  box-shadow:
+    inset 1.5px 1.5px 0 oklch(0.02 0 0 / 0.85),
+    0 0 14px oklch(0.55 0.2 25 / 0.4);
+}
+
 /* ambient bloom behind the board (sits under the canvas) */
 .ambient {
   position: absolute;

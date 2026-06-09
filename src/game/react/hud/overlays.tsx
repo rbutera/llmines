@@ -155,12 +155,14 @@ export function GameOverView({
   signedIn,
   onAgain,
   onTitle,
+  onLeaderboard,
 }: {
   score: number;
   best: number | null;
   signedIn: boolean;
   onAgain: () => void;
   onTitle: () => void;
+  onLeaderboard: () => void;
 }) {
   const isBest = signedIn && best != null && score >= best;
   return (
@@ -233,6 +235,15 @@ export function GameOverView({
             autoFocus
           >
             ▶ PLAY AGAIN
+          </button>
+          <button
+            type="button"
+            data-testid="gameover-leaderboard"
+            className="btn"
+            style={{ padding: "15px 28px", fontSize: 13 }}
+            onClick={onLeaderboard}
+          >
+            ◫ RANKS
           </button>
           <button
             type="button"

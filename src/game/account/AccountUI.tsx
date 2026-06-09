@@ -20,22 +20,19 @@ export function AccountBar() {
     );
   }
 
+  // The leaderboard-visible identity is the chosen username (we persist no
+  // avatar / display-name PII).
+  const display = user.username ?? user.displayName ?? "Player";
   return (
     <div className="flex items-center gap-3">
-      {user.image ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={user.image}
-          alt=""
-          className="h-8 w-8 rounded-full ring-1 ring-white/20"
-        />
-      ) : (
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-[#a855f7] to-[#c45cff] text-sm font-black text-white">
-          {user.name.charAt(0).toUpperCase()}
-        </div>
-      )}
-      <span data-testid="user-name" className="text-sm font-semibold text-white/90">
-        {user.name}
+      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-[#a855f7] to-[#c45cff] text-sm font-black text-white">
+        {display.charAt(0).toUpperCase()}
+      </div>
+      <span
+        data-testid="user-name"
+        className="text-sm font-semibold text-white/90"
+      >
+        {display}
       </span>
       <button
         data-testid="signout"
@@ -74,7 +71,7 @@ export function PersonalBest() {
       </div>
       <div
         data-testid="personal-best"
-        className="mt-1 font-mono text-3xl font-black tabular-nums text-[#d8b4fe]"
+        className="mt-1 font-mono text-3xl font-black text-[#d8b4fe] tabular-nums"
       >
         {personalBest ?? 0}
       </div>
@@ -108,9 +105,11 @@ export function Leaderboard() {
                 <span className="w-5 text-right font-mono text-white/40">
                   {i + 1}
                 </span>
-                <span className="font-semibold text-white/90">{entry.name}</span>
+                <span className="font-semibold text-white/90">
+                  {entry.name}
+                </span>
               </span>
-              <span className="font-mono font-black tabular-nums text-[#d8b4fe]">
+              <span className="font-mono font-black text-[#d8b4fe] tabular-nums">
                 {entry.best}
               </span>
             </li>

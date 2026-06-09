@@ -52,7 +52,11 @@ export const personalBest = query({
   },
 });
 
-/** Global leaderboard: top-N users by best score, descending. */
+/**
+ * Global leaderboard: top-N users by best score, descending. The displayed
+ * name is the player's CURRENT chosen username (joined from `users`), falling
+ * back to the score row's snapshot name for rows that predate the users table.
+ */
 export const topN = query({
   args: {},
   handler: async (ctx) => {
@@ -61,6 +65,18 @@ export const topN = query({
       .withIndex("by_best")
       .order("desc")
       .take(TOP_N);
-    return rows.map((r) => ({ subject: r.subject, name: r.name, best: r.best }));
+    return Promise.all(
+      rows.map(async (r) => {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_subject", (q) => q.eq("subject", r.subject))
+          .unique();
+        return {
+          subject: r.subject,
+          name: user?.username ?? r.name,
+          best: r.best,
+        };
+      }),
+    );
   },
 });

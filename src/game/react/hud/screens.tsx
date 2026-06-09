@@ -27,6 +27,7 @@ export function StartView({
   onControls,
   onSign,
   onCycleSkin,
+  onLeaderboard,
   signedIn,
   signedInName,
   personalBest,
@@ -37,6 +38,7 @@ export function StartView({
   onControls: () => void;
   onSign: () => void;
   onCycleSkin: () => void;
+  onLeaderboard: () => void;
   signedIn: boolean;
   signedInName: string | null;
   personalBest: number | null;
@@ -150,14 +152,28 @@ export function StartView({
             background: "oklch(0.5 0.1 var(--hue) / .3)",
           }}
         />
-        <div>
+        <button
+          type="button"
+          data-testid="open-leaderboard"
+          onClick={onLeaderboard}
+          title="View leaderboard"
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+            textAlign: "left",
+            font: "inherit",
+            color: "inherit",
+          }}
+        >
           <div className="label" style={{ fontSize: 9 }}>
-            GLOBAL #1
+            GLOBAL #1 ▸
           </div>
           <div className="readout" style={{ fontSize: 22 }}>
             {globalTop ? `${globalTop.name} · ${fmt(globalTop.best)}` : "— — —"}
           </div>
-        </div>
+        </button>
       </div>
 
       <div
@@ -178,6 +194,15 @@ export function StartView({
           {signedIn
             ? `◢ SIGNED IN · ${(signedInName ?? "PLAYER").toUpperCase()}`
             : "◢ SIGN IN TO SAVE"}
+        </button>
+        <button
+          type="button"
+          data-testid="leaderboard-button"
+          className="btn"
+          style={{ padding: "9px 16px", fontSize: 11 }}
+          onClick={onLeaderboard}
+        >
+          ◫ LEADERBOARD
         </button>
         <button
           type="button"
