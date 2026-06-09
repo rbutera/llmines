@@ -310,26 +310,6 @@
   }
 }
 
-.flicker {
-  animation: flick 5.5s steps(1) infinite;
-}
-@keyframes flick {
-  0%,
-  97%,
-  100% {
-    opacity: 1;
-  }
-  97.5% {
-    opacity: 0.82;
-  }
-  98% {
-    opacity: 1;
-  }
-  98.5% {
-    opacity: 0.9;
-  }
-}
-
 .pulse {
   animation: pulse 2s ease-in-out infinite;
 }
@@ -735,12 +715,9 @@ input[type="range"].rng::-moz-range-thumb {
   border-radius: 0;
 }
 
-/* prefers-reduced-motion: disable shake / flicker / scan drift + blinks. */
+/* prefers-reduced-motion: disable shake / scan drift + blinks. */
 @media (prefers-reduced-motion: reduce) {
   .screen.shake {
-    animation: none;
-  }
-  .flicker {
     animation: none;
   }
   .crt::before {
