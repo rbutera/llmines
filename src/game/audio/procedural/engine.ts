@@ -346,6 +346,25 @@ export class InteractiveAudioEngine {
     if (this.started) return;
     if (typeof window === "undefined") return;
     try {
+      // CRITICAL — the AudioContext must be both CREATED and RESUMED inside the
+      // user-gesture stack, or strict-autoplay browsers block it ("The
+      // AudioContext was not allowed to start. It must be resumed (or created)
+      // after a user gesture") and the whole engine is silent until something else
+      // re-gestures (the intermittent cold-load silence).
+      //
+      // Two synchronous calls, BEFORE any await, both riding the click:
+      //  1. Tone.getContext() — lazily constructs the real Context (and its
+      //     underlying AudioContext) NOW, in the gesture. Without this, Tone.start()
+      //     calls resume() on the dummy context and the real AudioContext is created
+      //     later (in the post-await microtask, off the gesture) → blocked.
+      //  2. ctx.resume() — resume it synchronously in the same gesture tick.
+      // The returned promise is awaited only AFTER the synchronous resume() call has
+      // already been issued, so the gesture association is never lost.
+      const ctx = Tone.getContext();
+      const resumed = ctx.resume();
+      await resumed;
+      // Belt-and-braces: Tone.start() is a no-op if already running; keeps Tone's
+      // own internal "started" bookkeeping in sync.
       await Tone.start();
       this.master = new Tone.Gain(this.volume).toDestination();
       const t = Tone.getTransport();
@@ -435,7 +454,7 @@ export class InteractiveAudioEngine {
               // older Tone or a degraded player — fall back to whole-file loop
             }
             player.connect(gain);
-            player.sync().start(0); // phase-running with the transport, gated to 0
+            this.startTierPlayer(player, seg);
             seg.tierPlayers[t] = player;
             seg.tierGains[t] = gain;
           } else {
@@ -446,6 +465,51 @@ export class InteractiveAudioEngine {
         }
       }),
     );
+  }
+
+  /**
+   * Start a looping tier player so it BOTH triggers immediately AND stays phase-
+   * aligned to the loop grid — regardless of how long the segment took to fetch.
+   *
+   * The old `player.sync().start(0)` scheduled a transport event at position 0.
+   * But segments load ASYNC, seconds AFTER `unlock()` already called
+   * `Transport.start()`, so position 0 is in the transport's PAST. Tone's synced
+   * `start` has a one-shot catch-up branch, but the engine drives looping at the
+   * player level (player.loop = true), NOT via transport loop — so the transport's
+   * "loopStart" re-fire that synced players rely on never happens, and a player that
+   * misses transport-0 stays silent until the next page load (the .opus cache makes
+   * it fast enough to catch ~0). First-time visitors got silence. This is the race.
+   *
+   * Fix: start the player UNSYNCED, right now, with a buffer offset equal to the
+   * current transport phase into the loop window (`transport.seconds %
+   * barWindowSeconds`). It fires deterministically (no past-time scheduling) and is
+   * phase-correct: every tier of every segment is started at the same grid phase, so
+   * crossfades and the self-rescheduling boundary tick (which ticks on the transport-0
+   * / window grid) stay aligned with the audio wrap. player.loop + loopStart/loopEnd
+   * keep it cycling on the spill-free bar window thereafter.
+   */
+  private startTierPlayer(player: Tone.Player, seg: LoadedSegment): void {
+    try {
+      const window = this.barWindowSeconds(seg);
+      let phase = 0;
+      try {
+        const ts = Tone.getTransport().seconds;
+        if (Number.isFinite(ts) && window > 0) {
+          phase = ((ts % window) + window) % window;
+        }
+      } catch {
+        phase = 0;
+      }
+      // start NOW (unsynced) from the in-loop phase offset; player-level loop wraps it.
+      player.start(undefined, phase);
+    } catch {
+      // a degraded player just won't sound; never throw into the game.
+      try {
+        player.start();
+      } catch {
+        // ignore
+      }
+    }
   }
 
   private loadPlayer(url: string): Promise<Tone.Player | null> {
@@ -854,7 +918,12 @@ export class InteractiveAudioEngine {
       if (!voice) return;
       // monotonic-nudge: Tone requires strictly increasing start times on a player;
       // two actions on the same `@16n` tick would otherwise collide and throw.
-      const at = Math.max(time, pool.lastStart + SFX_RETRIGGER_EPSILON);
+      // ALSO floor at `now`: the `@16n` quantize can resolve to a time that has
+      // already passed by the time this callback runs (transport jitter / a slow
+      // frame), and a one-shot scheduled in the past is silently dropped. Flooring
+      // at now+epsilon makes a late SFX fire immediately instead of going silent.
+      const floor = this.toneNow() + SFX_RETRIGGER_EPSILON;
+      const at = Math.max(time, floor, pool.lastStart + SFX_RETRIGGER_EPSILON);
       pool.lastStart = at;
       voice.volume.value = Tone.gainToDb(Math.max(0.0001, Math.min(1, velocity)));
       voice.start(at);

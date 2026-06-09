@@ -400,6 +400,18 @@ export function GameShell() {
 
   const handleStart = useCallback(() => {
     if (!controller) return;
+    // The Start click IS the user gesture. Unlock the AudioContext FIRST, before any
+    // React state setter or other work, so the context create+resume rides the
+    // synchronous gesture stack. Strict-autoplay browsers block a context that is
+    // created/resumed off the gesture (the intermittent cold-load silence), so the
+    // resume MUST be the first thing the handler does. unlock() is self-guarded.
+    audioDeriverRef.current?.reset();
+    audioEngineRef.current?.setInitialTrack(skinSwitch.skin.track);
+    void audioEngineRef.current?.unlock().then(() => {
+      audioEngineRef.current?.setVolume(musicVolume);
+      audioEngineRef.current?.setMuted(muted);
+      audioEngineRef.current?.setPreset(audioMix);
+    });
     setScore(0);
     setPaused(false);
     setControlsOpen(false);
@@ -411,15 +423,6 @@ export function GameShell() {
     barRef.current = 1;
     setBar(1);
     setBeat(1);
-    // The Start click IS the user gesture — unlock the AudioContext + start the
-    // bed here. Fire-and-forget + self-guarded. (Audio-wiring — identical v2.5.)
-    audioDeriverRef.current?.reset();
-    audioEngineRef.current?.setInitialTrack(skinSwitch.skin.track);
-    void audioEngineRef.current?.unlock().then(() => {
-      audioEngineRef.current?.setVolume(musicVolume);
-      audioEngineRef.current?.setMuted(muted);
-      audioEngineRef.current?.setPreset(audioMix);
-    });
     controller.start();
     setPhase("playing");
   }, [controller, musicVolume, muted, audioMix, skinSwitch.skin]);

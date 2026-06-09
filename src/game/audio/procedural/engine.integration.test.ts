@@ -150,8 +150,16 @@ vi.mock("tone", () => {
       return (Math.floor(mockState.now / SEC_PER_BAR) + 1) * SEC_PER_BAR;
     },
   };
+  // Minimal fake of the Tone Context so unlock()'s gesture-safe
+  // getContext().resume() path works under the mock (real fix: create+resume the
+  // AudioContext synchronously inside the Start gesture).
+  const fakeContext = {
+    state: "running" as AudioContextState,
+    resume: () => Promise.resolve(),
+  };
   return {
     start: () => Promise.resolve(),
+    getContext: () => fakeContext,
     now: () => mockState.now,
     getTransport: () => fakeTransport,
     gainToDb: (g: number) => 20 * Math.log10(g),
