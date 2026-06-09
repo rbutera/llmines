@@ -19,6 +19,12 @@ db.sqlite
 /out/
 next-env.d.ts
 
+# cloudflare / opennext
+/.open-next/
+.dev.vars
+cloudflare-env.d.ts
+/.wrangler/
+
 # production
 /build
 
