@@ -4,37 +4,50 @@
  *
  * THIS CODE IS AUTOMATICALLY GENERATED.
  *
- * Hand-authored offline (no `convex dev`/deploy) from the convex@1.40 codegen
- * template. To regenerate against a real backend, run `npx convex dev`.
+ * To regenerate, run `npx convex dev`.
  * @module
  */
+
+import type * as scores from "../scores.js";
+import type * as usernames from "../usernames.js";
+import type * as users from "../users.js";
+
 import type {
   ApiFromModules,
   FilterApi,
   FunctionReference,
 } from "convex/server";
-import type * as scores from "../scores.js";
-import type * as users from "../users.js";
-import type * as usernames from "../usernames.js";
+
+declare const fullApi: ApiFromModules<{
+  scores: typeof scores;
+  usernames: typeof usernames;
+  users: typeof users;
+}>;
 
 /**
- * A utility for referencing Convex functions in your app's API.
+ * A utility for referencing Convex functions in your app's public API.
  *
  * Usage:
  * ```js
  * const myFunctionReference = api.myModule.myFunction;
  * ```
  */
-declare const fullApi: ApiFromModules<{
-  scores: typeof scores;
-  users: typeof users;
-  usernames: typeof usernames;
-}>;
 export declare const api: FilterApi<
   typeof fullApi,
   FunctionReference<any, "public">
 >;
+
+/**
+ * A utility for referencing Convex functions in your app's internal API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = internal.myModule.myFunction;
+ * ```
+ */
 export declare const internal: FilterApi<
   typeof fullApi,
   FunctionReference<any, "internal">
 >;
+
+export declare const components: {};

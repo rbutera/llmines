@@ -4,11 +4,11 @@
  *
  * THIS CODE IS AUTOMATICALLY GENERATED.
  *
- * Hand-authored offline (no `convex dev`/deploy) from the convex@1.40 codegen
- * template. To regenerate against a real backend, run `npx convex dev`.
+ * To regenerate, run `npx convex dev`.
  * @module
  */
-import { anyApi } from "convex/server";
+
+import { anyApi, componentsGeneric } from "convex/server";
 
 /**
  * A utility for referencing Convex functions in your app's API.
@@ -20,3 +20,4 @@ import { anyApi } from "convex/server";
  */
 export const api = anyApi;
 export const internal = anyApi;
+export const components = componentsGeneric();
