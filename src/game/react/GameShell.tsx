@@ -466,7 +466,7 @@ export function GameShell() {
     <main
       data-testid="game-root"
       data-skin={skinSwitch.skin.id}
-      className={`screen flicker ${shaking ? "shake" : ""}`}
+      className={`screen ${shaking ? "shake" : ""}`}
       style={
         {
           width: "100vw",
