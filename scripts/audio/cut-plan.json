@@ -1,0 +1,33 @@
+{
+  "_comment": "Bar-snapped segment plan for the LLMines 4-layer tier render. Boundaries derived from the vocal-stem energy map (build-reports/structure-<song>.txt) reconciled with Rai's section maps (song1-lyrics-structure.md, song2-structure-rai.md). bars are [startBar, endBarInclusive] on the locked grid. type: LOOPER (instrumental groove, loops seamlessly) / PROGRESSION (vocal section, plays through) / TERMINAL (final outro, ends song). All boundaries land on whole bars.",
+  "song1": {
+    "title": "Especifico Primero",
+    "bpm": 109.957,
+    "secPerBar": 2.1827,
+    "origin": 0.058,
+    "vocalStem": "7 Vocals.wav",
+    "segments": [
+      { "id": "s1-intro",  "type": "LOOPER",      "startBar": 0,  "endBar": 1,  "character": "instrumental intro hook" },
+      { "id": "s1-verse1", "type": "PROGRESSION", "startBar": 2,  "endBar": 35, "character": "verse1 + build + chorus (vocal body A)" },
+      { "id": "s1-break",  "type": "LOOPER",      "startBar": 36, "endBar": 39, "character": "instrumental break (prime game loop)" },
+      { "id": "s1-verse2", "type": "PROGRESSION", "startBar": 40, "endBar": 80, "character": "verse2 + build + chorus + bridge (vocal body B)" },
+      { "id": "s1-outro",  "type": "TERMINAL",    "startBar": 81, "endBar": 89, "character": "instrumental outro, rides out" }
+    ]
+  },
+  "song2": {
+    "title": "pipeline male phonk (Verde el Pipeline)",
+    "bpm": 126.05,
+    "secPerBar": 1.904,
+    "origin": 0.0,
+    "vocalStem": "6 Vocals.wav",
+    "segments": [
+      { "id": "s2-intro",   "type": "LOOPER",      "startBar": 0,   "endBar": 15,  "character": "intro groove" },
+      { "id": "s2-verse1",  "type": "PROGRESSION", "startBar": 16,  "endBar": 38,  "character": "verse1 + build + chorus" },
+      { "id": "s2-bridge1", "type": "LOOPER",      "startBar": 39,  "endBar": 40,  "character": "instrumental seam" },
+      { "id": "s2-verse2",  "type": "PROGRESSION", "startBar": 41,  "endBar": 72,  "character": "verse2 + build2 + chorus2" },
+      { "id": "s2-break",   "type": "LOOPER",      "startBar": 73,  "endBar": 79,  "character": "instrumental break / bridge bed" },
+      { "id": "s2-chorus3", "type": "PROGRESSION", "startBar": 80,  "endBar": 88,  "character": "chorus3 (vocal)" },
+      { "id": "s2-outro",   "type": "TERMINAL",    "startBar": 89,  "endBar": 102, "character": "musical outro, rides out" }
+    ]
+  }
+}

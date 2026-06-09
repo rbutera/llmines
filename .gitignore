@@ -28,6 +28,10 @@ cloudflare-env.d.ts
 # production
 /build
 
+# audio build (Wave 1): native stems + python venv are large / local-only
+/audio-src
+/.venv-audio
+
 # misc
 .DS_Store
 *.pem

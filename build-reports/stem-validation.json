@@ -1,0 +1,203 @@
+{
+  "song1": {
+    "grid": {
+      "bpm": 109.957,
+      "sec_per_bar": 2.1827,
+      "origin": 0.058
+    },
+    "stems": {
+      "0 Especifico Primero.wav": {
+        "decoded_ok": true,
+        "samples": 9475396,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 197.4041,
+        "peak_dbfs": -3.89,
+        "rms_dbfs": -15.02,
+        "quiet_window_rms_dbfs": -37.99,
+        "quiet_window_peak_dbfs": -27.2
+      },
+      "1 FX.wav": {
+        "decoded_ok": true,
+        "samples": 9475396,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 197.4041,
+        "peak_dbfs": -3.09,
+        "rms_dbfs": -33.15,
+        "quiet_window_rms_dbfs": -99.95,
+        "quiet_window_peak_dbfs": -82.69
+      },
+      "2 Synth.wav": {
+        "decoded_ok": true,
+        "samples": 9475396,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 197.4041,
+        "peak_dbfs": -8.86,
+        "rms_dbfs": -35.52,
+        "quiet_window_rms_dbfs": -79.59,
+        "quiet_window_peak_dbfs": -65.18
+      },
+      "3 Percussion.wav": {
+        "decoded_ok": true,
+        "samples": 9475396,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 197.4041,
+        "peak_dbfs": -3.14,
+        "rms_dbfs": -38.04,
+        "quiet_window_rms_dbfs": -133.84,
+        "quiet_window_peak_dbfs": -96.18
+      },
+      "4 Guitar.wav": {
+        "decoded_ok": true,
+        "samples": 9475396,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 197.4041,
+        "peak_dbfs": -7.16,
+        "rms_dbfs": -38.37,
+        "quiet_window_rms_dbfs": -130.39,
+        "quiet_window_peak_dbfs": -97.47
+      },
+      "5 Bass.wav": {
+        "decoded_ok": true,
+        "samples": 9475396,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 197.4041,
+        "peak_dbfs": -6.58,
+        "rms_dbfs": -21.58,
+        "quiet_window_rms_dbfs": -90.66,
+        "quiet_window_peak_dbfs": -75.25
+      },
+      "6 Drums.wav": {
+        "decoded_ok": true,
+        "samples": 9475396,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 197.4041,
+        "peak_dbfs": -2.49,
+        "rms_dbfs": -20.56,
+        "quiet_window_rms_dbfs": -134.64,
+        "quiet_window_peak_dbfs": -98.07
+      },
+      "7 Vocals.wav": {
+        "decoded_ok": true,
+        "samples": 9475396,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 197.4041,
+        "peak_dbfs": -5.67,
+        "rms_dbfs": -25.6,
+        "quiet_window_rms_dbfs": -130.79,
+        "quiet_window_peak_dbfs": -95.76
+      }
+    },
+    "duration_spread_s": 0.0
+  },
+  "song2": {
+    "grid": {
+      "bpm": 126.05,
+      "sec_per_bar": 1.904,
+      "origin": 0.0
+    },
+    "stems": {
+      "0 pipeline male phonk.wav": {
+        "decoded_ok": true,
+        "samples": 9446448,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 196.801,
+        "peak_dbfs": -1.97,
+        "rms_dbfs": -15.15,
+        "quiet_window_rms_dbfs": -26.76,
+        "quiet_window_peak_dbfs": -9.59
+      },
+      "1 FX.wav": {
+        "decoded_ok": true,
+        "samples": 9446448,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 196.801,
+        "peak_dbfs": -6.54,
+        "rms_dbfs": -36.45,
+        "quiet_window_rms_dbfs": -82.39,
+        "quiet_window_peak_dbfs": -69.34
+      },
+      "2 Synth.wav": {
+        "decoded_ok": true,
+        "samples": 9446448,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 196.801,
+        "peak_dbfs": -4.36,
+        "rms_dbfs": -30.75,
+        "quiet_window_rms_dbfs": -82.18,
+        "quiet_window_peak_dbfs": -68.64
+      },
+      "3 Bass.wav": {
+        "decoded_ok": true,
+        "samples": 9446448,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 196.801,
+        "peak_dbfs": -4.5,
+        "rms_dbfs": -22.96,
+        "quiet_window_rms_dbfs": -93.98,
+        "quiet_window_peak_dbfs": -80.81
+      },
+      "4 Drums.wav": {
+        "decoded_ok": true,
+        "samples": 9446448,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 196.801,
+        "peak_dbfs": -3.26,
+        "rms_dbfs": -20.98,
+        "quiet_window_rms_dbfs": -133.48,
+        "quiet_window_peak_dbfs": -97.9
+      },
+      "5 Backing_Vocals.wav": {
+        "decoded_ok": true,
+        "samples": 9446448,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 196.801,
+        "peak_dbfs": -45.1,
+        "rms_dbfs": -76.72,
+        "quiet_window_rms_dbfs": -135.12,
+        "quiet_window_peak_dbfs": -99.67
+      },
+      "6 Vocals.wav": {
+        "decoded_ok": true,
+        "samples": 9446448,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "duration_s": 196.801,
+        "peak_dbfs": -5.83,
+        "rms_dbfs": -27.61,
+        "quiet_window_rms_dbfs": -130.75,
+        "quiet_window_peak_dbfs": -98.25
+      }
+    },
+    "duration_spread_s": 0.0
+  },
+  "flags": []
+}

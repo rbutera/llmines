@@ -1,0 +1,18 @@
+LOOPER seam check (PASS = whole-bar AND join step within +6.0dB of interior p99 OR join step < 0.02)
+  song1 s1-intro    tier0 bars 2/2 wholebar=True seamStep=2.50e-05 join=1.97e-04 int_p99=1.45e-04 j/i=+2.6dB -> PASS
+  song1 s1-intro    tier1 bars 2/2 wholebar=True seamStep=1.39e-02 join=4.66e-02 int_p99=6.11e-02 j/i=-2.4dB -> PASS
+  song1 s1-intro    tier2 bars 2/2 wholebar=True seamStep=1.37e-02 join=4.67e-02 int_p99=6.11e-02 j/i=-2.3dB -> PASS
+  song1 s1-break    tier0 bars 4/4 wholebar=True seamStep=1.76e-02 join=4.59e-02 int_p99=7.95e-02 j/i=-4.8dB -> PASS
+  song1 s1-break    tier1 bars 4/4 wholebar=True seamStep=1.05e-02 join=4.14e-02 int_p99=9.03e-02 j/i=-6.8dB -> PASS
+  song1 s1-break    tier2 bars 4/4 wholebar=True seamStep=1.03e-02 join=4.18e-02 int_p99=9.02e-02 j/i=-6.7dB -> PASS
+  song2 s2-intro    tier0 bars 16/16 wholebar=True seamStep=4.70e-02 join=4.70e-02 int_p99=1.11e-01 j/i=-7.5dB -> PASS
+  song2 s2-intro    tier1 bars 16/16 wholebar=True seamStep=1.43e-02 join=1.83e-02 int_p99=1.29e-01 j/i=-16.9dB -> PASS
+  song2 s2-intro    tier2 bars 16/16 wholebar=True seamStep=1.42e-02 join=1.83e-02 int_p99=1.29e-01 j/i=-16.9dB -> PASS
+  song2 s2-bridge1  tier0 bars 2/2 wholebar=True seamStep=4.72e-03 join=9.72e-03 int_p99=1.02e-01 j/i=-20.4dB -> PASS
+  song2 s2-bridge1  tier1 bars 2/2 wholebar=True seamStep=4.45e-03 join=2.03e-02 int_p99=1.02e-01 j/i=-14.0dB -> PASS
+  song2 s2-bridge1  tier2 bars 2/2 wholebar=True seamStep=4.52e-03 join=2.03e-02 int_p99=1.02e-01 j/i=-14.0dB -> PASS
+  song2 s2-break    tier0 bars 7/7 wholebar=True seamStep=2.03e-03 join=2.71e-02 int_p99=1.08e-01 j/i=-12.0dB -> PASS
+  song2 s2-break    tier1 bars 7/7 wholebar=True seamStep=2.80e-02 join=7.17e-02 int_p99=1.00e-01 j/i=-2.9dB -> PASS
+  song2 s2-break    tier2 bars 7/7 wholebar=True seamStep=2.79e-02 join=7.17e-02 int_p99=1.00e-01 j/i=-2.9dB -> PASS
+
+ALL LOOPER TIERS PASS: True

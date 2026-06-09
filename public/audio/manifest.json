@@ -1,253 +1,179 @@
 {
-  "id": "song1",
-  "name": "Codigo Sin Final",
-  "tempo": 109.9568,
-  "barSeconds": 2.18268,
-  "sfxMode": "adlib",
-  "contentEndSeconds": 197.45,
-  "segmentCount": 12,
-  "segments": [
+  "version": "wave1-native-4layer",
+  "songs": [
     {
-      "index": 0,
-      "name": "intro",
-      "role": "looper",
-      "bars": 16,
-      "lengthSeconds": 34.9228,
-      "bedMode": "loopRunning",
-      "voxMode": "none",
-      "voxEntryBars": [
-        0
+      "id": "song1",
+      "title": "Especifico Primero",
+      "tempo": 109.957,
+      "barSeconds": 2.1827,
+      "segments": [
+        {
+          "id": "s1-intro",
+          "type": "LOOPER",
+          "bars": 2,
+          "lengthSeconds": 4.3654,
+          "character": "instrumental intro hook",
+          "tiers": {
+            "tier0": "song1/s1-intro-tier0.opus",
+            "tier1": "song1/s1-intro-tier1.opus",
+            "tier2": "song1/s1-intro-tier2.opus"
+          }
+        },
+        {
+          "id": "s1-verse1",
+          "type": "PROGRESSION",
+          "bars": 34,
+          "lengthSeconds": 76.3945,
+          "character": "verse1 + build + chorus (vocal body A)",
+          "tiers": {
+            "tier0": "song1/s1-verse1-tier0.opus",
+            "tier1": "song1/s1-verse1-tier1.opus",
+            "tier2": "song1/s1-verse1-tier2.opus"
+          }
+        },
+        {
+          "id": "s1-break",
+          "type": "LOOPER",
+          "bars": 4,
+          "lengthSeconds": 8.7308,
+          "character": "instrumental break (prime game loop)",
+          "tiers": {
+            "tier0": "song1/s1-break-tier0.opus",
+            "tier1": "song1/s1-break-tier1.opus",
+            "tier2": "song1/s1-break-tier2.opus"
+          }
+        },
+        {
+          "id": "s1-verse2",
+          "type": "PROGRESSION",
+          "bars": 41,
+          "lengthSeconds": 91.6734,
+          "character": "verse2 + build + chorus + bridge (vocal body B)",
+          "tiers": {
+            "tier0": "song1/s1-verse2-tier0.opus",
+            "tier1": "song1/s1-verse2-tier1.opus",
+            "tier2": "song1/s1-verse2-tier2.opus"
+          }
+        },
+        {
+          "id": "s1-outro",
+          "type": "TERMINAL",
+          "bars": 9,
+          "lengthSeconds": 20.5474,
+          "character": "instrumental outro, rides out",
+          "tiers": {
+            "tier0": "song1/s1-outro-tier0.opus",
+            "tier1": "song1/s1-outro-tier1.opus",
+            "tier2": "song1/s1-outro-tier2.opus"
+          }
+        }
       ],
-      "voxLoopable": false,
-      "gate": 6,
-      "excessCarry": "cap",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": false,
-      "bed": "seg0-bed.mp3",
-      "vox": null
+      "sfx": {
+        "drop": "song1/sfx-drop.opus",
+        "move": "song1/sfx-move.opus",
+        "rotate": "song1/sfx-rotate.opus",
+        "softdrop": "song1/sfx-softdrop.opus",
+        "stage": "song1/sfx-stage.opus"
+      }
     },
     {
-      "index": 1,
-      "name": "verse1",
-      "role": "progression",
-      "bars": 8,
-      "lengthSeconds": 17.4614,
-      "bedMode": "startOnEnter",
-      "voxMode": "armedPhrase",
-      "voxEntryBars": [
-        0,
-        4
+      "id": "song2",
+      "title": "pipeline male phonk (Verde el Pipeline)",
+      "tempo": 126.05,
+      "barSeconds": 1.904,
+      "segments": [
+        {
+          "id": "s2-intro",
+          "type": "LOOPER",
+          "bars": 16,
+          "lengthSeconds": 30.464,
+          "character": "intro groove",
+          "tiers": {
+            "tier0": "song2/s2-intro-tier0.opus",
+            "tier1": "song2/s2-intro-tier1.opus",
+            "tier2": "song2/s2-intro-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-verse1",
+          "type": "PROGRESSION",
+          "bars": 23,
+          "lengthSeconds": 45.696,
+          "character": "verse1 + build + chorus",
+          "tiers": {
+            "tier0": "song2/s2-verse1-tier0.opus",
+            "tier1": "song2/s2-verse1-tier1.opus",
+            "tier2": "song2/s2-verse1-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-bridge1",
+          "type": "LOOPER",
+          "bars": 2,
+          "lengthSeconds": 3.808,
+          "character": "instrumental seam",
+          "tiers": {
+            "tier0": "song2/s2-bridge1-tier0.opus",
+            "tier1": "song2/s2-bridge1-tier1.opus",
+            "tier2": "song2/s2-bridge1-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-verse2",
+          "type": "PROGRESSION",
+          "bars": 32,
+          "lengthSeconds": 62.832,
+          "character": "verse2 + build2 + chorus2",
+          "tiers": {
+            "tier0": "song2/s2-verse2-tier0.opus",
+            "tier1": "song2/s2-verse2-tier1.opus",
+            "tier2": "song2/s2-verse2-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-break",
+          "type": "LOOPER",
+          "bars": 7,
+          "lengthSeconds": 13.328,
+          "character": "instrumental break / bridge bed",
+          "tiers": {
+            "tier0": "song2/s2-break-tier0.opus",
+            "tier1": "song2/s2-break-tier1.opus",
+            "tier2": "song2/s2-break-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-chorus3",
+          "type": "PROGRESSION",
+          "bars": 9,
+          "lengthSeconds": 19.04,
+          "character": "chorus3 (vocal)",
+          "tiers": {
+            "tier0": "song2/s2-chorus3-tier0.opus",
+            "tier1": "song2/s2-chorus3-tier1.opus",
+            "tier2": "song2/s2-chorus3-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-outro",
+          "type": "TERMINAL",
+          "bars": 14,
+          "lengthSeconds": 27.345,
+          "character": "musical outro, rides out",
+          "tiers": {
+            "tier0": "song2/s2-outro-tier0.opus",
+            "tier1": "song2/s2-outro-tier1.opus",
+            "tier2": "song2/s2-outro-tier2.opus"
+          }
+        }
       ],
-      "voxLoopable": false,
-      "gate": 2,
-      "excessCarry": "carry",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": true,
-      "bed": "seg1-bed.mp3",
-      "vox": "seg1-vox.mp3"
-    },
-    {
-      "index": 2,
-      "name": "build",
-      "role": "progression",
-      "bars": 4,
-      "lengthSeconds": 8.7307,
-      "bedMode": "startOnEnter",
-      "voxMode": "armedPhrase",
-      "voxEntryBars": [
-        0
-      ],
-      "voxLoopable": false,
-      "gate": 2,
-      "excessCarry": "carry",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": true,
-      "bed": "seg2-bed.mp3",
-      "vox": "seg2-vox.mp3"
-    },
-    {
-      "index": 3,
-      "name": "chorus",
-      "role": "looper",
-      "bars": 8,
-      "lengthSeconds": 17.4614,
-      "bedMode": "loopRunning",
-      "voxMode": "loopLayer",
-      "voxEntryBars": [
-        0
-      ],
-      "voxLoopable": true,
-      "gate": 5,
-      "excessCarry": "cap",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": true,
-      "bed": "seg3-bed.mp3",
-      "vox": "seg3-vox.mp3"
-    },
-    {
-      "index": 4,
-      "name": "break",
-      "role": "looper",
-      "bars": 8,
-      "lengthSeconds": 17.4614,
-      "bedMode": "loopRunning",
-      "voxMode": "none",
-      "voxEntryBars": [
-        0
-      ],
-      "voxLoopable": false,
-      "gate": 6,
-      "excessCarry": "cap",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": false,
-      "bed": "seg4-bed.mp3",
-      "vox": null
-    },
-    {
-      "index": 5,
-      "name": "verse2",
-      "role": "progression",
-      "bars": 8,
-      "lengthSeconds": 17.4614,
-      "bedMode": "startOnEnter",
-      "voxMode": "armedPhrase",
-      "voxEntryBars": [
-        0,
-        4
-      ],
-      "voxLoopable": false,
-      "gate": 2,
-      "excessCarry": "carry",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": true,
-      "bed": "seg5-bed.mp3",
-      "vox": "seg5-vox.mp3"
-    },
-    {
-      "index": 6,
-      "name": "build2",
-      "role": "progression",
-      "bars": 4,
-      "lengthSeconds": 8.7307,
-      "bedMode": "startOnEnter",
-      "voxMode": "armedPhrase",
-      "voxEntryBars": [
-        0
-      ],
-      "voxLoopable": false,
-      "gate": 2,
-      "excessCarry": "carry",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": true,
-      "bed": "seg6-bed.mp3",
-      "vox": "seg6-vox.mp3"
-    },
-    {
-      "index": 7,
-      "name": "chorus2",
-      "role": "looper",
-      "bars": 8,
-      "lengthSeconds": 17.4614,
-      "bedMode": "loopRunning",
-      "voxMode": "loopLayer",
-      "voxEntryBars": [
-        0
-      ],
-      "voxLoopable": true,
-      "gate": 5,
-      "excessCarry": "cap",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": true,
-      "bed": "seg7-bed.mp3",
-      "vox": "seg7-vox.mp3"
-    },
-    {
-      "index": 8,
-      "name": "bridge",
-      "role": "looper",
-      "bars": 8,
-      "lengthSeconds": 17.4614,
-      "bedMode": "loopRunning",
-      "voxMode": "loopLayer",
-      "voxEntryBars": [
-        0
-      ],
-      "voxLoopable": true,
-      "gate": 5,
-      "excessCarry": "cap",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": true,
-      "bed": "seg8-bed.mp3",
-      "vox": "seg8-vox.mp3"
-    },
-    {
-      "index": 9,
-      "name": "beatdrop",
-      "role": "looper",
-      "bars": 6,
-      "lengthSeconds": 13.0961,
-      "bedMode": "loopRunning",
-      "voxMode": "loopLayer",
-      "voxEntryBars": [
-        0
-      ],
-      "voxLoopable": true,
-      "gate": 5,
-      "excessCarry": "cap",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": true,
-      "bed": "seg9-bed.mp3",
-      "vox": "seg9-vox.mp3"
-    },
-    {
-      "index": 10,
-      "name": "chorus3",
-      "role": "looper",
-      "bars": 8,
-      "lengthSeconds": 17.4614,
-      "bedMode": "loopRunning",
-      "voxMode": "loopLayer",
-      "voxEntryBars": [
-        0
-      ],
-      "voxLoopable": true,
-      "gate": 5,
-      "excessCarry": "cap",
-      "isTerminalRideout": false,
-      "completionGate": 0,
-      "hasVox": true,
-      "bed": "seg10-bed.mp3",
-      "vox": "seg10-vox.mp3"
-    },
-    {
-      "index": 11,
-      "name": "outro",
-      "role": "terminal",
-      "bars": 4,
-      "lengthSeconds": 8.7307,
-      "bedMode": "loopRunning",
-      "voxMode": "loopLayer",
-      "voxEntryBars": [
-        0
-      ],
-      "voxLoopable": true,
-      "gate": 0,
-      "excessCarry": "discard",
-      "isTerminalRideout": true,
-      "completionGate": 4,
-      "hasVox": true,
-      "bed": "seg11-bed.mp3",
-      "vox": "seg11-vox.mp3"
+      "sfx": {
+        "drop": "song2/sfx-drop.opus",
+        "move": "song2/sfx-move.opus",
+        "rotate": "song2/sfx-rotate.opus",
+        "softdrop": "song2/sfx-softdrop.opus",
+        "stage": "song2/sfx-stage.opus"
+      }
     }
   ]
 }

@@ -1,0 +1,283 @@
+{
+  "files": [
+    {
+      "file": "song1/s1-intro-tier0.opus",
+      "bytes": 62869,
+      "opusDur": 4.372,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-intro-tier1.opus",
+      "bytes": 80246,
+      "opusDur": 4.372,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-intro-tier2.opus",
+      "bytes": 80365,
+      "opusDur": 4.372,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-verse1-tier0.opus",
+      "bytes": 1073777,
+      "opusDur": 76.401,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-verse1-tier1.opus",
+      "bytes": 1146333,
+      "opusDur": 76.401,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-verse1-tier2.opus",
+      "bytes": 1171811,
+      "opusDur": 76.401,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-break-tier0.opus",
+      "bytes": 124475,
+      "opusDur": 8.737,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-break-tier1.opus",
+      "bytes": 133140,
+      "opusDur": 8.737,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-break-tier2.opus",
+      "bytes": 133162,
+      "opusDur": 8.737,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-verse2-tier0.opus",
+      "bytes": 1291090,
+      "opusDur": 91.68,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-verse2-tier1.opus",
+      "bytes": 1347024,
+      "opusDur": 91.68,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-verse2-tier2.opus",
+      "bytes": 1366713,
+      "opusDur": 91.68,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-outro-tier0.opus",
+      "bytes": 283139,
+      "opusDur": 20.554,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-outro-tier1.opus",
+      "bytes": 315619,
+      "opusDur": 20.554,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/s1-outro-tier2.opus",
+      "bytes": 315731,
+      "opusDur": 20.554,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/sfx-drop.opus",
+      "bytes": 10735,
+      "opusDur": 0.743,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/sfx-move.opus",
+      "bytes": 1579,
+      "opusDur": 0.07,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/sfx-rotate.opus",
+      "bytes": 1777,
+      "opusDur": 0.081,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/sfx-softdrop.opus",
+      "bytes": 1892,
+      "opusDur": 0.092,
+      "decodeOk": true
+    },
+    {
+      "file": "song1/sfx-stage.opus",
+      "bytes": 4736,
+      "opusDur": 0.38,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-intro-tier0.opus",
+      "bytes": 381245,
+      "opusDur": 30.471,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-intro-tier1.opus",
+      "bytes": 464663,
+      "opusDur": 30.471,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-intro-tier2.opus",
+      "bytes": 464659,
+      "opusDur": 30.471,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-verse1-tier0.opus",
+      "bytes": 592385,
+      "opusDur": 45.703,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-verse1-tier1.opus",
+      "bytes": 648421,
+      "opusDur": 45.703,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-verse1-tier2.opus",
+      "bytes": 621039,
+      "opusDur": 45.703,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-bridge1-tier0.opus",
+      "bytes": 47206,
+      "opusDur": 3.814,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-bridge1-tier1.opus",
+      "bytes": 56905,
+      "opusDur": 3.814,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-bridge1-tier2.opus",
+      "bytes": 56913,
+      "opusDur": 3.814,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-verse2-tier0.opus",
+      "bytes": 813574,
+      "opusDur": 62.839,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-verse2-tier1.opus",
+      "bytes": 872934,
+      "opusDur": 62.839,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-verse2-tier2.opus",
+      "bytes": 858931,
+      "opusDur": 62.839,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-break-tier0.opus",
+      "bytes": 184719,
+      "opusDur": 13.335,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-break-tier1.opus",
+      "bytes": 208769,
+      "opusDur": 13.335,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-break-tier2.opus",
+      "bytes": 208710,
+      "opusDur": 13.335,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-chorus3-tier0.opus",
+      "bytes": 269264,
+      "opusDur": 19.047,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-chorus3-tier1.opus",
+      "bytes": 290162,
+      "opusDur": 19.047,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-chorus3-tier2.opus",
+      "bytes": 280038,
+      "opusDur": 19.047,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-outro-tier0.opus",
+      "bytes": 366120,
+      "opusDur": 27.352,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-outro-tier1.opus",
+      "bytes": 386517,
+      "opusDur": 27.352,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/s2-outro-tier2.opus",
+      "bytes": 386570,
+      "opusDur": 27.352,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/sfx-drop.opus",
+      "bytes": 4707,
+      "opusDur": 0.227,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/sfx-move.opus",
+      "bytes": 3016,
+      "opusDur": 0.106,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/sfx-rotate.opus",
+      "bytes": 2872,
+      "opusDur": 0.106,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/sfx-softdrop.opus",
+      "bytes": 2268,
+      "opusDur": 0.097,
+      "decodeOk": true
+    },
+    {
+      "file": "song2/sfx-stage.opus",
+      "bytes": 5656,
+      "opusDur": 0.327,
+      "decodeOk": true
+    }
+  ],
+  "totalBytes": 17424476,
+  "totalMB": 16.62,
+  "decodeFailures": []
+}

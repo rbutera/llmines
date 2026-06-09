@@ -1,0 +1,66 @@
+{
+  "song1": {
+    "move": {
+      "wav": "/Users/rai/dev/llmines-audio-build/build/wav/sfx/song1/sfx-move.wav",
+      "durSec": 0.064,
+      "onset_s": 149.12,
+      "centroid": 6942.5,
+      "isolation_db": "11.41",
+      "peak": 0.123
+    },
+    "rotate": {
+      "wav": "/Users/rai/dev/llmines-audio-build/build/wav/sfx/song1/sfx-rotate.wav",
+      "durSec": 0.075,
+      "onset_s": 46.325,
+      "centroid": 6757.0,
+      "isolation_db": "17.71",
+      "peak": 0.203
+    },
+    "stage": {
+      "wav": "/Users/rai/dev/llmines-audio-build/build/wav/sfx/song1/sfx-stage.wav",
+      "durSec": 0.373,
+      "onset_s": 70.219,
+      "centroid": 5215.5,
+      "isolation_db": "-12.28",
+      "peak": 0.074
+    },
+    "drop": {
+      "wav": "/Users/rai/dev/llmines-audio-build/build/wav/sfx/song1/sfx-drop.wav",
+      "durSec": 0.736,
+      "onset_s": 37.088,
+      "centroid": 3968.7,
+      "isolation_db": "8.96",
+      "peak": 0.52
+    },
+    "softdrop": {
+      "wav": "/Users/rai/dev/llmines-audio-build/build/wav/sfx/song1/sfx-softdrop.wav",
+      "durSec": 0.085,
+      "onset_s": 47.371,
+      "centroid": 6004.3,
+      "isolation_db": "3.96",
+      "peak": 0.239
+    }
+  },
+  "song2": {
+    "move": {
+      "wav": "/Users/rai/dev/llmines-audio-build/build/wav/sfx/song2/sfx-move.wav",
+      "durSec": 0.1
+    },
+    "rotate": {
+      "wav": "/Users/rai/dev/llmines-audio-build/build/wav/sfx/song2/sfx-rotate.wav",
+      "durSec": 0.1
+    },
+    "stage": {
+      "wav": "/Users/rai/dev/llmines-audio-build/build/wav/sfx/song2/sfx-stage.wav",
+      "durSec": 0.32
+    },
+    "drop": {
+      "wav": "/Users/rai/dev/llmines-audio-build/build/wav/sfx/song2/sfx-drop.wav",
+      "durSec": 0.22
+    },
+    "softdrop": {
+      "wav": "/Users/rai/dev/llmines-audio-build/build/wav/sfx/song2/sfx-softdrop.wav",
+      "durSec": 0.09
+    }
+  }
+}
