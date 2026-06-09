@@ -15,8 +15,21 @@ PROGRESSION / TERMINAL segments: whole-bar window + a spill-aware tail (extra
 bars of vocal/instrument decay past the boundary so phrases are not chopped),
 play-through (no wrap).
 
-Every rendered tier is loudness-normalized to ~-14 LUFS (EBU R128 via ffmpeg
-loudnorm). Stems are summed in float; sums are peak-guarded before loudnorm.
+ADDITIVE TIER RENDER (the no-comb fix). The three tiers of a segment share an
+identical bed. If each tier were loudnorm'd independently the shared bed would
+sit at a slightly different absolute level per tier, so the engine's tier
+crossfade (which assumes the bed holds constant) comb-filters / dips on every
+reveal. Instead we normalize the BED ONCE per segment: measure tier0's integrated
+loudness, derive a SINGLE LINEAR gain to bring it to ~-14 LUFS, then apply that
+SAME linear gain to all three tier sums:
+
+    tier0 = g * L1
+    tier1 = g * (L1 + L2)
+    tier2 = g * (L1 + L2 + L3)
+
+So the L1 component is bit-identical in level across all three files and a
+crossfade truly holds the bed constant. A shared peak-guard (driven by the
+loudest tier, tier2) keeps the bed bit-identical even when guarding clips.
 
 Layer 4 (SFX) is rendered by render-sfx.py, not here.
 
@@ -118,30 +131,13 @@ def equal_power_wrap(full, i0, i1, wrap_samples):
     return seg
 
 
-def peak_guard(buf, ceiling=0.97):
-    peak = float(np.abs(buf).max())
-    if peak > ceiling:
-        buf = buf * (ceiling / peak)
-    return buf, peak
-
-
 def write_wav(path, buf):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     sf.write(path, buf, SR, subtype="FLOAT")
 
 
-def loudnorm(in_path, out_path, target=TARGET_LUFS):
-    """Single-pass EBU R128 loudnorm to target LUFS. Writes 24-bit WAV."""
-    cmd = [
-        FFMPEG, "-y", "-v", "error", "-i", in_path,
-        "-af", f"loudnorm=I={target}:TP=-1.5:LRA=11",
-        "-ar", str(SR), "-c:a", "pcm_s24le", out_path,
-    ]
-    subprocess.run(cmd, check=True)
-
-
 def measure_lufs(path):
-    """Two-pass-style measurement via loudnorm print_format=json (analysis only)."""
+    """Integrated loudness (LUFS) of a file via loudnorm print_format=json (analysis)."""
     cmd = [FFMPEG, "-i", path, "-af", "loudnorm=print_format=json", "-f", "null", "-"]
     p = subprocess.run(cmd, capture_output=True, text=True)
     err = p.stderr
@@ -152,6 +148,18 @@ def measure_lufs(path):
         return float(j.get("input_i", 0.0))
     except Exception:  # noqa: BLE001
         return None
+
+
+def measure_buf_lufs(buf):
+    """Measure integrated loudness of an in-memory float buffer (temp WAV round-trip)."""
+    tmp = os.path.join(OUT_WAV, "_lufs_probe.wav")
+    write_wav(tmp, buf)
+    val = measure_lufs(tmp)
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    return val
 
 
 def main():
@@ -205,23 +213,57 @@ def main():
                 "spillSec": round(spill / SR, 4),
                 "tiers": {},
             }
+
+            # 1) Window each tier's raw sum (loop-wrap for LOOPER, play-through else).
+            windowed = {}
             for tname, full_buf in full_by_tier.items():
                 if is_loop:
                     # whole-bar loop: window [i0,i1], seam crossfaded with pre-roll
-                    buf = equal_power_wrap(full_buf, i0, i1, wrap_n)
+                    windowed[tname] = equal_power_wrap(full_buf, i0, i1, wrap_n)
                 else:
-                    buf = full_buf[i0:i1_full].copy()
-                buf, raw_peak = peak_guard(buf)
-                raw_path = os.path.join(OUT_WAV, song, f"{seg['id']}-{tname}.raw.wav")
+                    windowed[tname] = full_buf[i0:i1_full].copy()
+
+            # 2) ADDITIVE normalize: derive ONE linear gain from the bed (tier0) so
+            #    the L1 component is bit-identical in level across all three tiers.
+            bed = windowed["tier0"]
+            bed_lufs = measure_buf_lufs(bed)
+            # If the bed is effectively silent (e.g. s1-intro tier0), loudnorm gain
+            # is meaningless -> derive the gain from the loudest tier instead so the
+            # arrangement still lands near target (bed identity is moot when silent).
+            ref_lufs = bed_lufs
+            ref_name = "tier0"
+            if bed_lufs is None or bed_lufs <= -60.0 or bed_lufs == float("-inf"):
+                ref_lufs = measure_buf_lufs(windowed["tier2"])
+                ref_name = "tier2"
+            lin_gain = 1.0
+            if ref_lufs is not None and ref_lufs > -float("inf"):
+                lin_gain = float(10.0 ** ((TARGET_LUFS - ref_lufs) / 20.0))
+
+            # 3) Shared peak-guard: scale ALL tiers by ONE factor driven by the
+            #    loudest (tier2) so the bed stays bit-identical even if we clip.
+            loud_peak = float(np.abs(windowed["tier2"] * lin_gain).max())
+            guard = 1.0
+            if loud_peak > 0.97:
+                guard = 0.97 / loud_peak
+            applied = lin_gain * guard
+
+            for tname in ("tier0", "tier1", "tier2"):
+                buf = windowed[tname] * applied
                 norm_path = os.path.join(OUT_WAV, song, f"{seg['id']}-{tname}.wav")
-                write_wav(raw_path, buf)
-                loudnorm(raw_path, norm_path)
-                os.remove(raw_path)
+                # 24-bit WAV (matches the prior pipeline's pcm_s24le output).
+                os.makedirs(os.path.dirname(norm_path), exist_ok=True)
+                sf.write(norm_path, buf, SR, subtype="PCM_24")
                 seg_rep["tiers"][tname] = {
                     "wav": norm_path,
-                    "rawPeakDb": round(20 * np.log10(raw_peak + 1e-12), 2),
-                    "measuredLufsPostNorm": measure_lufs(norm_path),
+                    "peakDb": round(20 * np.log10(float(np.abs(buf).max()) + 1e-12), 2),
+                    "measuredLufs": measure_lufs(norm_path),
                 }
+            seg_rep["additive"] = {
+                "refTier": ref_name,
+                "refLufs": ref_lufs,
+                "linGainDb": round(20 * np.log10(lin_gain + 1e-12), 3),
+                "peakGuardDb": round(20 * np.log10(guard + 1e-12), 3),
+            }
             song_rep["segments"].append(seg_rep)
             print(f"  {song} {seg['id']:<12} {seg['type']:<11} {bars:>3} bars  "
                   f"win {seg_rep['barWindowSec']:.2f}s spill {seg_rep['spillSec']:.2f}s")

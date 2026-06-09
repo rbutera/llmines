@@ -28,10 +28,16 @@ const SEC_PER_BAR = 0.5; // mock "barSeconds" — clock advances in bars of 0.5s
 const mockState = vi.hoisted(() => ({
   now: 0,
   bpm: 110,
-  /** captured scheduleRepeat callbacks (the loop tick). */
-  repeats: [] as { cb: (t: number) => void; interval: string }[],
+  /**
+   * Pending scheduleOnce callbacks keyed by absolute transport time. The engine's
+   * loop tick is now a SELF-RESCHEDULING scheduleOnce (not scheduleRepeat), so the
+   * mock queues numeric-time callbacks and drives them deterministically.
+   */
+  pending: [] as { cb: (t: number) => void; time: number; id: number }[],
   /** every gain ramp start time recorded for quantization assertions. */
   rampStarts: [] as number[],
+  /** every FakePlayer constructed, for loopEnd / SFX-pool assertions. */
+  players: [] as { url: string; loopEnd: number; starts: number[] }[],
   nextId: 1,
 }));
 
@@ -73,13 +79,20 @@ vi.mock("tone", () => {
   }
   class FakePlayer {
     loop = false;
+    loopStart = 0;
+    loopEnd = 0;
     disposed = false;
+    url: string;
     volume = new FakeParam(0);
+    /** every start() time, for the SFX monotonic-nudge / overlap assertions. */
+    starts: number[] = [];
     constructor(opts: {
       url: string;
       onload?: () => void;
       onerror?: () => void;
     }) {
+      this.url = opts.url;
+      mockState.players.push(this);
       queueMicrotask(() => opts.onload?.());
     }
     connect() {
@@ -88,7 +101,8 @@ vi.mock("tone", () => {
     sync() {
       return this;
     }
-    start() {
+    start(t?: number) {
+      this.starts.push(typeof t === "number" ? t : mockState.now);
       return this;
     }
     stop() {
@@ -106,17 +120,30 @@ vi.mock("tone", () => {
     } },
     swing: 0,
     swingSubdivision: "16n",
+    // the engine now schedules the loop tick in SECONDS off the transport clock.
+    get seconds() {
+      return mockState.now;
+    },
     start() {},
     stop() {},
-    cancel() {},
-    clear() {},
-    scheduleOnce(cb: (t: number) => void) {
-      cb(mockState.now); // fire immediately for deterministic settles
-      return mockState.nextId++;
+    cancel() {
+      mockState.pending = [];
     },
-    scheduleRepeat(cb: (t: number) => void, interval: string) {
-      mockState.repeats.push({ cb, interval });
-      return mockState.nextId++;
+    clear(id: number) {
+      // a re-schedule / dispose clears a pending one-shot so a stale tick won't fire.
+      const i = mockState.pending.findIndex((p) => p.id === id);
+      if (i >= 0) mockState.pending.splice(i, 1);
+    },
+    scheduleOnce(cb: (t: number) => void, time: number | string) {
+      const id = mockState.nextId++;
+      if (typeof time === "string") {
+        // `@16n`-style relative SFX scheduling — fire immediately (current tick).
+        cb(mockState.now);
+      } else {
+        // absolute-time loop tick / settle — queue, driven by settle()/loopBoundary().
+        mockState.pending.push({ cb, time, id });
+      }
+      return id;
     },
     nextSubdivision() {
       // align to the next bar boundary on the mock clock.
@@ -164,7 +191,18 @@ function tiers(prefix: string) {
   };
 }
 function seg(id: string, type: string, bars = 1) {
-  return { id, type, bars, lengthSeconds: bars * SEC_PER_BAR, tiers: tiers(id) };
+  // lengthSeconds carries a spill tail for non-LOOPER (mirrors the real manifest);
+  // barWindowSeconds is the spill-free loop length the engine must loop/tick on.
+  const barWindow = bars * SEC_PER_BAR;
+  const spill = type === "LOOPER" ? 0 : SEC_PER_BAR; // 1-bar spill on play-through
+  return {
+    id,
+    type,
+    bars,
+    lengthSeconds: barWindow + spill,
+    barWindowSeconds: barWindow,
+    tiers: tiers(id),
+  };
 }
 
 const MANIFEST = {
@@ -212,15 +250,43 @@ function installFetch(manifest: unknown = MANIFEST) {
 const clear = (e: InteractiveAudioEngine, squares = 1, combo = 0) =>
   e.fire({ type: "lineClear", squares, combo });
 
-/** Fire the captured loop-tick at the current bar boundary. */
+/**
+ * Run every pending one-shot whose scheduled time is <= `until`, in time order,
+ * advancing the mock clock to each as it fires (so nested schedules see the right
+ * `now`). Re-armed loop ticks beyond `until` stay queued.
+ */
+function runDueUpTo(until: number): void {
+  // guard against pathological re-arming (a boundary that re-schedules at the same
+  // time would loop forever); bound the drain.
+  for (let guard = 0; guard < 10000; guard++) {
+    const due = mockState.pending
+      .filter((p) => p.time <= until + 1e-9)
+      .sort((a, b) => a.time - b.time)[0];
+    if (!due) return;
+    mockState.pending = mockState.pending.filter((p) => p !== due);
+    mockState.now = Math.max(mockState.now, due.time);
+    due.cb(due.time);
+  }
+}
+
+/**
+ * Advance to the next loop-tick boundary and fire it (plus the settle callbacks it
+ * chains), WITHOUT firing the following re-armed boundary. The next boundary is the
+ * earliest pending event; settles land within ~0.45s of it, and the smallest loop
+ * interval is SEC_PER_BAR, so a cutoff just below the next interval captures the
+ * boundary + its settles but not the subsequent tick.
+ */
 function loopBoundary(): void {
-  const at = (Math.floor(mockState.now / SEC_PER_BAR) + 1) * SEC_PER_BAR;
-  mockState.now = at;
-  for (const r of [...mockState.repeats]) r.cb(at);
+  const times = mockState.pending.map((p) => p.time);
+  if (times.length === 0) return;
+  const tb = Math.min(...times);
+  runDueUpTo(tb + SEC_PER_BAR - 1e-3);
 }
 
 async function settle() {
   for (let i = 0; i < 50; i++) await Promise.resolve();
+  // fire any settle/one-shot already due at the current clock (no clock advance).
+  runDueUpTo(mockState.now);
 }
 
 async function freshEngine(mix: "A" | "B" | "C" = "B") {
@@ -236,13 +302,15 @@ async function freshEngine(mix: "A" | "B" | "C" = "B") {
 beforeEach(() => {
   mockState.now = 0;
   mockState.bpm = 110;
-  mockState.repeats = [];
+  mockState.pending = [];
   mockState.rampStarts = [];
+  mockState.players = [];
   mockState.nextId = 1;
 });
 
 afterEach(() => {
-  mockState.repeats = [];
+  mockState.pending = [];
+  mockState.players = [];
 });
 
 describe("manifest-driven 4-layer loop-quantized engine", () => {
@@ -395,6 +463,125 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
     loopBoundary();
     await settle();
     expect(calls).toBe(1);
+  });
+
+  it("looping players loop the SPILL-FREE bar window, not the full file (Blocker 1)", async () => {
+    await freshEngine("B");
+    await settle();
+    // every loaded tier player set loopEnd = barWindowSeconds (= bars * SEC_PER_BAR),
+    // NEVER the file lengthSeconds (which carries the spill tail on non-LOOPER).
+    const loaded = mockState.players.filter((p) => p.loopEnd > 0);
+    expect(loaded.length).toBeGreaterThan(0);
+    for (const p of loaded) {
+      // 1-bar segments in the test manifest -> loopEnd == SEC_PER_BAR.
+      expect(p.loopEnd).toBeCloseTo(SEC_PER_BAR, 9);
+    }
+  });
+
+  it("the loop tick is a self-rescheduling one-shot on the bar-window grid (not scheduleRepeat)", async () => {
+    await freshEngine("B");
+    await settle();
+    // exactly one pending loop tick (a numeric-time one-shot), at a multiple of the
+    // bar window — proves the self-rescheduling scheduleOnce model on the wrap grid.
+    expect(mockState.pending.length).toBe(1);
+    const tick = mockState.pending[0]!;
+    expect(typeof tick.time).toBe("number");
+    const phase = tick.time / SEC_PER_BAR;
+    expect(Math.abs(phase - Math.round(phase))).toBeLessThan(1e-6);
+    // and it RE-ARMS itself: after firing, there is again exactly one pending tick
+    // (the next boundary), one bar-window later — the old scheduleRepeat froze here.
+    const firstTime = tick.time;
+    loopBoundary();
+    await settle();
+    expect(mockState.pending.length).toBe(1);
+    expect(mockState.pending[0]!.time).toBeCloseTo(firstTime + SEC_PER_BAR, 6);
+  });
+});
+
+// The showstopper found by the production playtest: long PROGRESSION segments froze
+// forever because `${bars}m` scheduleRepeat with a large interval never fired. The
+// seconds-based loop tick must keep firing on a multi-bar segment so the song
+// advances PAST a long verse instead of stalling.
+describe("long-segment progression (showstopper regression)", () => {
+  const LONG_MANIFEST = {
+    version: "test-long",
+    songs: [
+      {
+        id: "song1",
+        title: "Song 1",
+        tempo: 110,
+        barSeconds: SEC_PER_BAR,
+        segments: [
+          seg("s1-intro", "LOOPER", 2),
+          seg("s1-verse1", "PROGRESSION", 34), // the segment that froze
+          seg("s1-break", "LOOPER", 4),
+          seg("s1-outro", "TERMINAL", 9),
+        ],
+        sfx: { move: "sfx-move.opus" },
+      },
+    ],
+  };
+
+  it("a 34-bar PROGRESSION segment advances (does not freeze) + reaches TERMINAL", async () => {
+    (globalThis as unknown as { window?: object }).window = globalThis;
+    installFetch(LONG_MANIFEST);
+    const e = new InteractiveAudioEngine();
+    e.setPreset("C"); // advanceThreshold = 8, addThreshold [4,6]
+    await e.unlock();
+    await settle();
+
+    let calls = 0;
+    e.onSongComplete = () => {
+      calls++;
+    };
+
+    // Drive score and fire each boundary via loopBoundary(), which advances the
+    // clock to the next pending tick whatever its interval. The 34-bar verse loop is
+    // 68x longer than the intro loop; the self-rescheduling one-shot must keep firing
+    // on it (the old scheduleRepeat did not), so the verse climbs + advances.
+    const seen: number[] = [];
+    for (let k = 0; k < 40; k++) {
+      for (let i = 0; i < 6; i++) clear(e, 2);
+      loopBoundary();
+      await settle();
+      seen.push(e.getAudioState().segmentIndex);
+    }
+
+    const s = e.getAudioState();
+    // it must have climbed off the long verse (index 1) into later segments.
+    expect(Math.max(...seen)).toBeGreaterThanOrEqual(2);
+    expect(s.segmentIndex).toBe(s.segmentCount - 1); // reached TERMINAL
+    expect(calls).toBe(1); // onSongComplete fired
+  });
+});
+
+// Major 4: rapid same-type actions quantized to the SAME @16n time must not stomp
+// one shared player (Tone throws on a non-increasing start). A voice pool round-
+// robins across N players and monotonic-nudges the start time so hits overlap.
+describe("SFX voice pool (no machine-gun stutter)", () => {
+  it("rapid same-type fires spread across pooled voices with increasing start times", async () => {
+    const e = await freshEngine("C"); // preset C routes `move` to the "move" SFX
+    // first fire lazy-loads the pool; settle so the voices exist.
+    e.fire({ type: "move" });
+    await settle();
+    const moveVoices = mockState.players.filter((p) =>
+      p.url.includes("sfx-move"),
+    );
+    // a POOL of voices, not a single shared player.
+    expect(moveVoices.length).toBeGreaterThan(1);
+
+    // fire a burst of same-type actions on the SAME tick (mockState.now fixed).
+    for (let i = 0; i < 8; i++) e.fire({ type: "move" });
+    await settle();
+
+    // collect every scheduled start across all move voices.
+    const starts = moveVoices.flatMap((p) => p.starts).sort((a, b) => a - b);
+    expect(starts.length).toBeGreaterThanOrEqual(8);
+    // no two starts collide (strictly increasing after the monotonic-nudge) — the
+    // exact condition that made a single player throw + drop the one-shot.
+    for (let i = 1; i < starts.length; i++) {
+      expect(starts[i]!).toBeGreaterThan(starts[i - 1]!);
+    }
   });
 });
 

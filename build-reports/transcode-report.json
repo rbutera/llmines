@@ -2,91 +2,91 @@
   "files": [
     {
       "file": "song1/s1-intro-tier0.opus",
-      "bytes": 62869,
+      "bytes": 63088,
       "opusDur": 4.372,
       "decodeOk": true
     },
     {
       "file": "song1/s1-intro-tier1.opus",
-      "bytes": 80246,
+      "bytes": 80241,
       "opusDur": 4.372,
       "decodeOk": true
     },
     {
       "file": "song1/s1-intro-tier2.opus",
-      "bytes": 80365,
+      "bytes": 80358,
       "opusDur": 4.372,
       "decodeOk": true
     },
     {
       "file": "song1/s1-verse1-tier0.opus",
-      "bytes": 1073777,
+      "bytes": 1066046,
       "opusDur": 76.401,
       "decodeOk": true
     },
     {
       "file": "song1/s1-verse1-tier1.opus",
-      "bytes": 1146333,
+      "bytes": 1144450,
       "opusDur": 76.401,
       "decodeOk": true
     },
     {
       "file": "song1/s1-verse1-tier2.opus",
-      "bytes": 1171811,
+      "bytes": 1171831,
       "opusDur": 76.401,
       "decodeOk": true
     },
     {
       "file": "song1/s1-break-tier0.opus",
-      "bytes": 124475,
+      "bytes": 124309,
       "opusDur": 8.737,
       "decodeOk": true
     },
     {
       "file": "song1/s1-break-tier1.opus",
-      "bytes": 133140,
+      "bytes": 133149,
       "opusDur": 8.737,
       "decodeOk": true
     },
     {
       "file": "song1/s1-break-tier2.opus",
-      "bytes": 133162,
+      "bytes": 133173,
       "opusDur": 8.737,
       "decodeOk": true
     },
     {
       "file": "song1/s1-verse2-tier0.opus",
-      "bytes": 1291090,
+      "bytes": 1283771,
       "opusDur": 91.68,
       "decodeOk": true
     },
     {
       "file": "song1/s1-verse2-tier1.opus",
-      "bytes": 1347024,
+      "bytes": 1345718,
       "opusDur": 91.68,
       "decodeOk": true
     },
     {
       "file": "song1/s1-verse2-tier2.opus",
-      "bytes": 1366713,
+      "bytes": 1366421,
       "opusDur": 91.68,
       "decodeOk": true
     },
     {
       "file": "song1/s1-outro-tier0.opus",
-      "bytes": 283139,
+      "bytes": 282710,
       "opusDur": 20.554,
       "decodeOk": true
     },
     {
       "file": "song1/s1-outro-tier1.opus",
-      "bytes": 315619,
+      "bytes": 315490,
       "opusDur": 20.554,
       "decodeOk": true
     },
     {
       "file": "song1/s1-outro-tier2.opus",
-      "bytes": 315731,
+      "bytes": 315588,
       "opusDur": 20.554,
       "decodeOk": true
     },
@@ -122,79 +122,79 @@
     },
     {
       "file": "song2/s2-intro-tier0.opus",
-      "bytes": 381245,
+      "bytes": 379604,
       "opusDur": 30.471,
       "decodeOk": true
     },
     {
       "file": "song2/s2-intro-tier1.opus",
-      "bytes": 464663,
+      "bytes": 464613,
       "opusDur": 30.471,
       "decodeOk": true
     },
     {
       "file": "song2/s2-intro-tier2.opus",
-      "bytes": 464659,
+      "bytes": 464608,
       "opusDur": 30.471,
       "decodeOk": true
     },
     {
       "file": "song2/s2-verse1-tier0.opus",
-      "bytes": 592385,
+      "bytes": 591832,
       "opusDur": 45.703,
       "decodeOk": true
     },
     {
       "file": "song2/s2-verse1-tier1.opus",
-      "bytes": 648421,
+      "bytes": 648357,
       "opusDur": 45.703,
       "decodeOk": true
     },
     {
       "file": "song2/s2-verse1-tier2.opus",
-      "bytes": 621039,
+      "bytes": 621098,
       "opusDur": 45.703,
       "decodeOk": true
     },
     {
       "file": "song2/s2-bridge1-tier0.opus",
-      "bytes": 47206,
+      "bytes": 47216,
       "opusDur": 3.814,
       "decodeOk": true
     },
     {
       "file": "song2/s2-bridge1-tier1.opus",
-      "bytes": 56905,
+      "bytes": 56900,
       "opusDur": 3.814,
       "decodeOk": true
     },
     {
       "file": "song2/s2-bridge1-tier2.opus",
-      "bytes": 56913,
+      "bytes": 56902,
       "opusDur": 3.814,
       "decodeOk": true
     },
     {
       "file": "song2/s2-verse2-tier0.opus",
-      "bytes": 813574,
+      "bytes": 812928,
       "opusDur": 62.839,
       "decodeOk": true
     },
     {
       "file": "song2/s2-verse2-tier1.opus",
-      "bytes": 872934,
+      "bytes": 872667,
       "opusDur": 62.839,
       "decodeOk": true
     },
     {
       "file": "song2/s2-verse2-tier2.opus",
-      "bytes": 858931,
+      "bytes": 858973,
       "opusDur": 62.839,
       "decodeOk": true
     },
     {
       "file": "song2/s2-break-tier0.opus",
-      "bytes": 184719,
+      "bytes": 184705,
       "opusDur": 13.335,
       "decodeOk": true
     },
@@ -206,43 +206,43 @@
     },
     {
       "file": "song2/s2-break-tier2.opus",
-      "bytes": 208710,
+      "bytes": 208729,
       "opusDur": 13.335,
       "decodeOk": true
     },
     {
       "file": "song2/s2-chorus3-tier0.opus",
-      "bytes": 269264,
+      "bytes": 268403,
       "opusDur": 19.047,
       "decodeOk": true
     },
     {
       "file": "song2/s2-chorus3-tier1.opus",
-      "bytes": 290162,
+      "bytes": 289904,
       "opusDur": 19.047,
       "decodeOk": true
     },
     {
       "file": "song2/s2-chorus3-tier2.opus",
-      "bytes": 280038,
+      "bytes": 280009,
       "opusDur": 19.047,
       "decodeOk": true
     },
     {
       "file": "song2/s2-outro-tier0.opus",
-      "bytes": 366120,
+      "bytes": 366191,
       "opusDur": 27.352,
       "decodeOk": true
     },
     {
       "file": "song2/s2-outro-tier1.opus",
-      "bytes": 386517,
+      "bytes": 386546,
       "opusDur": 27.352,
       "decodeOk": true
     },
     {
       "file": "song2/s2-outro-tier2.opus",
-      "bytes": 386570,
+      "bytes": 386637,
       "opusDur": 27.352,
       "decodeOk": true
     },
@@ -277,7 +277,7 @@
       "decodeOk": true
     }
   ],
-  "totalBytes": 17424476,
-  "totalMB": 16.62,
+  "totalBytes": 17401172,
+  "totalMB": 16.6,
   "decodeFailures": []
 }

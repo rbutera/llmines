@@ -9,8 +9,14 @@ Opus transcode + manifest emit for the LLMines audio redesign (Wave 1 final step
    (libopus) into public/audio/<song>/.
 3. Verifies each Opus file decodes (ffprobe) and records its size.
 4. Emits public/audio/manifest.json: per song { id, title, tempo, barSeconds,
-   segments:[{id,type,bars,lengthSeconds,character,tiers:{tier0,tier1,tier2},
-   sfx?}], sfx:{action->path} }.
+   segments:[{id,type,bars,lengthSeconds,barWindowSeconds,character,
+   tiers:{tier0,tier1,tier2},sfx?}], sfx:{action->path} }.
+
+   barWindowSeconds = the SPILL-FREE whole-bar loop length (barSeconds * bars),
+   sourced from render-report.json's barWindowSec. lengthSeconds is the full file
+   duration (includes the play-through spill tail for PROGRESSION/TERMINAL). The
+   engine loops on barWindowSeconds (loopEnd) so the loop tick and the audio wrap
+   agree; lengthSeconds is kept for reporting / total-size math only.
 
 Run: .venv-audio/bin/python scripts/audio/transcode-and-manifest.py
 """
@@ -30,6 +36,20 @@ FFPROBE = "/opt/homebrew/bin/ffprobe"
 OPUS_KBPS = "112"
 
 PLAN = json.load(open(os.path.join(ROOT, "scripts", "audio", "cut-plan.json")))
+
+
+def load_bar_windows():
+    """Map (song, segId) -> barWindowSec from the render report (spill-free loop len)."""
+    rep_path = os.path.join(REPORTS, "render-report.json")
+    out = {}
+    try:
+        rep = json.load(open(rep_path))
+        for song, sd in rep.get("songs", {}).items():
+            for s in sd.get("segments", []):
+                out[(song, s["id"])] = s.get("barWindowSec")
+    except (OSError, ValueError, KeyError):
+        pass
+    return out
 
 
 def archive_v27():
@@ -87,6 +107,7 @@ def main():
     total_bytes = 0
     decode_fail = []
     report = {"files": [], "totalBytes": 0}
+    bar_windows = load_bar_windows()
 
     for song in ("song1", "song2"):
         sp = PLAN[song]
@@ -119,11 +140,17 @@ def main():
                 tiers[tier] = rel
                 if length_s is None:
                     length_s = wav_seconds(wav)
+            # spill-free whole-bar loop length: prefer the render report, else the
+            # exact bar math (barSeconds * bars). This is what the engine loops on.
+            bar_window = bar_windows.get((song, seg["id"]))
+            if bar_window is None:
+                bar_window = round(sp["secPerBar"] * bars, 4)
             song_entry["segments"].append({
                 "id": seg["id"],
                 "type": seg["type"],
                 "bars": bars,
                 "lengthSeconds": length_s,
+                "barWindowSeconds": bar_window,
                 "character": seg["character"],
                 "tiers": tiers,
             })

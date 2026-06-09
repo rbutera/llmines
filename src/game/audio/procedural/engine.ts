@@ -45,6 +45,10 @@ const ASSET_BASE = "/audio";
 const XFADE_S = 0.4;
 /** A near-instant ramp (used for fresh bed entry). */
 const SNAP_S = 0.012;
+/** Voices per SFX name (round-robin pool so rapid same-type hits can overlap). */
+const SFX_VOICES = 4;
+/** Min spacing between two starts on the SFX pool so Tone never sees a tie. */
+const SFX_RETRIGGER_EPSILON = 0.002;
 
 /** Segment role drives loop-vs-advance behavior. */
 export type SegmentType = "LOOPER" | "PROGRESSION" | "TERMINAL";
@@ -88,7 +92,16 @@ interface ManifestSegment {
   id: string;
   type: SegmentType;
   bars: number;
+  /** Full file duration (includes the play-through spill tail for non-LOOPER). */
   lengthSeconds: number;
+  /**
+   * Spill-free whole-bar loop length (= barSeconds * bars). Looping players set
+   * loopEnd to this and the loop tick fires on it, so tick and audio wrap agree.
+   * For LOOPER segments this equals lengthSeconds (spill=0); for PROGRESSION /
+   * TERMINAL it is shorter by the spill tail. Optional for back-compat with a
+   * pre-barWindow manifest (fallback: barSeconds*bars, then lengthSeconds).
+   */
+  barWindowSeconds?: number;
   character?: string;
   tiers: ManifestTiers;
 }
@@ -139,6 +152,15 @@ function sfxUrlFor(
   const key: keyof ManifestSfx = name === "harddrop" ? "drop" : name;
   const rel = sfx[key];
   return rel ? `${base}/${rel}` : undefined;
+}
+
+/** A round-robin pool of identical one-shot voices for one SFX name. */
+interface SfxVoicePool {
+  voices: Tone.Player[];
+  /** Next voice index to use (round-robin). */
+  next: number;
+  /** Last scheduled start time, for the monotonic-nudge. */
+  lastStart: number;
 }
 
 /** Per-layer add thresholds + bias-up shed + advance gate, scaled by the preset. */
@@ -192,6 +214,8 @@ export class InteractiveAudioEngine {
   private pendingSegmentIndex: number | null = null;
   /** Transport event ids scheduled for the active loop quantize (cancelled on reset). */
   private scheduledEvents: number[] = [];
+  /** Generation token for the self-rescheduling loop tick (bumped on every reschedule). */
+  private loopTickGen = 0;
 
   onSongComplete?: () => void;
   private songCompleted = false;
@@ -219,6 +243,24 @@ export class InteractiveAudioEngine {
   /** The active loaded segment, or undefined. */
   private active(): LoadedSegment | undefined {
     return this.segments[this.segmentIndex];
+  }
+
+  /**
+   * The spill-free whole-bar LOOP length of a segment, in seconds. This is the
+   * length the audio actually wraps at (and the loop tick fires at), NOT the file
+   * duration (which includes a spill tail for non-LOOPER segments). Prefer the
+   * manifest's `barWindowSeconds`; fall back to `barSeconds * bars`; last resort the
+   * file length. Always a positive finite number.
+   */
+  private barWindowSeconds(seg: LoadedSegment): number {
+    const meta = seg.meta;
+    const bw = meta.barWindowSeconds;
+    if (typeof bw === "number" && bw > 0) return bw;
+    const barSeconds = this.song?.barSeconds;
+    if (typeof barSeconds === "number" && barSeconds > 0 && meta.bars > 0) {
+      return barSeconds * meta.bars;
+    }
+    return meta.lengthSeconds > 0 ? meta.lengthSeconds : 1;
   }
 
   /** The active preset's loop-quantize curve (no decay fields — D-spec). */
@@ -381,6 +423,17 @@ export class InteractiveAudioEngine {
           const player = await this.loadPlayer(url);
           if (player) {
             player.loop = true;
+            // Loop the SPILL-FREE bar window, not the whole file. Non-LOOPER tier
+            // files carry a spill tail past the bar boundary; without loopEnd the
+            // player wraps at the full file length (e.g. 76.39s) while the loop tick
+            // fires at the bar window (74.21s) -> drift + the spill tail re-plays
+            // inside the loop. Pinning loopStart/loopEnd makes audio + tick agree.
+            try {
+              player.loopStart = 0;
+              player.loopEnd = this.barWindowSeconds(seg);
+            } catch {
+              // older Tone or a degraded player — fall back to whole-file loop
+            }
             player.connect(gain);
             player.sync().start(0); // phase-running with the transport, gated to 0
             seg.tierPlayers[t] = player;
@@ -468,7 +521,12 @@ export class InteractiveAudioEngine {
    * mid-song entry coming off tier2 also enters at tier1 to keep momentum;
    * otherwise tier0 (each section re-earns its arrangement).
    */
-  private enterSegment(index: number, fresh: boolean, prevTier: Tier = 0): void {
+  private enterSegment(
+    index: number,
+    fresh: boolean,
+    prevTier: Tier = 0,
+    boundaryAt?: number,
+  ): void {
     const seg = this.segments[index];
     if (!seg) return;
 
@@ -487,8 +545,12 @@ export class InteractiveAudioEngine {
     this.segmentScore = 0;
     this.tierFading = false;
 
-    // Gain up exactly the start tier; everything else hard-zero.
-    const at = fresh ? Tone.now() : this.nextBar();
+    // Gain up exactly the start tier; everything else hard-zero. Start the in-ramp
+    // at the SAME boundary time the caller faded the old segment OUT (advance /
+    // switchTrack pass it), so the cross is SYMMETRIC at `at` — no ~1-bar dip toward
+    // silence between out-fade and in-fade. Fresh entry snaps at now; a bare
+    // mid-song entry with no boundary falls back to the next bar.
+    const at = fresh ? Tone.now() : (boundaryAt ?? this.nextBar());
     for (let t = 0; t < 3; t++) {
       const target = t === startTier ? 1 : 0;
       this.rampGain(seg.tierGains[t], target, fresh ? SNAP_S : XFADE_S, at);
@@ -520,22 +582,65 @@ export class InteractiveAudioEngine {
     this.clearScheduled();
     const seg = this.active();
     if (!seg) return;
-    const loopBars = Math.max(1, Math.round(seg.meta.bars));
-    const interval = `${loopBars}m`;
+    // Fire on the segment's SPILL-FREE bar-window length in SECONDS (= barSeconds *
+    // bars), aligned to the transport-0 / player-wrap grid: the players loop at
+    // loopEnd = barWindowSeconds and were started at transport 0, so they wrap at
+    // integer multiples of barWindow from t=0; ticking on that SAME grid makes the
+    // tick and the audio wrap agree (no drift, no spill re-play, swaps land on a
+    // real loop boundary).
+    //
+    // SELF-RESCHEDULING scheduleOnce — NOT scheduleRepeat. Tone's `scheduleRepeat`,
+    // re-registered mid-transport with a LARGE interval (a 34-bar verse = ~74s,
+    // whether expressed as "34m" or as seconds) silently never fires — the song
+    // froze forever on the first long PROGRESSION segment. A single scheduleOnce at
+    // the next absolute boundary that re-arms the next one in its own callback fires
+    // reliably at any interval. A generation token invalidates pending one-shots on
+    // every reschedule (segment change / switch / dispose).
+    const interval = this.barWindowSeconds(seg);
+    if (!(interval > 0)) return;
+    const gen = ++this.loopTickGen;
+    this.armNextBoundary(interval, gen);
+  }
+
+  /** Schedule the single next loop boundary; its callback re-arms the following one. */
+  private armNextBoundary(interval: number, gen: number): void {
+    const at = this.nextWrapBoundary(interval);
     try {
-      const id = Tone.getTransport().scheduleRepeat(
-        (time) => this.onLoopBoundary(time),
-        interval,
-        // start one interval out so the first tick is a real boundary, not t=0.
-        `+${interval}`,
-      );
+      const id = Tone.getTransport().scheduleOnce((time) => {
+        if (gen !== this.loopTickGen) return; // a reschedule superseded this tick
+        this.onLoopBoundary(time);
+        if (gen !== this.loopTickGen) return; // advance/swap may have rescheduled
+        // re-arm using the CURRENT active segment's window (it may have changed if a
+        // tier swap happened, though advance reschedules with a fresh gen).
+        const cur = this.active();
+        const nextInterval = cur ? this.barWindowSeconds(cur) : interval;
+        this.armNextBoundary(nextInterval, gen);
+      }, at);
       this.scheduledEvents.push(id);
     } catch {
       // no transport — quantize disabled; engine still plays the bed silently
     }
   }
 
+  /**
+   * The next loop-wrap boundary on the transport-0 / player-wrap grid: the smallest
+   * multiple of `interval` strictly after now (so the first tick is a real boundary,
+   * never the current instant). Safe fallback to `now + interval`.
+   */
+  private nextWrapBoundary(interval: number): number {
+    try {
+      const now = Tone.getTransport().seconds;
+      const k = Math.floor(now / interval + 1e-9) + 1;
+      return k * interval;
+    } catch {
+      return this.toneNow() + interval;
+    }
+  }
+
   private clearScheduled(): void {
+    // bump the generation so any already-fired-but-not-yet-run one-shot self-cancels
+    // (belt-and-braces around Transport.clear, which may miss an in-flight callback).
+    this.loopTickGen++;
     for (const id of this.scheduledEvents) {
       try {
         Tone.getTransport().clear(id);
@@ -649,10 +754,12 @@ export class InteractiveAudioEngine {
     this.rampGain(from?.tierGains[this.tier], 0, XFADE_S, at);
 
     // Enter the destination phase-correct (sets tier/armedTier + gains the start
-    // tier up over the crossfade), carrying the energy floor from prevTier.
+    // tier up over the crossfade), carrying the energy floor from prevTier. Pass the
+    // boundary time `at` so the in-fade starts where the out-fade did (symmetric
+    // cross at `at`, no ~1-bar gap toward silence — the "song moves forward" moment).
     this.segmentIndex = index;
     this.maxSegmentReached = Math.max(this.maxSegmentReached, index);
-    this.enterSegment(index, /*fresh*/ false, prevTier);
+    this.enterSegment(index, /*fresh*/ false, prevTier, at);
 
     // Reschedule the loop tick for the NEW segment's loop length.
     this.scheduleLoopTick();
@@ -721,20 +828,36 @@ export class InteractiveAudioEngine {
     if (this.segmentScore > cap) this.segmentScore = cap;
   }
 
-  // ── Layer-4 SFX (lazy single players, loaded per active song) ───────────────
+  // ── Layer-4 SFX (lazy voice POOL per name, loaded per active song) ──────────
 
-  private sfxPlayers: Partial<Record<SfxName, Tone.Player>> = {};
+  /**
+   * A small round-robin pool of identical one-shot players per SFX name. A single
+   * Tone.Player cannot overlap voices: rapid same-type actions (e.g. `move` on every
+   * horizontal step) quantize to the same `@16n` time, so `start()` is called twice
+   * at a non-increasing time — Tone throws and the one-shot drops/cuts (machine-gun
+   * stutter). N voices + a monotonic-nudged start time let consecutive hits overlap
+   * cleanly instead of stomping one player.
+   */
+  private sfxPools: Partial<Record<SfxName, SfxVoicePool>> = {};
 
   private playSfx(name: SfxName, time: number, velocity = 1): void {
-    const p = this.sfxPlayers[name];
-    if (!p) {
-      // lazy-load the one-shot the first time it's needed.
+    const pool = this.sfxPools[name];
+    if (!pool || pool.voices.length === 0) {
+      // lazy-load the pool the first time it's needed.
       void this.ensureSfx(name);
       return;
     }
     try {
-      p.volume.value = Tone.gainToDb(Math.max(0.0001, Math.min(1, velocity)));
-      p.start(time);
+      // round-robin the next free voice so consecutive hits don't stomp one player.
+      const voice = pool.voices[pool.next % pool.voices.length];
+      pool.next = (pool.next + 1) % pool.voices.length;
+      if (!voice) return;
+      // monotonic-nudge: Tone requires strictly increasing start times on a player;
+      // two actions on the same `@16n` tick would otherwise collide and throw.
+      const at = Math.max(time, pool.lastStart + SFX_RETRIGGER_EPSILON);
+      pool.lastStart = at;
+      voice.volume.value = Tone.gainToDb(Math.max(0.0001, Math.min(1, velocity)));
+      voice.start(at);
     } catch {
       // dropped one-shot never surfaces to the game
     }
@@ -743,16 +866,27 @@ export class InteractiveAudioEngine {
   private async ensureSfx(name: SfxName): Promise<void> {
     const master = this.master;
     const song = this.song;
-    if (!master || !song || this.sfxPlayers[name]) return;
+    if (!master || !song || this.sfxPools[name]) return;
     const url = sfxUrlFor(name, song.sfx, ASSET_BASE);
     if (!url) return;
-    const p = await this.loadPlayer(url);
-    if (p && !this.sfxPlayers[name]) {
-      p.connect(master);
-      this.sfxPlayers[name] = p;
-    } else if (p) {
-      p.dispose();
+    // claim the slot early so concurrent fires don't load the pool N times over.
+    const pool: SfxVoicePool = { voices: [], next: 0, lastStart: -Infinity };
+    this.sfxPools[name] = pool;
+    const loaded = await Promise.all(
+      Array.from({ length: SFX_VOICES }, () => this.loadPlayer(url)),
+    );
+    // a switch/dispose may have replaced the pool while we awaited — bail cleanly.
+    if (this.sfxPools[name] !== pool) {
+      for (const p of loaded) p?.dispose();
+      return;
     }
+    for (const p of loaded) {
+      if (p) {
+        p.connect(master);
+        pool.voices.push(p);
+      }
+    }
+    if (pool.voices.length === 0) delete this.sfxPools[name];
   }
 
   // ── timing + gain helpers ────────────────────────────────────────────────────
@@ -863,7 +997,7 @@ export class InteractiveAudioEngine {
         return;
       }
       const oldSegments = this.segments;
-      const oldSfx = this.sfxPlayers;
+      const oldSfx = this.sfxPools;
       const from = oldSegments[this.segmentIndex];
 
       // Build + load the new song's intro before crossfading.
@@ -871,7 +1005,7 @@ export class InteractiveAudioEngine {
       this.segments = newSegments;
       this.song = song;
       this.currentTrack = track;
-      this.sfxPlayers = {};
+      this.sfxPools = {};
       this.songCompleted = false;
       this.segmentIndex = 0;
       this.maxSegmentReached = 0;
@@ -884,10 +1018,11 @@ export class InteractiveAudioEngine {
       }
 
       const at = this.nextBar();
-      // fade the OLD active tier out, enter the new song's intro in.
+      // fade the OLD active tier out, enter the new song's intro in — both anchored
+      // at the SAME boundary `at` so the cross is symmetric (no dip).
       this.rampGain(from?.tierGains[this.tier], 0, seconds, at);
-      this.enterSegment(0, /*fresh*/ false);
-      // override the fresh-entry snap with the longer skin crossfade on tier-in.
+      this.enterSegment(0, /*fresh*/ false, 0, at);
+      // override enterSegment's XFADE_S in-ramp with the longer skin crossfade.
       this.rampGain(newSegments[0]?.tierGains[this.tier], 1, seconds, at);
       this.scheduleLoopTick();
       void this.prefetch(1);
@@ -896,12 +1031,8 @@ export class InteractiveAudioEngine {
       const disposeAt = at + seconds + 0.1;
       this.afterSettle(disposeAt, () => {
         for (const seg of oldSegments) this.disposeLoaded(seg);
-        for (const n of Object.values(oldSfx)) {
-          try {
-            n?.dispose();
-          } catch {
-            // ignore
-          }
+        for (const pool of Object.values(oldSfx)) {
+          this.disposeSfxPool(pool);
         }
       });
     } catch {
@@ -912,6 +1043,19 @@ export class InteractiveAudioEngine {
   }
 
   // ── disposal ─────────────────────────────────────────────────────────────────
+
+  /** Dispose every voice in an SFX pool (best-effort, never throws). */
+  private disposeSfxPool(pool: SfxVoicePool | undefined): void {
+    if (!pool) return;
+    for (const v of pool.voices) {
+      try {
+        v.dispose();
+      } catch {
+        // ignore
+      }
+    }
+    pool.voices = [];
+  }
 
   private disposeLoaded(seg: LoadedSegment | undefined): void {
     if (!seg) return;
@@ -978,12 +1122,8 @@ export class InteractiveAudioEngine {
       // ignore
     }
     this.disposeAll();
-    for (const n of Object.values(this.sfxPlayers)) {
-      try {
-        n?.dispose();
-      } catch {
-        // ignore
-      }
+    for (const pool of Object.values(this.sfxPools)) {
+      this.disposeSfxPool(pool);
     }
     try {
       this.master?.dispose();
@@ -991,7 +1131,7 @@ export class InteractiveAudioEngine {
       // ignore
     }
     this.segments = [];
-    this.sfxPlayers = {};
+    this.sfxPools = {};
     this.song = undefined;
     this.manifest = undefined;
     this.master = undefined;

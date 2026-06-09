@@ -12,19 +12,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-intro-tier0.wav",
-              "rawPeakDb": -72.97,
-              "measuredLufsPostNorm": -Infinity
+              "peakDb": -62.45,
+              "measuredLufs": -Infinity
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-intro-tier1.wav",
-              "rawPeakDb": -11.86,
-              "measuredLufsPostNorm": -13.91
+              "peakDb": -1.34,
+              "measuredLufs": -14.01
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-intro-tier2.wav",
-              "rawPeakDb": -11.86,
-              "measuredLufsPostNorm": -13.91
+              "peakDb": -1.34,
+              "measuredLufs": -14.01
             }
+          },
+          "additive": {
+            "refTier": "tier2",
+            "refLufs": -24.52,
+            "linGainDb": 10.52,
+            "peakGuardDb": 0.0
           }
         },
         {
@@ -37,19 +43,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-verse1-tier0.wav",
-              "rawPeakDb": -2.71,
-              "measuredLufsPostNorm": -13.76
+              "peakDb": -2.65,
+              "measuredLufs": -17.36
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-verse1-tier1.wav",
-              "rawPeakDb": -0.27,
-              "measuredLufsPostNorm": -13.61
+              "peakDb": -0.2,
+              "measuredLufs": -17.08
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-verse1-tier2.wav",
-              "rawPeakDb": -0.33,
-              "measuredLufsPostNorm": -13.36
+              "peakDb": -0.26,
+              "measuredLufs": -16.13
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -17.43,
+            "linGainDb": 3.43,
+            "peakGuardDb": -3.367
           }
         },
         {
@@ -62,19 +74,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-break-tier0.wav",
-              "rawPeakDb": -6.2,
-              "measuredLufsPostNorm": -13.87
+              "peakDb": -5.25,
+              "measuredLufs": -14.0
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-break-tier1.wav",
-              "rawPeakDb": -3.9,
-              "measuredLufsPostNorm": -13.88
+              "peakDb": -2.95,
+              "measuredLufs": -13.26
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-break-tier2.wav",
-              "rawPeakDb": -3.9,
-              "measuredLufsPostNorm": -13.88
+              "peakDb": -2.95,
+              "measuredLufs": -13.26
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -14.95,
+            "linGainDb": 0.95,
+            "peakGuardDb": 0.0
           }
         },
         {
@@ -87,19 +105,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-verse2-tier0.wav",
-              "rawPeakDb": -2.78,
-              "measuredLufsPostNorm": -14.0
+              "peakDb": -3.01,
+              "measuredLufs": -18.21
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-verse2-tier1.wav",
-              "rawPeakDb": -0.03,
-              "measuredLufsPostNorm": -14.24
+              "peakDb": -0.26,
+              "measuredLufs": -17.81
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-verse2-tier2.wav",
-              "rawPeakDb": -0.03,
-              "measuredLufsPostNorm": -14.26
+              "peakDb": -0.26,
+              "measuredLufs": -16.72
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -17.98,
+            "linGainDb": 3.98,
+            "peakGuardDb": -4.211
           }
         },
         {
@@ -112,19 +136,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-outro-tier0.wav",
-              "rawPeakDb": -6.14,
-              "measuredLufsPostNorm": -14.1
+              "peakDb": -3.31,
+              "measuredLufs": -14.0
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-outro-tier1.wav",
-              "rawPeakDb": -5.97,
-              "measuredLufsPostNorm": -14.16
+              "peakDb": -3.14,
+              "measuredLufs": -13.7
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song1/s1-outro-tier2.wav",
-              "rawPeakDb": -5.97,
-              "measuredLufsPostNorm": -14.16
+              "peakDb": -3.14,
+              "measuredLufs": -13.7
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -16.83,
+            "linGainDb": 2.83,
+            "peakGuardDb": 0.0
           }
         }
       ]
@@ -141,19 +171,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-intro-tier0.wav",
-              "rawPeakDb": -4.28,
-              "measuredLufsPostNorm": -13.58
+              "peakDb": -2.22,
+              "measuredLufs": -16.63
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-intro-tier1.wav",
-              "rawPeakDb": -2.32,
-              "measuredLufsPostNorm": -13.02
+              "peakDb": -0.26,
+              "measuredLufs": -15.52
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-intro-tier2.wav",
-              "rawPeakDb": -2.32,
-              "measuredLufsPostNorm": -13.02
+              "peakDb": -0.26,
+              "measuredLufs": -15.52
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -18.7,
+            "linGainDb": 4.7,
+            "peakGuardDb": -2.641
           }
         },
         {
@@ -166,19 +202,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-verse1-tier0.wav",
-              "rawPeakDb": -4.58,
-              "measuredLufsPostNorm": -13.41
+              "peakDb": -0.3,
+              "measuredLufs": -14.23
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-verse1-tier1.wav",
-              "rawPeakDb": -4.29,
-              "measuredLufsPostNorm": -13.32
+              "peakDb": 0.0,
+              "measuredLufs": -14.19
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-verse1-tier2.wav",
-              "rawPeakDb": -4.55,
-              "measuredLufsPostNorm": -13.4
+              "peakDb": -0.26,
+              "measuredLufs": -13.1
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -18.52,
+            "linGainDb": 4.52,
+            "peakGuardDb": -0.232
           }
         },
         {
@@ -191,19 +233,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-bridge1-tier0.wav",
-              "rawPeakDb": -6.55,
-              "measuredLufsPostNorm": -14.32
+              "peakDb": -3.4,
+              "measuredLufs": -14.01
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-bridge1-tier1.wav",
-              "rawPeakDb": -4.55,
-              "measuredLufsPostNorm": -14.26
+              "peakDb": -1.4,
+              "measuredLufs": -13.27
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-bridge1-tier2.wav",
-              "rawPeakDb": -4.55,
-              "measuredLufsPostNorm": -14.26
+              "peakDb": -1.4,
+              "measuredLufs": -13.27
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -17.15,
+            "linGainDb": 3.15,
+            "peakGuardDb": 0.0
           }
         },
         {
@@ -216,19 +264,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-verse2-tier0.wav",
-              "rawPeakDb": -3.26,
-              "measuredLufsPostNorm": -13.92
+              "peakDb": -0.01,
+              "measuredLufs": -14.64
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-verse2-tier1.wav",
-              "rawPeakDb": -3.12,
-              "measuredLufsPostNorm": -13.72
+              "peakDb": 0.13,
+              "measuredLufs": -14.42
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-verse2-tier2.wav",
-              "rawPeakDb": -3.52,
-              "measuredLufsPostNorm": -13.77
+              "peakDb": -0.26,
+              "measuredLufs": -13.17
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -17.88,
+            "linGainDb": 3.88,
+            "peakGuardDb": -0.629
           }
         },
         {
@@ -241,19 +295,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-break-tier0.wav",
-              "rawPeakDb": -4.3,
-              "measuredLufsPostNorm": -14.07
+              "peakDb": -1.09,
+              "measuredLufs": -14.0
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-break-tier1.wav",
-              "rawPeakDb": -4.31,
-              "measuredLufsPostNorm": -14.22
+              "peakDb": -1.1,
+              "measuredLufs": -12.55
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-break-tier2.wav",
-              "rawPeakDb": -4.31,
-              "measuredLufsPostNorm": -14.23
+              "peakDb": -1.1,
+              "measuredLufs": -12.55
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -17.21,
+            "linGainDb": 3.21,
+            "peakGuardDb": 0.0
           }
         },
         {
@@ -266,19 +326,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-chorus3-tier0.wav",
-              "rawPeakDb": -4.18,
-              "measuredLufsPostNorm": -12.77
+              "peakDb": -0.41,
+              "measuredLufs": -14.82
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-chorus3-tier1.wav",
-              "rawPeakDb": -4.18,
-              "measuredLufsPostNorm": -12.57
+              "peakDb": -0.41,
+              "measuredLufs": -14.2
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-chorus3-tier2.wav",
-              "rawPeakDb": -4.04,
-              "measuredLufsPostNorm": -13.49
+              "peakDb": -0.26,
+              "measuredLufs": -12.72
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -18.6,
+            "linGainDb": 4.6,
+            "peakGuardDb": -0.829
           }
         },
         {
@@ -291,19 +357,25 @@
           "tiers": {
             "tier0": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-outro-tier0.wav",
-              "rawPeakDb": -2.03,
-              "measuredLufsPostNorm": -13.66
+              "peakDb": -0.76,
+              "measuredLufs": -14.18
             },
             "tier1": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-outro-tier1.wav",
-              "rawPeakDb": -1.54,
-              "measuredLufsPostNorm": -13.92
+              "peakDb": -0.27,
+              "measuredLufs": -13.67
             },
             "tier2": {
               "wav": "/Users/rai/dev/llmines-audio-build/build/wav/song2/s2-outro-tier2.wav",
-              "rawPeakDb": -1.54,
-              "measuredLufsPostNorm": -13.92
+              "peakDb": -0.26,
+              "measuredLufs": -13.67
             }
+          },
+          "additive": {
+            "refTier": "tier0",
+            "refLufs": -15.45,
+            "linGainDb": 1.45,
+            "peakGuardDb": -0.177
           }
         }
       ]
