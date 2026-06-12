@@ -175,7 +175,14 @@
             "tier3": "song1/s1-outro-tier3.opus"
           }
         }
-      ]
+      ],
+      "sfx": {
+        "drop": "song1/sfx-drop.opus",
+        "move": "song1/sfx-move.opus",
+        "rotate": "song1/sfx-rotate.opus",
+        "softdrop": "song1/sfx-softdrop.opus",
+        "stage": "song1/sfx-stage.opus"
+      }
     },
     {
       "id": "song2",
@@ -333,7 +340,14 @@
             "tier4": "song2/s2-outro-tier4.opus"
           }
         }
-      ]
+      ],
+      "sfx": {
+        "drop": "song2/sfx-drop.opus",
+        "move": "song2/sfx-move.opus",
+        "rotate": "song2/sfx-rotate.opus",
+        "softdrop": "song2/sfx-softdrop.opus",
+        "stage": "song2/sfx-stage.opus"
+      }
     }
   ]
 }
