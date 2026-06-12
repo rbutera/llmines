@@ -191,14 +191,12 @@ import { InteractiveAudioEngine } from "./engine";
 
 // ── manifest served via mocked fetch (single /audio/manifest.json, songs[]) ──
 
-function tiers(prefix: string) {
-  return {
-    tier0: `${prefix}-tier0.opus`,
-    tier1: `${prefix}-tier1.opus`,
-    tier2: `${prefix}-tier2.opus`,
-  };
+function tiers(prefix: string, count = 3): Record<string, string> {
+  const t: Record<string, string> = {};
+  for (let i = 0; i < count; i++) t[`tier${i}`] = `${prefix}-tier${i}.opus`;
+  return t;
 }
-function seg(id: string, type: string, bars = 1) {
+function seg(id: string, type: string, bars = 1, tierCount = 3) {
   // lengthSeconds carries a spill tail for non-LOOPER (mirrors the real manifest);
   // barWindowSeconds is the spill-free loop length the engine must loop/tick on.
   const barWindow = bars * SEC_PER_BAR;
@@ -209,7 +207,7 @@ function seg(id: string, type: string, bars = 1) {
     bars,
     lengthSeconds: barWindow + spill,
     barWindowSeconds: barWindow,
-    tiers: tiers(id),
+    tiers: tiers(id, tierCount),
   };
 }
 
@@ -369,77 +367,101 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
     }
   });
 
-  it("bias-up HOLD: a dry spell does not shed the tier (holds for shedAfterPasses)", async () => {
-    const e = await freshEngine("A"); // shedAfterPasses = 6; A advanceThreshold = 16
-    // Bank just enough to arm one tier up (intro enters at tier1; A addThreshold[1]
-    // = 12). lineClear weight = 1+squares = 3 per clear; 4 clears = 12 (arms 1->2)
-    // and segScore 12 < advanceThreshold 16 so we climb WITHOUT advancing.
-    for (let i = 0; i < 4; i++) clear(e, 2); // weight 3 each = 12 in-pass + segScore
+  it("VERTICAL: clearing RAISES the cumulative tier (intensity → tier), bar-aligned", async () => {
+    // intro enters at the energy floor (tier1). Pour score in: intensity climbs,
+    // and the NEXT boundary arms round(intensity) and crossfades up to it.
+    const e = await freshEngine("B");
+    expect(e.getAudioState().tier).toBe(1);
+    const i0 = e.getAudioState().intensity;
+    for (let i = 0; i < 8; i++) clear(e, 2); // weight 4 each -> intensity climbs hard
+    await settle();
+    // intensity rose immediately on the clears (continuous), but the AUDIBLE tier
+    // only changes on the boundary (mid-loop swaps are forbidden).
+    expect(e.getAudioState().intensity).toBeGreaterThan(i0);
+    expect(e.getAudioState().tier).toBe(1); // not yet swapped (still mid-loop)
+    mockState.rampStarts.length = 0;
     loopBoundary();
     await settle();
-    const climbed = e.getAudioState();
-    expect(climbed.segmentIndex).toBe(0); // did NOT advance (segScore 12 < 16)
-    expect(climbed.tier).toBe(2); // armed 1->2 and swapped on the boundary
-    // Now go DRY: across passes fewer than shedAfterPasses the tier must HOLD.
-    const start = climbed.tier;
-    for (let p = 0; p < 5; p++) {
-      loopBoundary();
-      await settle();
-      expect(e.getAudioState().tier).toBe(start); // never thinned (bias up)
-      expect(e.getAudioState().segmentIndex).toBe(0); // still no score -> no advance
+    // After the boundary the cumulative tier is the top of this 3-tier segment.
+    expect(e.getAudioState().tier).toBe(2);
+    // every swap ramp STARTS on a bar (loop) multiple — never mid-loop.
+    expect(mockState.rampStarts.length).toBeGreaterThan(0);
+    for (const t of mockState.rampStarts) {
+      const bars = t / SEC_PER_BAR;
+      expect(Math.abs(bars - Math.round(bars))).toBeLessThan(1e-6);
     }
   });
 
-  it("advance requires tier2 AND segmentScore >= advanceThreshold (forward-only)", async () => {
-    const e = await freshEngine("C"); // advanceThreshold = 8, addThreshold [4,6]
-    expect(e.getAudioState().segmentIndex).toBe(0);
-    // Pour score in; the engine must NOT advance off the intro until it has
-    // reached tier2 (boundaries needed to climb) AND banked advanceThreshold.
-    for (let i = 0; i < 6; i++) clear(e, 2); // arm 1->2
-    loopBoundary(); // swap to tier2
-    await settle();
-    expect(e.getAudioState().tier).toBe(2);
-    // not enough segmentScore banked across the reset boundaries yet OR it is:
-    // pour more and tick to let an advance commit.
-    for (let i = 0; i < 6; i++) clear(e, 2);
+  it("VERTICAL: a dry spell DECAYS intensity (the song thins toward the bed)", async () => {
+    // Push intensity up, then go dry: each boundary decays it, so the tier sheds back
+    // down toward the bed over several passes (no clear ever changes the segment).
+    const e = await freshEngine("B");
+    for (let i = 0; i < 8; i++) clear(e, 2);
     loopBoundary();
     await settle();
-    const s = e.getAudioState();
-    expect(s.segmentIndex).toBeGreaterThanOrEqual(1); // advanced forward
-    expect(s.maxSegmentReached).toBeGreaterThanOrEqual(1);
+    const hot = e.getAudioState();
+    expect(hot.tier).toBe(2); // climbed to the top tier
+    // Now go DRY for many bars; intensity decays monotonically toward 0.
+    let prev = hot.intensity;
+    for (let p = 0; p < 6; p++) {
+      loopBoundary();
+      await settle();
+      const now = e.getAudioState().intensity;
+      expect(now).toBeLessThanOrEqual(prev + 1e-9); // never rises on a dry pass
+      prev = now;
+    }
+    // it shed at least one tier off the top on the sustained dry spell.
+    expect(e.getAudioState().tier).toBeLessThan(hot.tier);
   });
 
-  it("does NOT fast-forward: a huge burst advances at most one segment per boundary", async () => {
-    const e = await freshEngine("C");
-    // climb to tier2.
-    for (let i = 0; i < 6; i++) clear(e, 2);
+  it("HORIZONTAL: the segment advances AUTONOMOUSLY on the clock, WITHOUT any clears", async () => {
+    const e = await freshEngine("B");
+    expect(e.getAudioState().segmentIndex).toBe(0);
+    // No clears at all — the timeline must still advance on its own musical clock.
     loopBoundary();
     await settle();
+    expect(e.getAudioState().segmentIndex).toBe(1);
+    loopBoundary();
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBe(2);
+    expect(e.getAudioState().maxSegmentReached).toBe(2);
+  });
+
+  it("HORIZONTAL: advances exactly ONE segment per boundary (no fast-forward, even on a burst)", async () => {
+    const e = await freshEngine("B");
     const before = e.getAudioState().segmentIndex;
-    // one massive chain then a single boundary -> at most ONE step.
+    // a massive burst must not skip segments — the clock advances one step per bar.
     e.fire({ type: "chain", size: 8 });
     e.fire({ type: "chain", size: 8 });
     loopBoundary();
     await settle();
     const after = e.getAudioState().segmentIndex;
-    expect(after - before).toBeLessThanOrEqual(1);
+    expect(after - before).toBe(1);
   });
 
-  it("segmentIndex is monotonic (forward-only, never rewinds)", async () => {
-    const e = await freshEngine("C");
-    const seen: number[] = [];
-    for (let k = 0; k < 12; k++) {
-      for (let i = 0; i < 4; i++) clear(e, 2);
+  it("HORIZONTAL: forward-only ordering, looping back to segment 0 at the end", async () => {
+    const e = await freshEngine("B");
+    const count = e.getAudioState().segmentCount; // 4 in the test manifest
+    const seen: number[] = [e.getAudioState().segmentIndex];
+    // walk well past the end so we observe the loop-back to 0.
+    for (let k = 0; k < count + 2; k++) {
       loopBoundary();
       await settle();
       seen.push(e.getAudioState().segmentIndex);
     }
+    // forward-only within a lap: each step is +1 until it wraps to 0 at the end.
     for (let i = 1; i < seen.length; i++) {
-      expect(seen[i]!).toBeGreaterThanOrEqual(seen[i - 1]!);
+      const a = seen[i - 1]!;
+      const b = seen[i]!;
+      const wrapped = a === count - 1 && b === 0;
+      expect(wrapped || b === a + 1).toBe(true);
     }
+    // it DID reach the last segment and DID loop back to 0.
+    expect(seen).toContain(count - 1);
+    expect(seen.slice(1)).toContain(0);
   });
 
-  it("no-hiss: active bed players stay <= 2 throughout a full play-through", async () => {
+  it("no-hiss: active bed players stay <= 2 throughout a full autonomous play-through", async () => {
     const e = await freshEngine("C");
     let maxStems = 0;
     for (let k = 0; k < 16; k++) {
@@ -452,24 +474,26 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
     expect(maxStems).toBeGreaterThanOrEqual(1);
   });
 
-  it("onSongComplete fires exactly once on reaching TERMINAL", async () => {
-    const e = await freshEngine("C");
+  it("onSongComplete fires exactly once when the timeline first reaches the last segment", async () => {
+    const e = await freshEngine("B");
     let calls = 0;
     e.onSongComplete = () => {
       calls++;
     };
-    // drive hard until we reach the last (TERMINAL) segment + settle the transition.
-    for (let k = 0; k < 30; k++) {
-      for (let i = 0; i < 6; i++) clear(e, 2);
+    const count = e.getAudioState().segmentCount; // 4
+    // No clears needed — the autonomous clock walks to the TERMINAL segment.
+    for (let k = 0; k < count - 1; k++) {
       loopBoundary();
       await settle();
     }
     const s = e.getAudioState();
-    expect(s.segmentIndex).toBe(s.segmentCount - 1); // landed on TERMINAL
+    expect(s.segmentIndex).toBe(count - 1); // landed on the last (TERMINAL) segment
     expect(calls).toBe(1); // fired, and only once
-    // further boundaries do not re-fire.
-    loopBoundary();
-    await settle();
+    // looping back round and reaching the end AGAIN does not re-fire (once-only).
+    for (let k = 0; k < count; k++) {
+      loopBoundary();
+      await settle();
+    }
     expect(calls).toBe(1);
   });
 
@@ -534,7 +558,6 @@ describe("long-segment progression (showstopper regression)", () => {
     (globalThis as unknown as { window?: object }).window = globalThis;
     installFetch(LONG_MANIFEST);
     const e = new InteractiveAudioEngine();
-    e.setPreset("C"); // advanceThreshold = 8, addThreshold [4,6]
     await e.unlock();
     await settle();
 
@@ -543,22 +566,25 @@ describe("long-segment progression (showstopper regression)", () => {
       calls++;
     };
 
-    // Drive score and fire each boundary via loopBoundary(), which advances the
-    // clock to the next pending tick whatever its interval. The 34-bar verse loop is
-    // 68x longer than the intro loop; the self-rescheduling one-shot must keep firing
-    // on it (the old scheduleRepeat did not), so the verse climbs + advances.
-    const seen: number[] = [];
-    for (let k = 0; k < 40; k++) {
-      for (let i = 0; i < 6; i++) clear(e, 2);
+    // Fire each boundary via loopBoundary(), which advances the clock to the next
+    // pending tick whatever its interval. The 34-bar verse loop is 68x longer than
+    // the intro loop; the self-rescheduling one-shot must keep firing on it (the old
+    // scheduleRepeat did not), so the AUTONOMOUS timeline advances PAST the long verse
+    // without freezing — no clears required.
+    const s0 = e.getAudioState();
+    const seen: number[] = [s0.segmentIndex];
+    // 3 boundaries = walk 0 → 1 (long verse) → 2 → 3 (TERMINAL): the long verse must
+    // NOT freeze the clock.
+    for (let k = 0; k < s0.segmentCount - 1; k++) {
       loopBoundary();
       await settle();
       seen.push(e.getAudioState().segmentIndex);
     }
 
     const s = e.getAudioState();
-    // it must have climbed off the long verse (index 1) into later segments.
-    expect(Math.max(...seen)).toBeGreaterThanOrEqual(2);
-    expect(s.segmentIndex).toBe(s.segmentCount - 1); // reached TERMINAL
+    // it climbed PAST the long verse (index 1) all the way to the TERMINAL segment.
+    expect(Math.max(...seen)).toBe(s.segmentCount - 1);
+    expect(s.maxSegmentReached).toBe(s.segmentCount - 1); // reached TERMINAL
     expect(calls).toBe(1); // onSongComplete fired
   });
 });
