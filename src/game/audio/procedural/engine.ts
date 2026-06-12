@@ -39,8 +39,42 @@
  * missing tier asset → silence.
  */
 
-import * as Tone from "tone";
+// TYPE-ONLY import: erased at compile time, so it carries NO runtime side effect.
+// The `tone` barrel (index.js) eagerly runs `getContext()` at module-eval to build
+// its deprecated `Transport` / `Destination` / `Master` singletons. A static value
+// import of the barrel therefore CONSTRUCTS a real AudioContext the instant this
+// module loads (at React mount, OFF any user gesture). Strict-autoplay browsers then
+// permanently block that off-gesture context, so a later in-gesture resume produces
+// no audible output — the recurring "AudioContext was not allowed to start" bug.
+//
+// We instead load Tone LAZILY, inside the unlock() user gesture (see `loadTone`), so
+// the AudioContext is first constructed in-gesture and is allowed to play.
+import type * as Tone from "tone";
 import { routeEvent, type SfxName } from "./sfxRouting";
+
+/** Runtime Tone module, populated lazily inside the unlock() gesture. */
+type ToneModule = typeof Tone;
+let ToneRT: ToneModule | undefined;
+
+/**
+ * Load the Tone module exactly once, inside a user gesture. The dynamic import
+ * defers the barrel's eager `getContext()` singletons until this runs, so the
+ * AudioContext is created in-gesture (strict-autoplay safe). Returns the module.
+ */
+async function loadTone(): Promise<ToneModule> {
+  ToneRT ??= await import("tone");
+  return ToneRT;
+}
+
+/**
+ * The already-loaded Tone module. Safe to call only AFTER unlock()/the primer has
+ * run loadTone() (which is true for every code path that touches Tone at runtime —
+ * all gated behind `started`). Returns undefined if (somehow) called before load, so
+ * callers degrade rather than throw.
+ */
+function tone(): ToneModule | undefined {
+  return ToneRT;
+}
 
 /** Fallback BPM until a manifest is read. */
 const FALLBACK_BPM = 110;
@@ -241,6 +275,55 @@ export class InteractiveAudioEngine {
 
   private master?: Tone.Gain;
 
+  /** Teardown for the document-level first-interaction resume primer. */
+  private removeResumePrimer?: () => void;
+
+  constructor() {
+    this.installResumePrimer();
+  }
+
+  /**
+   * Belt-and-braces: a one-time document-level listener that resumes audio on the
+   * FIRST user interaction anywhere on the page (pointerdown / keydown / touchstart),
+   * then removes itself. This guarantees the AudioContext is constructed + resumed in
+   * response to a genuine user gesture even if the Start handler's own resume didn't
+   * take (e.g. the click was synthesized, or activation lapsed across an await). It
+   * loads Tone lazily — the import (and the barrel's eager getContext singletons) thus
+   * fire INSIDE this gesture, so strict-autoplay browsers allow the context. SSR-safe.
+   */
+  private installResumePrimer(): void {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    let done = false;
+    const events: Array<keyof DocumentEventMap> = [
+      "pointerdown",
+      "keydown",
+      "touchstart",
+    ];
+    const prime = () => {
+      if (done) return;
+      done = true;
+      this.removeResumePrimer?.();
+      this.removeResumePrimer = undefined;
+      // Fire-and-forget: resume the global Tone context (the same one unlock() plays
+      // through) so any interaction unblocks audio. Created/resumed in-gesture here.
+      void (async () => {
+        try {
+          const Tone = await loadTone();
+          await Tone.getContext().resume();
+          await Tone.start();
+        } catch {
+          /* degrade silently — unlock() is still the primary path */
+        }
+      })();
+    };
+    for (const ev of events) {
+      document.addEventListener(ev, prime, { once: false, passive: true });
+    }
+    this.removeResumePrimer = () => {
+      for (const ev of events) document.removeEventListener(ev, prime);
+    };
+  }
+
   private manifest?: AudioManifest;
   private song?: ManifestSong;
   private currentTrack: TrackBundle = TRACK_SONG1;
@@ -422,11 +505,13 @@ export class InteractiveAudioEngine {
     if (this.started) return;
     if (typeof window === "undefined") return;
     try {
-      // CRITICAL — the AudioContext must be both CREATED and RESUMED inside the
-      // user-gesture stack, or strict-autoplay browsers block it. Two synchronous
-      // calls, BEFORE any await, both riding the click:
-      //  1. Tone.getContext() — lazily constructs the real Context NOW, in the gesture.
-      //  2. ctx.resume() — resume it synchronously in the same gesture tick.
+      // Load Tone INSIDE the gesture. The dynamic import defers the barrel's eager
+      // `getContext()` singletons until now, so the AudioContext is first constructed
+      // in response to this user gesture — strict-autoplay browsers then allow it.
+      const Tone = await loadTone();
+      // CREATE + RESUME the context. getContext() lazily constructs the Context here
+      // (or returns the one the first-interaction primer already created in-gesture);
+      // resume() then unblocks it.
       const ctx = Tone.getContext();
       const resumed = ctx.resume();
       await resumed;
@@ -503,7 +588,7 @@ export class InteractiveAudioEngine {
     await Promise.all(
       tierUrls.map(async (url, t) => {
         try {
-          const gain = new Tone.Gain(0).connect(master);
+          const gain = new ToneRT!.Gain(0).connect(master);
           const player = await this.loadPlayer(url);
           if (player) {
             player.loop = true;
@@ -544,7 +629,7 @@ export class InteractiveAudioEngine {
       const window = this.barWindowSeconds(seg);
       let phase = 0;
       try {
-        const ts = Tone.getTransport().seconds;
+        const ts = ToneRT!.getTransport().seconds;
         if (Number.isFinite(ts) && window > 0) {
           phase = ((ts % window) + window) % window;
         }
@@ -564,7 +649,7 @@ export class InteractiveAudioEngine {
   private loadPlayer(url: string): Promise<Tone.Player | null> {
     return new Promise((resolve) => {
       try {
-        const p = new Tone.Player({
+        const p = new ToneRT!.Player({
           url,
           onload: () => resolve(p),
           onerror: () => {
@@ -616,7 +701,7 @@ export class InteractiveAudioEngine {
   private applyTempo(song: ManifestSong): void {
     this.bpm = song.tempo > 0 ? song.tempo : this.bpm;
     try {
-      Tone.getTransport().bpm.value = this.bpm;
+      ToneRT!.getTransport().bpm.value = this.bpm;
     } catch {
       // ignore
     }
@@ -667,7 +752,7 @@ export class InteractiveAudioEngine {
 
     // Gain up exactly the start tier; everything else hard-zero, anchored at the same
     // boundary the caller faded the old segment OUT (so the cross is symmetric).
-    const at = fresh ? Tone.now() : (boundaryAt ?? this.nextBar());
+    const at = fresh ? ToneRT!.now() : (boundaryAt ?? this.nextBar());
     for (let t = 0; t < seg.tierGains.length; t++) {
       const target = t === startTier ? 1 : 0;
       this.rampGain(seg.tierGains[t], target, fresh ? SNAP_S : XFADE_S, at);
@@ -750,7 +835,7 @@ export class InteractiveAudioEngine {
   private armNextBoundary(interval: number, gen: number): void {
     const at = this.nextWrapBoundary(interval);
     try {
-      const id = Tone.getTransport().scheduleOnce((time) => {
+      const id = ToneRT!.getTransport().scheduleOnce((time) => {
         if (gen !== this.loopTickGen) return; // a reschedule superseded this tick
         this.onLoopBoundary(time);
         if (gen !== this.loopTickGen) return; // advance/swap may have rescheduled
@@ -770,7 +855,7 @@ export class InteractiveAudioEngine {
    */
   private nextWrapBoundary(interval: number): number {
     try {
-      const now = Tone.getTransport().seconds;
+      const now = ToneRT!.getTransport().seconds;
       const k = Math.floor(now / interval + 1e-9) + 1;
       return k * interval;
     } catch {
@@ -782,7 +867,7 @@ export class InteractiveAudioEngine {
     this.loopTickGen++;
     for (const id of this.scheduledEvents) {
       try {
-        Tone.getTransport().clear(id);
+        ToneRT!.getTransport().clear(id);
       } catch {
         // ignore
       }
@@ -960,7 +1045,7 @@ export class InteractiveAudioEngine {
   fire(ev: AudioEvent): void {
     if (!this.started || this.muted) return;
     try {
-      Tone.getTransport().scheduleOnce((time) => {
+      ToneRT!.getTransport().scheduleOnce((time) => {
         this.play(ev, time);
       }, "@16n");
     } catch {
@@ -1060,7 +1145,7 @@ export class InteractiveAudioEngine {
       const floor = this.toneNow() + SFX_RETRIGGER_EPSILON;
       const at = Math.max(time, floor, pool.lastStart + SFX_RETRIGGER_EPSILON);
       pool.lastStart = at;
-      voice.volume.value = Tone.gainToDb(Math.max(0.0001, Math.min(1, velocity)));
+      voice.volume.value = ToneRT!.gainToDb(Math.max(0.0001, Math.min(1, velocity)));
       voice.start(at);
     } catch {
       // dropped one-shot never surfaces to the game
@@ -1096,7 +1181,7 @@ export class InteractiveAudioEngine {
   /** Next bar-boundary transport time (safe fallback to now). */
   private nextBar(): number {
     try {
-      return Tone.getTransport().nextSubdivision("1m");
+      return ToneRT!.getTransport().nextSubdivision("1m");
     } catch {
       return this.toneNow();
     }
@@ -1104,7 +1189,7 @@ export class InteractiveAudioEngine {
 
   private toneNow(): number {
     try {
-      return Tone.now();
+      return ToneRT!.now();
     } catch {
       return 0;
     }
@@ -1152,7 +1237,7 @@ export class InteractiveAudioEngine {
       fn();
     };
     try {
-      settleId = Tone.getTransport().scheduleOnce(() => once(), at);
+      settleId = ToneRT!.getTransport().scheduleOnce(() => once(), at);
       // settle ids live in their OWN array so a loop-tick reschedule (clearScheduled)
       // can't cancel a pending disposal / state reset.
       this.settleEvents.push(settleId);
@@ -1324,10 +1409,12 @@ export class InteractiveAudioEngine {
     this.transitionToken++;
     this.transitionInFlight = false;
     this.clearScheduled();
+    this.removeResumePrimer?.();
+    this.removeResumePrimer = undefined;
     try {
-      const t = Tone.getTransport();
-      t.stop();
-      t.cancel();
+      const t = tone()?.getTransport();
+      t?.stop();
+      t?.cancel();
     } catch {
       // ignore
     }
