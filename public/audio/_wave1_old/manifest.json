@@ -1,0 +1,191 @@
+{
+  "version": "wave1-native-4layer",
+  "songs": [
+    {
+      "id": "song1",
+      "title": "Especifico Primero",
+      "tempo": 109.957,
+      "barSeconds": 2.1827,
+      "segments": [
+        {
+          "id": "s1-intro",
+          "type": "LOOPER",
+          "bars": 2,
+          "lengthSeconds": 4.3654,
+          "barWindowSeconds": 4.3654,
+          "character": "instrumental intro hook",
+          "tiers": {
+            "tier0": "song1/s1-intro-tier0.opus",
+            "tier1": "song1/s1-intro-tier1.opus",
+            "tier2": "song1/s1-intro-tier2.opus"
+          }
+        },
+        {
+          "id": "s1-verse1",
+          "type": "PROGRESSION",
+          "bars": 34,
+          "lengthSeconds": 76.3945,
+          "barWindowSeconds": 74.2118,
+          "character": "verse1 + build + chorus (vocal body A)",
+          "tiers": {
+            "tier0": "song1/s1-verse1-tier0.opus",
+            "tier1": "song1/s1-verse1-tier1.opus",
+            "tier2": "song1/s1-verse1-tier2.opus"
+          }
+        },
+        {
+          "id": "s1-break",
+          "type": "LOOPER",
+          "bars": 4,
+          "lengthSeconds": 8.7308,
+          "barWindowSeconds": 8.7308,
+          "character": "instrumental break (prime game loop)",
+          "tiers": {
+            "tier0": "song1/s1-break-tier0.opus",
+            "tier1": "song1/s1-break-tier1.opus",
+            "tier2": "song1/s1-break-tier2.opus"
+          }
+        },
+        {
+          "id": "s1-verse2",
+          "type": "PROGRESSION",
+          "bars": 41,
+          "lengthSeconds": 91.6734,
+          "barWindowSeconds": 89.4907,
+          "character": "verse2 + build + chorus + bridge (vocal body B)",
+          "tiers": {
+            "tier0": "song1/s1-verse2-tier0.opus",
+            "tier1": "song1/s1-verse2-tier1.opus",
+            "tier2": "song1/s1-verse2-tier2.opus"
+          }
+        },
+        {
+          "id": "s1-outro",
+          "type": "TERMINAL",
+          "bars": 9,
+          "lengthSeconds": 20.5474,
+          "barWindowSeconds": 19.6443,
+          "character": "instrumental outro, rides out",
+          "tiers": {
+            "tier0": "song1/s1-outro-tier0.opus",
+            "tier1": "song1/s1-outro-tier1.opus",
+            "tier2": "song1/s1-outro-tier2.opus"
+          }
+        }
+      ],
+      "sfx": {
+        "drop": "song1/sfx-drop.opus",
+        "move": "song1/sfx-move.opus",
+        "rotate": "song1/sfx-rotate.opus",
+        "softdrop": "song1/sfx-softdrop.opus",
+        "stage": "song1/sfx-stage.opus"
+      }
+    },
+    {
+      "id": "song2",
+      "title": "pipeline male phonk (Verde el Pipeline)",
+      "tempo": 126.05,
+      "barSeconds": 1.904,
+      "segments": [
+        {
+          "id": "s2-intro",
+          "type": "LOOPER",
+          "bars": 16,
+          "lengthSeconds": 30.464,
+          "barWindowSeconds": 30.464,
+          "character": "intro groove",
+          "tiers": {
+            "tier0": "song2/s2-intro-tier0.opus",
+            "tier1": "song2/s2-intro-tier1.opus",
+            "tier2": "song2/s2-intro-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-verse1",
+          "type": "PROGRESSION",
+          "bars": 23,
+          "lengthSeconds": 45.696,
+          "barWindowSeconds": 43.792,
+          "character": "verse1 + build + chorus",
+          "tiers": {
+            "tier0": "song2/s2-verse1-tier0.opus",
+            "tier1": "song2/s2-verse1-tier1.opus",
+            "tier2": "song2/s2-verse1-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-bridge1",
+          "type": "LOOPER",
+          "bars": 2,
+          "lengthSeconds": 3.808,
+          "barWindowSeconds": 3.808,
+          "character": "instrumental seam",
+          "tiers": {
+            "tier0": "song2/s2-bridge1-tier0.opus",
+            "tier1": "song2/s2-bridge1-tier1.opus",
+            "tier2": "song2/s2-bridge1-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-verse2",
+          "type": "PROGRESSION",
+          "bars": 32,
+          "lengthSeconds": 62.832,
+          "barWindowSeconds": 60.928,
+          "character": "verse2 + build2 + chorus2",
+          "tiers": {
+            "tier0": "song2/s2-verse2-tier0.opus",
+            "tier1": "song2/s2-verse2-tier1.opus",
+            "tier2": "song2/s2-verse2-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-break",
+          "type": "LOOPER",
+          "bars": 7,
+          "lengthSeconds": 13.328,
+          "barWindowSeconds": 13.328,
+          "character": "instrumental break / bridge bed",
+          "tiers": {
+            "tier0": "song2/s2-break-tier0.opus",
+            "tier1": "song2/s2-break-tier1.opus",
+            "tier2": "song2/s2-break-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-chorus3",
+          "type": "PROGRESSION",
+          "bars": 9,
+          "lengthSeconds": 19.04,
+          "barWindowSeconds": 17.136,
+          "character": "chorus3 (vocal)",
+          "tiers": {
+            "tier0": "song2/s2-chorus3-tier0.opus",
+            "tier1": "song2/s2-chorus3-tier1.opus",
+            "tier2": "song2/s2-chorus3-tier2.opus"
+          }
+        },
+        {
+          "id": "s2-outro",
+          "type": "TERMINAL",
+          "bars": 14,
+          "lengthSeconds": 27.345,
+          "barWindowSeconds": 26.656,
+          "character": "musical outro, rides out",
+          "tiers": {
+            "tier0": "song2/s2-outro-tier0.opus",
+            "tier1": "song2/s2-outro-tier1.opus",
+            "tier2": "song2/s2-outro-tier2.opus"
+          }
+        }
+      ],
+      "sfx": {
+        "drop": "song2/sfx-drop.opus",
+        "move": "song2/sfx-move.opus",
+        "rotate": "song2/sfx-rotate.opus",
+        "softdrop": "song2/sfx-softdrop.opus",
+        "stage": "song2/sfx-stage.opus"
+      }
+    }
+  ]
+}

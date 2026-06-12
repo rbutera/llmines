@@ -308,22 +308,20 @@ async function settle() {
   runDueUpTo(mockState.now);
 }
 
-async function freshEngine(mix: "A" | "B" | "C" = "B") {
+async function freshEngine() {
   (globalThis as unknown as { window?: object }).window = globalThis;
   installFetch();
   const e = new InteractiveAudioEngine();
-  e.setPreset(mix);
   await e.unlock();
   await settle();
   return e;
 }
 
 /** Spin up an engine on a custom manifest (for N-tier / advance-into-unloaded tests). */
-async function freshEngineWith(manifest: unknown, mix: "A" | "B" | "C" = "B") {
+async function freshEngineWith(manifest: unknown) {
   (globalThis as unknown as { window?: object }).window = globalThis;
   installFetch(manifest);
   const e = new InteractiveAudioEngine();
-  e.setPreset(mix);
   await e.unlock();
   await settle();
   return e;
@@ -388,7 +386,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
   });
 
   it("loads the manifest, enters intro at tier1 (energy floor, never silent)", async () => {
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     const s = e.getAudioState();
     expect(s.segmentCount).toBe(4);
     expect(s.segmentIndex).toBe(0);
@@ -402,7 +400,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
   });
 
   it("a tier change happens ONLY on a loop boundary, ramp starts on a bar multiple", async () => {
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     expect(e.getAudioState().tier).toBe(1);
     // score enough to arm tier 1->2 (preset B addThreshold[1] = 9).
     for (let i = 0; i < 6; i++) clear(e, 2); // weight 4 each -> 24 in-pass
@@ -426,7 +424,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
   it("VERTICAL: clearing RAISES the cumulative tier (intensity → tier), bar-aligned", async () => {
     // intro enters at the energy floor (tier1). Pour score in: intensity climbs,
     // and the NEXT boundary arms round(intensity) and crossfades up to it.
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     expect(e.getAudioState().tier).toBe(1);
     const i0 = e.getAudioState().intensity;
     for (let i = 0; i < 8; i++) clear(e, 2); // weight 4 each -> intensity climbs hard
@@ -454,7 +452,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
     // score. NB each boundary also ADVANCES the segment (autonomous timeline), so this
     // measures intensity decay across an advancing timeline — not an in-place tier swap
     // on one frozen segment (the engine no longer does in-place swaps).
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     for (let i = 0; i < 8; i++) clear(e, 2);
     loopBoundary();
     await settle();
@@ -475,7 +473,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
   });
 
   it("HORIZONTAL: the segment advances AUTONOMOUSLY on the clock, WITHOUT any clears", async () => {
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     expect(e.getAudioState().segmentIndex).toBe(0);
     // No clears at all — the timeline must still advance on its own musical clock.
     loopBoundary();
@@ -488,7 +486,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
   });
 
   it("HORIZONTAL: advances exactly ONE segment per boundary (no fast-forward, even on a burst)", async () => {
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     const before = e.getAudioState().segmentIndex;
     // a massive burst must not skip segments — the clock advances one step per bar.
     e.fire({ type: "chain", size: 8 });
@@ -500,7 +498,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
   });
 
   it("HORIZONTAL: forward-only ordering, looping back to segment 0 at the end", async () => {
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     const count = e.getAudioState().segmentCount; // 4 in the test manifest
     const seen: number[] = [e.getAudioState().segmentIndex];
     // walk well past the end so we observe the loop-back to 0.
@@ -522,7 +520,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
   });
 
   it("no-hiss: active bed players stay <= 2 throughout a full autonomous play-through", async () => {
-    const e = await freshEngine("C");
+    const e = await freshEngine();
     let maxStems = 0;
     for (let k = 0; k < 16; k++) {
       for (let i = 0; i < 4; i++) clear(e, 2);
@@ -535,7 +533,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
   });
 
   it("onSongComplete fires exactly once when the timeline first reaches the last segment", async () => {
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     let calls = 0;
     e.onSongComplete = () => {
       calls++;
@@ -558,7 +556,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
   });
 
   it("looping players loop the SPILL-FREE bar window, not the full file (Blocker 1)", async () => {
-    await freshEngine("B");
+    await freshEngine();
     await settle();
     // every loaded tier player set loopEnd = barWindowSeconds (= bars * SEC_PER_BAR),
     // NEVER the file lengthSeconds (which carries the spill tail on non-LOOPER).
@@ -571,7 +569,7 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
   });
 
   it("the loop tick is a self-rescheduling one-shot on the bar-window grid (not scheduleRepeat)", async () => {
-    await freshEngine("B");
+    await freshEngine();
     await settle();
     // exactly one pending loop tick (a numeric-time one-shot), at a multiple of the
     // bar window — proves the self-rescheduling scheduleOnce model on the wrap grid.
@@ -654,21 +652,21 @@ describe("long-segment progression (showstopper regression)", () => {
 // robins across N players and monotonic-nudges the start time so hits overlap.
 describe("SFX voice pool (no machine-gun stutter)", () => {
   it("rapid same-type fires spread across pooled voices with increasing start times", async () => {
-    const e = await freshEngine("C"); // preset C routes `move` to the "move" SFX
+    const e = await freshEngine(); // routing maps `rotate` to the "rotate" SFX
     // first fire lazy-loads the pool; settle so the voices exist.
-    e.fire({ type: "move" });
+    e.fire({ type: "rotate" });
     await settle();
     const moveVoices = mockState.players.filter((p) =>
-      p.url.includes("sfx-move"),
+      p.url.includes("sfx-rotate"),
     );
     // a POOL of voices, not a single shared player.
     expect(moveVoices.length).toBeGreaterThan(1);
 
     // fire a burst of same-type actions on the SAME tick (mockState.now fixed).
-    for (let i = 0; i < 8; i++) e.fire({ type: "move" });
+    for (let i = 0; i < 8; i++) e.fire({ type: "rotate" });
     await settle();
 
-    // collect every scheduled start across all move voices.
+    // collect every scheduled start across all rotate voices.
     const starts = moveVoices.flatMap((p) => p.starts).sort((a, b) => a - b);
     expect(starts.length).toBeGreaterThanOrEqual(8);
     // no two starts collide (strictly increasing after the monotonic-nudge) — the
@@ -681,7 +679,7 @@ describe("SFX voice pool (no machine-gun stutter)", () => {
 
 describe("switchTrack (skin swap) on the manifest model", () => {
   it("swaps the live song, keeps a bed audible, updates BPM, bounds players", async () => {
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     expect(e.getAudioState().trackId).toBe("song1");
     await e.switchTrack({ id: "song2", base: "/audio/song2" });
     await settle();
@@ -694,7 +692,7 @@ describe("switchTrack (skin swap) on the manifest model", () => {
   });
 
   it("switching to the SAME track is a no-op", async () => {
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     const before = e.getAudioState().trackId;
     await e.switchTrack({ id: "song1", base: "/audio" });
     await settle();
@@ -702,7 +700,7 @@ describe("switchTrack (skin swap) on the manifest model", () => {
   });
 
   it("resolves a skin track by base dir when the id differs (pipeline -> song2)", async () => {
-    const e = await freshEngine("B");
+    const e = await freshEngine();
     await e.switchTrack({ id: "pipeline", base: "/audio/song2" });
     await settle();
     // resolved to song2 by base dir; track id reflects the requested skin id.

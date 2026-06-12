@@ -11,11 +11,6 @@ import {
 } from "../core";
 import { InteractiveAudioEngine } from "../audio/procedural/engine";
 import { AudioEventDeriver } from "../audio/procedural/events";
-import {
-  type AudioMix,
-  asAudioMix,
-  DEFAULT_MIX,
-} from "../audio/procedural/presets";
 import { GameController, type RenderState } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
@@ -31,9 +26,6 @@ import { PlayHud, StartView } from "./hud/screens";
 import { LeaderboardOverlay, UsernameSelect } from "./hud/account-screens";
 
 type Phase = "start" | "playing" | "gameover";
-
-/** localStorage key for the selected audio mix preset (A/B/C). */
-const AUDIO_MIX_KEY = "llmines.audioMix";
 
 /**
  * Top-level client component: owns the single GameController, the phase machine
@@ -64,9 +56,8 @@ export function GameShell() {
   // renderer's Audio panel and this slider share one source of truth.
   const [musicVolume, setMusicVolume] = useState(0.5);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  // Interactive audio: mute toggle + the selectable mix preset (A/B/C).
+  // Interactive audio: mute toggle.
   const [muted, setMuted] = useState(false);
-  const [audioMix, setAudioMix] = useState<AudioMix>(DEFAULT_MIX);
 
   // Purely-presentational juice state, bumped from REAL render events (never a
   // timer): scoreKey replays the score pop, clearKey/multKey fire the chain
@@ -365,12 +356,9 @@ export function GameShell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, controlsOpen]);
 
-  // Load the persisted music volume + audio mix once on mount.
+  // Load the persisted music volume once on mount.
   useEffect(() => {
     setMusicVolume(loadSettings().musicVolume);
-    if (typeof window !== "undefined") {
-      setAudioMix(asAudioMix(window.localStorage.getItem(AUDIO_MIX_KEY)));
-    }
   }, []);
 
   // Apply the volume to the interactive engine. (Audio-wiring — identical v2.5.)
@@ -383,14 +371,6 @@ export function GameShell() {
   useEffect(() => {
     audioEngineRef.current?.setMuted(muted);
   }, [muted]);
-
-  // Apply the selected mix preset to the engine + persist it. (Audio-wiring.)
-  useEffect(() => {
-    audioEngineRef.current?.setPreset(audioMix);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(AUDIO_MIX_KEY, audioMix);
-    }
-  }, [audioMix]);
 
   const handleVolumeChange = useCallback((v: number) => {
     const clamped = Math.max(0, Math.min(1, v));
@@ -410,7 +390,6 @@ export function GameShell() {
     void audioEngineRef.current?.unlock().then(() => {
       audioEngineRef.current?.setVolume(musicVolume);
       audioEngineRef.current?.setMuted(muted);
-      audioEngineRef.current?.setPreset(audioMix);
     });
     setScore(0);
     setPaused(false);
@@ -425,7 +404,7 @@ export function GameShell() {
     setBeat(1);
     controller.start();
     setPhase("playing");
-  }, [controller, musicVolume, muted, audioMix, skinSwitch.skin]);
+  }, [controller, musicVolume, muted, skinSwitch.skin]);
 
   const handleRestart = useCallback(() => {
     if (!controller) return;
@@ -573,8 +552,6 @@ export function GameShell() {
           onVolumeChange={handleVolumeChange}
           muted={muted}
           onToggleMute={() => setMuted((m) => !m)}
-          audioMix={audioMix}
-          onMixChange={setAudioMix}
           skinId={skinSwitch.skin.id}
           onSelectSkin={(id) => skinSwitch.setSkin(id)}
         />

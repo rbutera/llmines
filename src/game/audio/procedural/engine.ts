@@ -33,14 +33,7 @@
  */
 
 import * as Tone from "tone";
-import {
-  type AudioMix,
-  type AudioPreset,
-  DEFAULT_MIX,
-  PRESETS,
-  routeEvent,
-  type SfxName,
-} from "./presets";
+import { routeEvent, type SfxName } from "./sfxRouting";
 
 /** Fallback BPM until a manifest is read. */
 const FALLBACK_BPM = 110;
@@ -194,8 +187,8 @@ function sfxUrlFor(
   base: string,
 ): string | undefined {
   if (!sfx) return undefined;
-  // presets call hard-drop "harddrop"; the manifest names it "drop". Every other
-  // SfxName is also a ManifestSfx key, so this maps the one mismatch.
+  // The SFX routing calls hard-drop "harddrop"; the manifest names it "drop". Every
+  // other SfxName is also a ManifestSfx key, so this maps the one mismatch.
   const key: keyof ManifestSfx = name === "harddrop" ? "drop" : name;
   const rel = sfx[key];
   return rel ? `${base}/${rel}` : undefined;
@@ -218,12 +211,6 @@ export class InteractiveAudioEngine {
   private started = false;
   private muted = false;
   private volume = 0.5;
-  /**
-   * Retained only to keep the SFX routing (events.ts feeds AudioEvents; the preset
-   * maps actions → one-shots). Advancement is NO LONGER gated by the preset — the
-   * timeline is autonomous (Wave 1). Wave 2 removes presets entirely.
-   */
-  private preset: AudioPreset = PRESETS[DEFAULT_MIX];
   private bpm = FALLBACK_BPM;
 
   private master?: Tone.Gain;
@@ -277,19 +264,6 @@ export class InteractiveAudioEngine {
   private songCompleted = false;
 
   // ── public config ───────────────────────────────────────────────────────────
-
-  /**
-   * @deprecated Wave-1 stub. The autonomous timeline no longer uses a preset to gate
-   * advancement; only the SFX routing reads it. Wave 2 deletes presets entirely.
-   */
-  setPreset(mix: AudioMix): void {
-    this.preset = PRESETS[mix];
-  }
-
-  /** @deprecated Wave-1 stub (see {@link setPreset}). */
-  getPreset(): AudioMix {
-    return this.preset.mix;
-  }
 
   setInitialTrack(track: TrackBundle): boolean {
     if (this.started) return false;
@@ -903,7 +877,7 @@ export class InteractiveAudioEngine {
       this.onScore(2 + Math.min(8, ev.size));
       return;
     }
-    const route = routeEvent(this.preset, ev);
+    const route = routeEvent(ev);
     if (route.sfx) this.playSfx(route.sfx, time, 0.85);
   }
 

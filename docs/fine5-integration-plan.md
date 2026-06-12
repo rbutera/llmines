@@ -28,6 +28,14 @@ Goal: make the actual game play the **approved FINE5 audio model**, deploy to ll
 3. Update `GameShell.tsx` to the new engine API (drive `intensity` from clear events; no preset prop).
 **Acceptance:** zero references to `AudioMix`/`Preset`/mix A/B/C in `src/`; no dead exports; UI has no mix selector; build has no unused-symbol errors.
 
+### Wave 2 precise targets (recon, 2026-06-12)
+- **`scale.ts` IS dead** — only `scale.test.ts` imports `./scale` (the render3d "scale" hits are CSS/3D transforms). Safe to delete `scale.ts` + `scale.test.ts`.
+- **Preset removal is a REFACTOR, not a delete.** `presets.ts` mixes two concerns: (a) the A/B/C mix system (REMOVE), (b) the SFX action→sound routing (KEEP, preset-free). Split them:
+  - REMOVE: `AudioMix`, `PRESETS`, `DEFAULT_MIX`, `asAudioMix`, `PresetCurve`, `UnlockCurve`, `AudioPreset`, the 3 mixes/curves; `setPreset`/`getPreset` from engine.ts; the mix-selector UI.
+  - KEEP (move to a small preset-free module, e.g. `sfxRouting.ts`): `SfxName`, `VoiceRouting`, and a single fixed action→SFX map replacing `routeEvent(preset, ev)`. The engine's SFX fire path must keep working.
+- **UI removal surface:** `GameShell.tsx` (lines ~15-18 imports, ~35 AUDIO_MIX_KEY, ~67-69 audioMix state, ~372 localStorage read, ~389 & ~413 `setPreset` calls, ~577 `onMixChange`); `hud/overlays.tsx` (lines 7, 34-35 AudioMix prop); `hud/SettingsBlock.tsx` (lines 9, 13 `MIXES=["A","B","C"]`, 29-30, 84 the "Audio mix preset" `<div role=group>` selector). Remove the selector entirely.
+- **Manifest promotion:** swap served `/audio/manifest.json` → the fine5 cut (song1 4-tier / song2 5-tier). Preserve the old 3-tier `wave1-native-4layer` set as `_wave1_old/`. Engine is already tier-count-agnostic (Wave 1), so no engine change needed — just the asset/path swap + confirm `resolveSong`/`ASSET_BASE` point at it.
+
 ## Wave 3 — Tests + build green
 1. Rewrite `engine.integration.test.ts` for the new model: assert autonomous advance (segment advances on the clock without clears), N-tier intensity crossfade (intensity up → higher tier, bar-aligned), forward-only position, song-end loop/switch, SFX pool unchanged. Delete `presets.test.ts` (and `scale.test.ts` if scale removed).
 2. Gates green: `npx vitest run`; `npm run typecheck`; `npm run lint`; `npm run build`; `npm run test:e2e:production-start`.

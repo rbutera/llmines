@@ -4,7 +4,6 @@
  * background tab can never leave the panel stuck invisible.
  */
 
-import type { AudioMix } from "../../audio/procedural/presets";
 import { Cheatsheet, Corners, fmt } from "./atoms";
 import { SettingsBlock } from "./SettingsBlock";
 
@@ -20,8 +19,6 @@ export function PauseOverlay({
   onVolumeChange,
   muted,
   onToggleMute,
-  audioMix,
-  onMixChange,
   skinId,
   onSelectSkin,
 }: {
@@ -31,8 +28,6 @@ export function PauseOverlay({
   onVolumeChange: (v: number) => void;
   muted: boolean;
   onToggleMute: () => void;
-  audioMix: AudioMix;
-  onMixChange: (m: AudioMix) => void;
   skinId: string;
   onSelectSkin: (id: string) => void;
 }) {
@@ -62,8 +57,6 @@ export function PauseOverlay({
           onVolumeChange={onVolumeChange}
           muted={muted}
           onToggleMute={onToggleMute}
-          audioMix={audioMix}
-          onMixChange={onMixChange}
           skinId={skinId}
           onSelectSkin={onSelectSkin}
         />

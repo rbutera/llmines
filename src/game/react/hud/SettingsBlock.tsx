@@ -1,24 +1,18 @@
 /**
- * Shared cockpit settings block — master volume, audio mute + A/B/C mix, and
- * skin swatches. Used inside the pause overlay. Wires straight to the existing
- * GameShell state (musicVolume / muted / audioMix / skin), so changing anything
- * here drives the live engine + the whole-scene re-tint exactly as the always-on
- * controls did.
+ * Shared cockpit settings block — master volume, audio mute, and skin swatches.
+ * Used inside the pause overlay. Wires straight to the existing GameShell state
+ * (musicVolume / muted / skin), so changing anything here drives the live engine +
+ * the whole-scene re-tint exactly as the always-on controls did.
  */
 
-import { type AudioMix, PRESETS } from "../../audio/procedural/presets";
 import { SKINS } from "../../skins/skins";
 import { hudHueForSkin } from "../../theme/tokens";
-
-const MIXES: readonly AudioMix[] = ["A", "B", "C"];
 
 export function SettingsBlock({
   musicVolume,
   onVolumeChange,
   muted,
   onToggleMute,
-  audioMix,
-  onMixChange,
   skinId,
   onSelectSkin,
 }: {
@@ -26,8 +20,6 @@ export function SettingsBlock({
   onVolumeChange: (v: number) => void;
   muted: boolean;
   onToggleMute: () => void;
-  audioMix: AudioMix;
-  onMixChange: (m: AudioMix) => void;
   skinId: string;
   onSelectSkin: (id: string) => void;
 }) {
@@ -59,7 +51,7 @@ export function SettingsBlock({
         />
       </div>
 
-      {/* Audio: mute + A/B/C mix */}
+      {/* Audio: mute */}
       <div
         style={{
           display: "flex",
@@ -81,26 +73,6 @@ export function SettingsBlock({
           >
             {muted ? "🔇" : "🔊"}
           </button>
-          <div className="seg" role="group" aria-label="Audio mix preset">
-            {MIXES.map((m) => (
-              <button
-                key={m}
-                type="button"
-                aria-pressed={audioMix === m}
-                aria-label={`Audio mix ${PRESETS[m].label}`}
-                className={audioMix === m ? "on" : ""}
-                onClick={() => onMixChange(m)}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-          <span
-            className="cap-tight"
-            style={{ fontSize: 10, color: "var(--ink-faint)", width: 64 }}
-          >
-            {PRESETS[audioMix].label.replace(/^[A-C]\s*·\s*/, "")}
-          </span>
         </div>
       </div>
 
