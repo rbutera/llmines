@@ -19,10 +19,12 @@
  *    Forward-only. At the last segment it loops back to segment 0. Clears NEVER move
  *    the position.
  *  - VERTICAL (cumulative intensity) is GAMEPLAY-DRIVEN. A continuous `intensity`
- *    (0..maxTier) is RAISED by clear events and DECAYS slowly on a dry spell. At each
- *    bar boundary the armed tier = round(intensity) clamped to the segment's available
- *    tiers, and the engine equal-power-crossfades the cumulative tier file to it.
- *    Clearing makes the song FULLER, never changes the segment.
+ *    (0..maxTier) is RAISED by clear events and DECAYS slowly on a dry spell. Each
+ *    segment is ENTERED at the tier = round(intensity) clamped to its available tiers,
+ *    crossfaded in from the previous segment's tier with a constant-sum (linear)
+ *    crossfade — correct for these CUMULATIVE renders (the shared bed stays at full
+ *    through the fade; true equal-power would +3dB-bump the shared bed). Clearing makes
+ *    the song FULLER on the next segment entry, never changes the segment.
  *
  * SSR-safe: nothing touches Tone until {@link InteractiveAudioEngine.unlock} runs on
  * a real user gesture (Start). Every Tone call is guarded so a failure degrades to
@@ -44,7 +46,11 @@ import {
 const FALLBACK_BPM = 110;
 /** Default base path for the audio assets + the single manifest. */
 const ASSET_BASE = "/audio";
-/** Equal-power tier/segment crossfade duration (seconds). */
+/**
+ * Tier/segment crossfade duration (seconds). The crossfade is constant-sum (linear) —
+ * correct for the CUMULATIVE tier renders (the shared bed stays at full through the
+ * fade); true equal-power would +3dB-bump the shared bed.
+ */
 const XFADE_S = 0.4;
 /** A near-instant ramp (used for fresh bed entry). */
 const SNAP_S = 0.012;
@@ -239,14 +245,18 @@ export class InteractiveAudioEngine {
   /** The tier armed for the next boundary swap. */
   private armedTier: Tier = 0;
   /**
+   * The tier the active segment SHOULD be audible at (from the last enterSegment). Used
+   * to reconcile gain when a segment's players finish loading AFTER it became active
+   * (advance-into-unloaded), so the segment isn't silent for its window.
+   */
+  private targetTier: Tier = 0;
+  /**
    * Continuous gameplay intensity, range [0, maxTier]. RAISED by onScore, DECAYS per
    * bar on a dry spell. The armed tier = round(intensity) clamped to availability.
    */
   private intensity = 0;
   /** Score banked since the last bar boundary (drives the decay-vs-hold decision). */
   private scoreSinceLastPass = 0;
-  /** A tier crossfade is mid-flight (between two tier files of the same segment). */
-  private tierFading = false;
 
   // ── HORIZONTAL (autonomous timeline) state ───────────────────────────────────
   /** A segment hand-off crossfade is mid-flight. */
@@ -254,6 +264,12 @@ export class InteractiveAudioEngine {
   private transitionToken = 0;
   /** Transport event ids scheduled for the active loop quantize (cancelled on reset). */
   private scheduledEvents: number[] = [];
+  /**
+   * Transport event ids for in-flight settle callbacks (disposals / state resets).
+   * SEPARATE from `scheduledEvents` so a loop-tick reschedule (`clearScheduled`) can't
+   * cancel a pending disposal or reset (Blocker 3). Cleared only on full teardown.
+   */
+  private settleEvents: number[] = [];
   /** Generation token for the self-rescheduling loop tick (bumped on every reschedule). */
   private loopTickGen = 0;
 
@@ -500,6 +516,10 @@ export class InteractiveAudioEngine {
         }
       }),
     );
+    // If this segment became active before its players finished loading (advance-into-
+    // unloaded / loop-back onto a disposed seg), the entry ramp landed on undefined
+    // gains. Now the players exist — re-apply the target tier so it isn't silent.
+    this.reconcileActiveGain(index);
   }
 
   /**
@@ -629,7 +649,9 @@ export class InteractiveAudioEngine {
     this.tier = startTier;
     this.armedTier = startTier;
     this.scoreSinceLastPass = 0;
-    this.tierFading = false;
+    // Record what this segment SHOULD sound at, so a tier whose player loads AFTER
+    // entry (advance-into-unloaded) can be reconciled up to target when it arrives.
+    this.targetTier = startTier;
 
     // Gain up exactly the start tier; everything else hard-zero, anchored at the same
     // boundary the caller faded the old segment OUT (so the cross is symmetric).
@@ -637,6 +659,44 @@ export class InteractiveAudioEngine {
     for (let t = 0; t < seg.tierGains.length; t++) {
       const target = t === startTier ? 1 : 0;
       this.rampGain(seg.tierGains[t], target, fresh ? SNAP_S : XFADE_S, at);
+    }
+  }
+
+  /**
+   * Post-load re-gain reconciliation (Blocker 2). If a segment is advanced into before
+   * its players have finished loading, `enterSegment` ramps a tier gain that is still
+   * `undefined` (a no-op) and `startTierPlayer` later starts the player at gain 0 — the
+   * segment would then play SILENT for its whole window. When a segment's load resolves,
+   * if it is still the active segment, re-apply its target tier gain so it becomes
+   * audible (clamped to whatever tiers actually loaded). Never falls back to silence.
+   */
+  private reconcileActiveGain(index: number): void {
+    if (this.switching) return; // switchTrack handles its own intro entry explicitly
+    if (index !== this.segmentIndex) return; // a later advance superseded this segment
+    const seg = this.segments[index];
+    if (!seg) return;
+    const top = this.maxTier(seg);
+    let want = Math.max(0, Math.min(top, this.targetTier));
+    want = this.nearestAvailableAtOrBelow(seg, want);
+    // If the audible tier is already gained up, nothing to do.
+    if (this.tier === want && this.readGain(seg.tierGains[want]) > 0.5) return;
+    // Ramp the wanted tier up and any stray non-target tier down (in case an earlier
+    // partial entry left a different tier gained).
+    const at = this.toneNow();
+    for (let t = 0; t < seg.tierGains.length; t++) {
+      const target = t === want ? 1 : 0;
+      this.rampGain(seg.tierGains[t], target, SNAP_S, at);
+    }
+    this.tier = want;
+    this.armedTier = want;
+  }
+
+  /** Read a gain's current value, defensively (0 if missing/throwing). */
+  private readGain(g: Tone.Gain | undefined): number {
+    try {
+      return g ? g.gain.value : 0;
+    } catch {
+      return 0;
     }
   }
 
@@ -721,7 +781,12 @@ export class InteractiveAudioEngine {
   /**
    * Fired at the active segment's loop boundary — the ONLY place a tier swaps or a
    * segment advances. AUTONOMOUS model:
-   *  1) VERTICAL: decay/hold intensity, arm round(intensity), crossfade the tier.
+   *  1) VERTICAL: decay/hold intensity for this pass. The audible tier is NOT swapped
+   *     in place on the active segment — that segment is about to be faded out and
+   *     disposed by advanceSegment, so an in-place swap would ramp gains on a dying
+   *     node (never heard) and double-ramp what advanceSegment then fades to 0. The
+   *     intensity carries forward and `enterSegment` sets the NEXT segment's audible
+   *     tier from round(intensity) on entry.
    *  2) HORIZONTAL: advance to the next segment IN ORDER (forward-only, looping at
    *     the end), unconditionally — the timeline runs on the musical clock, not clears.
    * `time` is the boundary's audio-clock time.
@@ -730,46 +795,17 @@ export class InteractiveAudioEngine {
     const seg = this.active();
     if (!seg) return;
 
-    // 1) VERTICAL: update continuous intensity for this pass, then swap the tier.
+    // 1) VERTICAL: update continuous intensity for this pass. intensity → tier is
+    // applied by enterSegment on the segment we're about to advance into; no in-place
+    // swap on the outgoing segment (see method doc).
     if (this.scoreSinceLastPass <= 0) {
       // dry spell — decay slowly toward the bed.
       this.intensity = Math.max(0, this.intensity - INTENSITY_DECAY_PER_BAR);
     }
     this.scoreSinceLastPass = 0;
 
-    this.evaluateTier(seg);
-    if (this.armedTier !== this.tier) {
-      this.swapTier(seg, this.armedTier, time);
-    }
-
     // 2) HORIZONTAL: advance the timeline on its own clock (autonomous, forward-only).
     this.advanceSegment(time);
-  }
-
-  /** Arm the tier for the upcoming swap from continuous intensity. */
-  private evaluateTier(seg: LoadedSegment): void {
-    if (this.tierFading) return; // don't re-arm mid-fade
-    const top = this.maxTier(seg);
-    let armed = Math.round(this.intensity);
-    armed = Math.max(0, Math.min(top, armed));
-    // never arm a tier whose file failed to load — fall to the nearest loaded ≤ it.
-    armed = this.nearestAvailableAtOrBelow(seg, armed);
-    this.armedTier = armed;
-  }
-
-  /** Equal-power crossfade from the current tier file to `to` on this boundary. */
-  private swapTier(seg: LoadedSegment, to: Tier, at: number): void {
-    if (to === this.tier) return;
-    const from = this.tier;
-    this.tierFading = true;
-    // equal-power: the tiers are CUMULATIVE renders of the same bed, so a linear
-    // crossfade reads as a smooth blend (the shared bed stays at full through the swap).
-    this.rampGain(seg.tierGains[from], 0, XFADE_S, at);
-    this.rampGain(seg.tierGains[to], 1, XFADE_S, at);
-    this.tier = to;
-    this.afterSettle(at + XFADE_S + 0.02, () => {
-      this.tierFading = false;
-    });
   }
 
   // ── horizontal autonomous advance ────────────────────────────────────────────
@@ -875,12 +911,21 @@ export class InteractiveAudioEngine {
    * Raise the continuous intensity (VERTICAL). Clamped to the active segment's tier
    * ceiling. Banks the per-pass score so the boundary tick knows it wasn't a dry pass
    * (no decay this bar). Clearing makes the song FULLER; it NEVER moves the segment.
+   *
+   * Defends against a non-finite weight (an upstream bug feeding NaN/Infinity squares,
+   * combo, or size): NaN would poison `intensity` and `round(NaN)` would permanently
+   * corrupt the armed tier. A non-finite weight is ignored; intensity is re-clamped to
+   * a finite value defensively.
    */
   private onScore(weight: number): void {
     if (this.segments.length === 0) return;
+    if (!Number.isFinite(weight)) return; // ignore a poisoned weight
     this.scoreSinceLastPass += weight;
     const top = this.maxTier(this.active());
-    this.intensity = Math.max(0, Math.min(top, this.intensity + weight * INTENSITY_PER_SCORE));
+    const next = this.intensity + weight * INTENSITY_PER_SCORE;
+    this.intensity = Number.isFinite(next)
+      ? Math.max(0, Math.min(top, next))
+      : Math.max(0, Math.min(top, this.intensity));
   }
 
   // ── Layer-4 SFX (lazy voice POOL per name, loaded per active song) ──────────
@@ -981,14 +1026,21 @@ export class InteractiveAudioEngine {
   /** Run `fn` after audio-clock time `at` (transport callback + setTimeout fallback). */
   private afterSettle(at: number, fn: () => void): void {
     let ran = false;
+    let settleId: number | undefined;
     const once = () => {
       if (ran) return;
       ran = true;
+      if (settleId != null) {
+        const i = this.settleEvents.indexOf(settleId);
+        if (i >= 0) this.settleEvents.splice(i, 1);
+      }
       fn();
     };
     try {
-      const id = Tone.getTransport().scheduleOnce(() => once(), at);
-      this.scheduledEvents.push(id);
+      settleId = Tone.getTransport().scheduleOnce(() => once(), at);
+      // settle ids live in their OWN array so a loop-tick reschedule (clearScheduled)
+      // can't cancel a pending disposal / state reset.
+      this.settleEvents.push(settleId);
     } catch {
       // fall through to setTimeout
     }
@@ -1009,9 +1061,11 @@ export class InteractiveAudioEngine {
   // ── live track switch (skin swap) ────────────────────────────────────────────
 
   /**
-   * Live-swap the soundtrack: load the new song's intro, bar-aligned equal-power
-   * bed crossfade, dispose the old bank. Invalidates any in-flight transition.
-   * Self-guarded so a failed switch keeps the old song running (never silence).
+   * Live-swap the soundtrack: load the new song's intro, bar-aligned constant-sum
+   * (linear) bed crossfade — correct for the cumulative renders (the shared bed stays
+   * at full; true equal-power would +3dB-bump it) — dispose the old bank. Invalidates
+   * any in-flight transition. Self-guarded so a failed switch keeps the old song
+   * running (never silence).
    */
   async switchTrack(track: TrackBundle, seconds = 1.5): Promise<void> {
     if (typeof window === "undefined") return;
@@ -1180,9 +1234,10 @@ export class InteractiveAudioEngine {
     this.maxSegmentReached = 0;
     this.tier = 0;
     this.armedTier = 0;
+    this.targetTier = 0;
     this.intensity = 0;
     this.scoreSinceLastPass = 0;
-    this.tierFading = false;
+    this.settleEvents = [];
     this.songCompleted = false;
     this.started = false;
   }

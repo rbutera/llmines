@@ -39,6 +39,13 @@ const mockState = vi.hoisted(() => ({
   /** every FakePlayer constructed, for loopEnd / SFX-pool assertions. */
   players: [] as { url: string; loopEnd: number; starts: number[] }[],
   nextId: 1,
+  /**
+   * When true, a FakePlayer does NOT fire onload immediately; its onload is parked in
+   * `deferredOnloads` so a test can simulate a segment that hasn't finished loading at
+   * advance time, then release the loads (Blocker 2 — advance-into-unloaded).
+   */
+  deferLoads: false,
+  deferredOnloads: [] as Array<() => void>,
 }));
 
 vi.mock("tone", () => {
@@ -93,7 +100,13 @@ vi.mock("tone", () => {
     }) {
       this.url = opts.url;
       mockState.players.push(this);
-      queueMicrotask(() => opts.onload?.());
+      const fire = () => opts.onload?.();
+      if (mockState.deferLoads) {
+        // park the onload so a test can simulate "not loaded yet" then release it.
+        mockState.deferredOnloads.push(() => queueMicrotask(fire));
+      } else {
+        queueMicrotask(fire);
+      }
     }
     connect() {
       return this;
@@ -305,6 +318,45 @@ async function freshEngine(mix: "A" | "B" | "C" = "B") {
   return e;
 }
 
+/** Spin up an engine on a custom manifest (for N-tier / advance-into-unloaded tests). */
+async function freshEngineWith(manifest: unknown, mix: "A" | "B" | "C" = "B") {
+  (globalThis as unknown as { window?: object }).window = globalThis;
+  installFetch(manifest);
+  const e = new InteractiveAudioEngine();
+  e.setPreset(mix);
+  await e.unlock();
+  await settle();
+  return e;
+}
+
+/** A single-song manifest whose segments each carry `tierCount` cumulative tiers. */
+function nTierManifest(id: string, tierCount: number, segCount = 4) {
+  const types = ["LOOPER", "PROGRESSION", "LOOPER", "TERMINAL"];
+  return {
+    version: "test-ntier",
+    songs: [
+      {
+        id,
+        title: `${id} (${tierCount}-tier)`,
+        tempo: 120,
+        barSeconds: SEC_PER_BAR,
+        segments: Array.from({ length: segCount }, (_, i) =>
+          seg(`${id}-s${i}`, types[i % types.length]!, 1, tierCount),
+        ),
+        sfx: { move: "sfx-move.opus" },
+      },
+    ],
+  };
+}
+
+/** Release any deferred player onloads (Blocker 2 test) so their loads now resolve. */
+async function releaseDeferredLoads() {
+  mockState.deferLoads = false;
+  const parked = mockState.deferredOnloads.splice(0);
+  for (const fire of parked) fire();
+  await settle();
+}
+
 beforeEach(() => {
   mockState.now = 0;
   mockState.bpm = 110;
@@ -312,11 +364,15 @@ beforeEach(() => {
   mockState.rampStarts = [];
   mockState.players = [];
   mockState.nextId = 1;
+  mockState.deferLoads = false;
+  mockState.deferredOnloads = [];
 });
 
 afterEach(() => {
   mockState.pending = [];
   mockState.players = [];
+  mockState.deferLoads = false;
+  mockState.deferredOnloads = [];
 });
 
 describe("manifest-driven 4-layer loop-quantized engine", () => {
@@ -392,17 +448,21 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
     }
   });
 
-  it("VERTICAL: a dry spell DECAYS intensity (the song thins toward the bed)", async () => {
-    // Push intensity up, then go dry: each boundary decays it, so the tier sheds back
-    // down toward the bed over several passes (no clear ever changes the segment).
+  it("VERTICAL: intensity DECAYS monotonically across dry passes (no clear ever raises it)", async () => {
+    // Push intensity up, then go dry. The metered quantity is INTENSITY (continuous
+    // gameplay energy), which is decayed once per loop-boundary pass with no qualifying
+    // score. NB each boundary also ADVANCES the segment (autonomous timeline), so this
+    // measures intensity decay across an advancing timeline — not an in-place tier swap
+    // on one frozen segment (the engine no longer does in-place swaps).
     const e = await freshEngine("B");
     for (let i = 0; i < 8; i++) clear(e, 2);
     loopBoundary();
     await settle();
     const hot = e.getAudioState();
-    expect(hot.tier).toBe(2); // climbed to the top tier
+    expect(hot.tier).toBe(2); // entered the next segment at its top tier (intensity high)
+    const hotIntensity = hot.intensity;
     // Now go DRY for many bars; intensity decays monotonically toward 0.
-    let prev = hot.intensity;
+    let prev = hotIntensity;
     for (let p = 0; p < 6; p++) {
       loopBoundary();
       await settle();
@@ -410,8 +470,8 @@ describe("manifest-driven 4-layer loop-quantized engine", () => {
       expect(now).toBeLessThanOrEqual(prev + 1e-9); // never rises on a dry pass
       prev = now;
     }
-    // it shed at least one tier off the top on the sustained dry spell.
-    expect(e.getAudioState().tier).toBeLessThan(hot.tier);
+    // the sustained dry spell shed real intensity off the hot peak.
+    expect(e.getAudioState().intensity).toBeLessThan(hotIntensity);
   });
 
   it("HORIZONTAL: the segment advances AUTONOMOUSLY on the clock, WITHOUT any clears", async () => {
@@ -648,5 +708,110 @@ describe("switchTrack (skin swap) on the manifest model", () => {
     // resolved to song2 by base dir; track id reflects the requested skin id.
     expect(e.getAudioState().trackId).toBe("pipeline");
     expect(e.getAudioState().bpm).toBeCloseTo(126, 1);
+  });
+});
+
+// ── N-tier generalization (the whole point of Wave 1) ────────────────────────────
+// Every fixture above is 3-tier; these prove the engine is genuinely tier-count-
+// agnostic — a regression to a hardcoded 2/3-tier ceiling MUST fail here.
+describe("N-tier generalization (4-tier and 5-tier segments)", () => {
+  it("reports the segment's tierCount (4-tier)", async () => {
+    const e = await freshEngineWith(nTierManifest("song4", 4));
+    expect(e.getAudioState().tierCount).toBe(4);
+  });
+
+  it("reports the segment's tierCount (5-tier)", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5));
+    expect(e.getAudioState().tierCount).toBe(5);
+  });
+
+  it("intensity can drive the tier up to tierCount-1 on a 4-tier segment (reaches tier 3)", async () => {
+    const e = await freshEngineWith(nTierManifest("song4", 4));
+    expect(e.getAudioState().tierCount).toBe(4);
+    // pour score so intensity climbs well past 3; the next segment entry shows it.
+    for (let i = 0; i < 12; i++) clear(e, 4); // weight 5 each -> intensity ≫ 3
+    loopBoundary(); // advance into the next segment, entered at round(intensity)
+    await settle();
+    expect(e.getAudioState().tier).toBe(3); // top of a 4-tier segment
+    expect(e.getAudioState().tierCount).toBe(4);
+  });
+
+  it("intensity can drive the tier up to tierCount-1 on a 5-tier segment (reaches tier 4)", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5));
+    expect(e.getAudioState().tierCount).toBe(5);
+    for (let i = 0; i < 16; i++) clear(e, 4); // intensity ≫ 4
+    loopBoundary();
+    await settle();
+    expect(e.getAudioState().tier).toBe(4); // top of a 5-tier segment
+    expect(e.getAudioState().tierCount).toBe(5);
+  });
+
+  it("intensity CLAMPS at the ceiling — a 5-tier segment never shows a tier ≥ tierCount", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5));
+    // hammer score far past the ceiling; intensity must clamp and the tier must too.
+    for (let i = 0; i < 60; i++) clear(e, 4);
+    expect(e.getAudioState().intensity).toBeLessThanOrEqual(4); // clamped to top tier
+    loopBoundary();
+    await settle();
+    const s = e.getAudioState();
+    expect(s.tier).toBeLessThanOrEqual(s.tierCount - 1);
+    expect(s.tier).toBe(4);
+  });
+
+  it("switchTrack works across DIFFERENT tier counts (song1 4-tier -> song2 5-tier)", async () => {
+    const MIXED = {
+      version: "test-mixed",
+      songs: [
+        nTierManifest("song1", 4).songs[0]!,
+        nTierManifest("song2", 5).songs[0]!,
+      ],
+    };
+    const e = await freshEngineWith(MIXED);
+    expect(e.getAudioState().trackId).toBe("song1");
+    expect(e.getAudioState().tierCount).toBe(4);
+    await e.switchTrack({ id: "song2", base: "/audio/song2" });
+    await settle();
+    const s = e.getAudioState();
+    expect(s.trackId).toBe("song2");
+    expect(s.tierCount).toBe(5); // the new song's segments carry 5 tiers
+    // a bed stays audible across the swap (no-hiss bound holds on a 5-tier segment).
+    expect(s.activeStems).toBeGreaterThanOrEqual(1);
+    expect(s.activeStems).toBeLessThanOrEqual(2);
+  });
+});
+
+// ── Blocker 2: advance-into-unloaded must reconcile gain, not play silent ─────────
+describe("advance-into-unloaded segment re-gains on load (Blocker 2)", () => {
+  it("a segment advanced into BEFORE its players load becomes audible once the load resolves", async () => {
+    // Start normally so the intro is loaded + audible. (song0/seg1 was prefetched at
+    // load, so it's already resident — we must advance onto a segment whose load is
+    // deferred to reproduce the bug window.)
+    const e = await freshEngineWith(nTierManifest("song1", 4));
+    expect(e.getAudioState().activeStems).toBe(1);
+
+    // From now on, NEW player loads are parked (simulate the destination segment not
+    // having finished loading at advance time — its prefetch hasn't resolved).
+    mockState.deferLoads = true;
+
+    // Advance once: into seg 1 (already prefetched/loaded, audible). This advance also
+    // kicks the prefetch of seg 2 — which is now DEFERRED (parked, not resolved).
+    loopBoundary();
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBe(1);
+
+    // Advance again: into seg 2, whose players have NOT loaded. enterSegment ramps
+    // undefined gains (no-op): the segment is momentarily SILENT (the bug window).
+    loopBoundary();
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBe(2);
+    expect(e.getAudioState().activeStems).toBe(0); // nothing audible — the bug window
+
+    // Now the destination's load resolves. The post-load reconciliation must ramp the
+    // target tier up so the segment is audible (no fallback-to-silence).
+    await releaseDeferredLoads();
+    const s = e.getAudioState();
+    expect(s.segmentIndex).toBe(2);
+    expect(s.activeStems).toBeGreaterThanOrEqual(1); // re-gained: audible again
+    expect(s.layerGains[s.tier]).toBeGreaterThan(0.5);
   });
 });
