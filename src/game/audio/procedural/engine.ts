@@ -1,7 +1,7 @@
 /**
  * Interactive-audio ENGINE for LLMines — manifest-driven, N-tier, loop-quantized,
- * AUTONOMOUS-TIMELINE model (FINE5 Wave 1). Ports the approved soundboard model
- * (public/soundboard/progression.html) into the live engine.
+ * CLEAR-GATED model (FINE5). The player's CLEARS drive the song forward; the song
+ * does NOT advance on its own.
  *
  * ── The model in one paragraph ───────────────────────────────────────────────
  * Each song is a sequence of SEGMENTS. Every segment is pre-rendered at N CUMULATIVE
@@ -12,19 +12,26 @@
  * mechanic: at steady state exactly ONE bed player has non-zero gain (≤2 across a
  * crossfade), so the runtime never sums many stems.
  *
- * Two ORTHOGONAL progressions, both quantized to loop boundaries:
- *  - HORIZONTAL (segment timeline) is AUTONOMOUS. The song advances through its
- *    segments IN ORDER on its own musical clock — each segment plays for its bar
- *    window, then advances to the next on the bar boundary, regardless of clears.
- *    Forward-only. At the last segment it loops back to segment 0. Clears NEVER move
- *    the position.
- *  - VERTICAL (cumulative intensity) is GAMEPLAY-DRIVEN. A continuous `intensity`
- *    (0..maxTier) is RAISED by clear events and DECAYS slowly on a dry spell. Each
- *    segment is ENTERED at the tier = round(intensity) clamped to its available tiers,
- *    crossfaded in from the previous segment's tier with a constant-sum (linear)
- *    crossfade — correct for these CUMULATIVE renders (the shared bed stays at full
- *    through the fade; true equal-power would +3dB-bump the shared bed). Clearing makes
- *    the song FULLER on the next segment entry, never changes the segment.
+ * Two ORTHOGONAL progressions, both quantized to loop boundaries, BOTH driven by
+ * clears (never an autonomous clock):
+ *  - HORIZONTAL (segment advance) is CLEAR-GATED, FORWARD-ONLY, ONE-STEP,
+ *    IN-FLIGHT-LOCKED. The current segment LOOPS in place (re-plays its bar window)
+ *    while the player hasn't earned an advance. Clears accumulate a monotonic
+ *    `segmentScore`; when `segmentScore ≥ advanceThreshold` AND no transition is in
+ *    flight, the song advances to the NEXT segment on the next bar boundary. One
+ *    advance per threshold crossing — a burst can NOT fast-forward multiple segments
+ *    (the in-flight lock + per-segment reset enforce this). Never backward. Advancing
+ *    PAST the last (TERMINAL) segment fires {@link onSongComplete} (the host swaps to
+ *    the other song via switchTrack — a skin switch).
+ *  - VERTICAL (cumulative tier reveal) is CLEAR-GATED and STICKY WITHIN A SEGMENT.
+ *    As the same monotonic `segmentScore` crosses the per-tier reveal thresholds, the
+ *    audible cumulative tier rises (tier0 → tier1 → … , bar-aligned). Once a tier is
+ *    revealed it STAYS for that segment — no decay, never sheds (sticky reveal). A
+ *    FLOOR is carried into the next segment (entry tier = the tier reached in the
+ *    previous segment, clamped to the new segment's tiers) so a section never resets
+ *    to bare. Crossfades use a constant-sum (linear) ramp — correct for these
+ *    CUMULATIVE renders (the shared bed stays at full through the fade; true
+ *    equal-power would +3dB-bump the shared bed).
  *
  * SSR-safe: nothing touches Tone until {@link InteractiveAudioEngine.unlock} runs on
  * a real user gesture (Start). Every Tone call is guarded so a failure degrades to
@@ -52,27 +59,46 @@ const SFX_VOICES = 4;
 /** Min spacing between two starts on the SFX pool so Tone never sees a tie. */
 const SFX_RETRIGGER_EPSILON = 0.002;
 
-// ── intensity (VERTICAL) tuning ──────────────────────────────────────────────
+// ── clear-gated tuning (the named knobs — sized for the FINE cut) ─────────────
+//
+// The OLD failure was a threshold sized for 5 huge coarse blobs, which stranded the
+// player in one section. There are now MANY small fine segments (song1 = 12,
+// song2 = 10), so these are sized so a competent player walks the WHOLE song at a
+// musical pace: a clear feeds weight = 1 + squares + combo (≈3–5 for a typical
+// clear), so ~3–4 clears reveal one tier and ~6–8 clears earn an advance — roughly
+// one segment every couple of bar windows of steady clearing, never stuck, never
+// skipping.
+//
 /**
- * How much one unit of score weight raises `intensity` (continuous tier units).
- * A lineClear feeds weight = 1 + squares + combo, so a couple of clears in a bar
- * window pushes the song up roughly one tier. Tuned for "a sustained clearing run
- * fills the song out within a few bars" — Wave 3 may retune against the real cut.
+ * Monotonic per-segment clear-progress (`segmentScore`) needed to advance to the
+ * NEXT segment. Reached on the next bar boundary, in-flight-locked, one step per
+ * crossing. Reset to 0 on every segment entry, so the burst that earned this advance
+ * can't also pre-pay the next one (no fast-forward).
+ *
+ * Sized DELIBERATELY ABOVE the top-tier reveal for the fattest song: song2 has 5
+ * tiers, so its top tier (tier4) reveals at 4 × TIER_REVEAL_STEP = 24 — the advance
+ * must sit above that (30) so a section is FULLY revealed before it moves on, never
+ * cut off mid-fill. A clear feeds weight = 1 + squares + combo (≈3–5 typical), so an
+ * advance is ~6–10 clears (≈2 bar windows of steady clearing): a competent player
+ * walks the whole 12/10-segment fine cut at a musical pace — not stuck, not skipping.
  */
-const INTENSITY_PER_SCORE = 0.18;
+const ADVANCE_THRESHOLD = 30;
 /**
- * How much `intensity` decays per bar boundary on a dry spell (no qualifying score
- * that pass). Slow, so a brief lull holds the arrangement; a long dry spell thins it
- * back toward the bed over ~several bars (≈1 tier per 5 bars at this rate).
+ * Per-tier reveal step: every `TIER_REVEAL_STEP` of monotonic `segmentScore` reveals
+ * the next cumulative tier within the current segment (sticky — never sheds). So
+ * tier1 at `segmentScore ≥ 6`, tier2 at `≥ 12`, tier3 at `≥ 18`, tier4 at `≥ 24`
+ * (clamped to the segment's tier ceiling). A section fills out over its first several
+ * bars of clearing and is FULLY revealed before the advance at 30 is earned.
  */
-const INTENSITY_DECAY_PER_BAR = 0.2;
+const TIER_REVEAL_STEP = 6;
 /**
- * The energy floor applied on a FRESH segment entry: intensity never drops below
- * this when a new segment begins (so the first heard bars are never bare silence and
- * a section re-earns the rest of its arrangement). Generalized from the old
- * "enter at tier1" rule.
+ * The sticky-unlock entry FLOOR: the minimum tier a freshly-entered segment starts
+ * at, so the opening bars are never bare silence (and the very first segment of the
+ * song still has a bed to hear). On a mid-song advance the carried-forward floor (the
+ * tier reached in the previous segment) is honoured on top of this; this is the hard
+ * lower bound. 1 = "+bass", clamped down for any segment with fewer tiers.
  */
-const INTENSITY_ENTRY_FLOOR = 1;
+const TIER_ENTRY_FLOOR = 1;
 
 /** Segment role drives loop-vs-rideout behavior. */
 export type SegmentType = "LOOPER" | "PROGRESSION" | "TERMINAL";
@@ -226,10 +252,10 @@ export class InteractiveAudioEngine {
   private segmentIndex = 0;
   private maxSegmentReached = 0;
 
-  // ── VERTICAL (intensity → tier) state for the ACTIVE segment ─────────────────
+  // ── VERTICAL (clear-gated, sticky tier reveal) state for the ACTIVE segment ──
   /** The currently-audible cumulative tier of the active segment. */
   private tier: Tier = 0;
-  /** The tier armed for the next boundary swap. */
+  /** The tier armed for the next boundary swap (sticky: never below `tier`). */
   private armedTier: Tier = 0;
   /**
    * The tier the active segment SHOULD be audible at (from the last enterSegment). Used
@@ -237,16 +263,24 @@ export class InteractiveAudioEngine {
    * (advance-into-unloaded), so the segment isn't silent for its window.
    */
   private targetTier: Tier = 0;
+  /** A tier crossfade is mid-flight (between two tier files of the same segment). */
+  private tierFading = false;
   /**
-   * Continuous gameplay intensity, range [0, maxTier]. RAISED by onScore, DECAYS per
-   * bar on a dry spell. The armed tier = round(intensity) clamped to availability.
+   * The sticky floor carried INTO the active segment from the previous one (= the tier
+   * reached before advancing). The reveal never drops below this within the segment, so
+   * a section never resets to bare. Clamped to the segment's tier ceiling on entry.
    */
-  private intensity = 0;
-  /** Score banked since the last bar boundary (drives the decay-vs-hold decision). */
-  private scoreSinceLastPass = 0;
+  private entryFloor: Tier = 0;
 
-  // ── HORIZONTAL (autonomous timeline) state ───────────────────────────────────
-  /** A segment hand-off crossfade is mid-flight. */
+  // ── HORIZONTAL (clear-gated advance) state ───────────────────────────────────
+  /**
+   * Monotonic clear-progress within the ACTIVE segment (reset to 0 on every entry).
+   * Drives BOTH the sticky tier reveal (crosses TIER_REVEAL_STEP multiples) and the
+   * advance gate (≥ ADVANCE_THRESHOLD). Reset-on-entry is what blocks fast-forward: a
+   * burst that earns one advance leaves the next segment back at 0.
+   */
+  private segmentScore = 0;
+  /** A segment hand-off crossfade is mid-flight (the in-flight advance lock). */
   private transitionInFlight = false;
   private transitionToken = 0;
   /** Transport event ids scheduled for the active loop quantize (cancelled on reset). */
@@ -308,16 +342,18 @@ export class InteractiveAudioEngine {
    * `activeStems` = count of bed tier players at non-zero gain (proves the no-hiss
    * bound). Gains are READ (not targets) so a verification proves ramps moved.
    *
-   * New (Wave 1): `intensity` (continuous gameplay energy) + `tierCount` (the active
-   * segment's N). Old probe fields are retained where meaningful so the existing e2e
-   * keeps reading (Wave 3 rewrites it for the autonomous model).
+   * Clear-gated model: `segmentScore` = monotonic per-segment clear-progress (the
+   * quantity gated against ADVANCE_THRESHOLD and the per-tier reveal steps); `tier`
+   * = the currently-audible cumulative tier; `tierCount` = the active segment's N.
+   * `intensity` is retained as a DEPRECATED alias (= segmentScore) for any stray
+   * back-compat consumer.
    */
   getAudioState(): {
     segmentIndex: number;
     maxSegmentReached: number;
     segmentCount: number;
     transitionInFlight: boolean;
-    intensity: number;
+    segmentScore: number;
     tier: Tier;
     armedTier: Tier;
     tierCount: number;
@@ -325,8 +361,8 @@ export class InteractiveAudioEngine {
     activeStems: number;
     trackId: string;
     bpm: number;
-    /** @deprecated back-compat: monotonic-ish per-segment energy proxy (= intensity). */
-    segmentScore: number;
+    /** @deprecated back-compat alias: = segmentScore (clear-progress). */
+    intensity: number;
     /** @deprecated back-compat with the old probe consumers. */
     activeRole: string | null;
     /** @deprecated back-compat. */
@@ -363,7 +399,7 @@ export class InteractiveAudioEngine {
       maxSegmentReached: this.maxSegmentReached,
       segmentCount: this.segments.length,
       transitionInFlight: this.transitionInFlight,
-      intensity: this.intensity,
+      segmentScore: this.segmentScore,
       tier: this.tier,
       armedTier: this.armedTier,
       tierCount: count,
@@ -371,7 +407,7 @@ export class InteractiveAudioEngine {
       activeStems,
       trackId: this.currentTrack.id,
       bpm: this.bpm,
-      segmentScore: this.intensity,
+      intensity: this.segmentScore,
       activeRole: a?.meta.type ?? null,
       recordedBedActive: this.bedReady,
       voxUnlocked: this.tier >= top && count > 0,
@@ -561,7 +597,8 @@ export class InteractiveAudioEngine {
     this.segments = this.buildSegments(song);
     this.segmentIndex = 0;
     this.maxSegmentReached = 0;
-    this.intensity = 0;
+    this.segmentScore = 0;
+    this.entryFloor = 0;
     this.applyTempo(song);
 
     // Initial load = intro tiers only (lazy per-segment).
@@ -594,10 +631,13 @@ export class InteractiveAudioEngine {
   // ── segment entry + tier state ──────────────────────────────────────────────
 
   /**
-   * Enter segment `index`. Applies the intensity ENERGY FLOOR (a fresh/first segment
-   * never starts below {@link INTENSITY_ENTRY_FLOOR}, so the opening bars are never
-   * bare), clamps the floor + current intensity to the new segment's available tiers,
-   * and gains up exactly the start tier.
+   * Enter segment `index`. Resets the per-segment clear-progress (`segmentScore = 0`,
+   * so the new segment re-earns its reveals + advance from scratch — the no-fast-forward
+   * guarantee) and seeds the STICKY entry FLOOR: the start tier is the carried-forward
+   * `entryFloor` (the tier reached in the previous segment) raised to at least
+   * {@link TIER_ENTRY_FLOOR}, clamped to this segment's available tiers, so a section is
+   * never bare on entry but never resets all the way to the bed either. Gains up exactly
+   * the start tier.
    */
   private enterSegment(
     index: number,
@@ -608,21 +648,19 @@ export class InteractiveAudioEngine {
     if (!seg) return;
 
     const top = this.maxTier(seg);
-    // Energy floor: a fresh entry floors intensity so the first heard bars sound.
-    if (fresh) {
-      this.intensity = Math.max(this.intensity, INTENSITY_ENTRY_FLOOR);
-    }
-    // Clamp intensity to this segment's tier ceiling (a 4-tier seg can't show tier4).
-    this.intensity = Math.max(0, Math.min(top, this.intensity));
-
-    // Start tier = round(intensity), clamped + demoted to a tier that actually loaded.
-    let startTier = Math.round(this.intensity);
+    // The sticky floor carried in from the previous segment (0 on a fresh first entry),
+    // raised to the hard TIER_ENTRY_FLOOR so the opening bars always have a bed + bass.
+    let startTier = Math.max(this.entryFloor, TIER_ENTRY_FLOOR);
+    // Clamp to this segment's ceiling (a 4-tier seg can't show tier4) + a loaded tier.
     startTier = Math.max(0, Math.min(top, startTier));
     startTier = this.nearestAvailableAtOrBelow(seg, startTier);
 
     this.tier = startTier;
     this.armedTier = startTier;
-    this.scoreSinceLastPass = 0;
+    this.tierFading = false;
+    this.segmentScore = 0;
+    // The floor THIS segment will hold to (sticky reveal never drops below it).
+    this.entryFloor = startTier;
     // Record what this segment SHOULD sound at, so a tier whose player loads AFTER
     // entry (advance-into-unloaded) can be reconciled up to target when it arrives.
     this.targetTier = startTier;
@@ -754,56 +792,131 @@ export class InteractiveAudioEngine {
 
   /**
    * Fired at the active segment's loop boundary — the ONLY place a tier swaps or a
-   * segment advances. AUTONOMOUS model:
-   *  1) VERTICAL: decay/hold intensity for this pass. The audible tier is NOT swapped
-   *     in place on the active segment — that segment is about to be faded out and
-   *     disposed by advanceSegment, so an in-place swap would ramp gains on a dying
-   *     node (never heard) and double-ramp what advanceSegment then fades to 0. The
-   *     intensity carries forward and `enterSegment` sets the NEXT segment's audible
-   *     tier from round(intensity) on entry.
-   *  2) HORIZONTAL: advance to the next segment IN ORDER (forward-only, looping at
-   *     the end), unconditionally — the timeline runs on the musical clock, not clears.
+   * segment advances. CLEAR-GATED model (clears, never a clock, drive everything):
+   *  1) VERTICAL FIRST: evaluate the sticky cumulative tier from the accumulated
+   *     clear-progress and crossfade UP to it on this boundary (forward-only — never
+   *     sheds within the segment). This runs BEFORE the advance check so a single hot
+   *     bar that banks both the top-tier reveal AND the advance gate is FULLY REVEALED
+   *     before it moves on — and the freshly-revealed tier is the one carried forward
+   *     as the next segment's sticky floor (the "fully revealed before it advances"
+   *     invariant; otherwise the section's upper tiers would never be heard).
+   *  2) HORIZONTAL: if the player has earned an advance ({@link shouldAdvance}: enough
+   *     clear-progress AND no transition in flight), advance ONE segment forward now.
+   *     Otherwise the segment LOOPS in place (the players keep re-playing their bar
+   *     window) at the tier revealed in step 1.
    * `time` is the boundary's audio-clock time.
    */
   private onLoopBoundary(time: number): void {
     const seg = this.active();
     if (!seg) return;
 
-    // 1) VERTICAL: update continuous intensity for this pass. intensity → tier is
-    // applied by enterSegment on the segment we're about to advance into; no in-place
-    // swap on the outgoing segment (see method doc).
-    if (this.scoreSinceLastPass <= 0) {
-      // dry spell — decay slowly toward the bed.
-      this.intensity = Math.max(0, this.intensity - INTENSITY_DECAY_PER_BAR);
+    // 1) VERTICAL FIRST: reveal the sticky cumulative tier earned so far and crossfade
+    //    up to it on this boundary. Updating `this.tier` here means an advance committed
+    //    in step 2 carries the JUST-REVEALED tier forward as the next segment's floor.
+    this.evaluateTier(seg);
+    if (this.armedTier !== this.tier) {
+      this.swapTier(seg, this.armedTier, time);
     }
-    this.scoreSinceLastPass = 0;
 
-    // 2) HORIZONTAL: advance the timeline on its own clock (autonomous, forward-only).
-    this.advanceSegment(time);
+    // 2) HORIZONTAL: clears earned an advance → step forward ONE segment (advancing
+    //    re-enters the next segment + reschedules its loop tick, carrying the floor).
+    if (this.shouldAdvance()) {
+      this.advanceSegment(time);
+    }
   }
 
-  // ── horizontal autonomous advance ────────────────────────────────────────────
+  // ── vertical: sticky clear-gated tier reveal (in place, forward-only) ────────
 
   /**
-   * Autonomous FORWARD-ONLY advance, committed on the loop boundary `at`. Moves to the
-   * next segment in order; at the last segment it LOOPS back to segment 0. Crossfades
-   * the current segment's active tier out and the next segment's start tier in, then
-   * disposes the segment left behind after the fade settles (no-hiss). Token-guarded.
+   * Arm the cumulative tier for the upcoming boundary swap from the monotonic
+   * `segmentScore`: every {@link TIER_REVEAL_STEP} of clear-progress reveals the next
+   * tier. STICKY — the armed tier never drops below the currently-audible tier (no
+   * shed within a segment), is bounded below by the sticky `entryFloor`, and bounded
+   * above by the segment's tier ceiling. Never arms a tier whose file failed to load.
+   */
+  private evaluateTier(seg: LoadedSegment): void {
+    if (this.tierFading) return; // don't re-arm mid-fade
+    const top = this.maxTier(seg);
+    const revealed = Math.floor(this.segmentScore / TIER_REVEAL_STEP);
+    // sticky: at least the floor, at least the current tier, never above the ceiling.
+    let want = Math.max(this.entryFloor, this.tier, revealed);
+    want = Math.max(0, Math.min(top, want));
+    // demote to the highest LOADED tier at or below `want` (a missing file never silences).
+    want = this.nearestAvailableAtOrBelow(seg, want);
+    this.armedTier = want;
+  }
+
+  /** Constant-sum (linear) crossfade from the current tier file to `to` on `at`. */
+  private swapTier(seg: LoadedSegment, to: Tier, at: number): void {
+    if (to === this.tier) return;
+    const from = this.tier;
+    this.tierFading = true;
+    // linear gain ramps on the layered cumulative renders read as a smooth blend (the
+    // shared bed stays at full through the swap — no dip).
+    this.rampGain(seg.tierGains[from], 0, XFADE_S, at);
+    this.rampGain(seg.tierGains[to], 1, XFADE_S, at);
+    this.tier = to;
+    this.targetTier = to; // keep the reconcile target in step with the audible tier
+    this.afterSettle(at + XFADE_S + 0.02, () => {
+      this.tierFading = false;
+    });
+  }
+
+  // ── horizontal: clear-gated forward-only advance ─────────────────────────────
+
+  /**
+   * Advance gate: the player has accumulated `segmentScore ≥ ADVANCE_THRESHOLD` AND no
+   * transition is already in flight (the in-flight lock — a burst can't queue a second
+   * advance). Returns true even on the TERMINAL/last segment: an earned advance there
+   * means "past the end of the song", which {@link advanceSegment} turns into the
+   * end-of-song song switch instead of a forward step.
+   */
+  private shouldAdvance(): boolean {
+    if (this.transitionInFlight) return false;
+    if (this.segments.length === 0) return false;
+    return this.segmentScore >= ADVANCE_THRESHOLD;
+  }
+
+  /**
+   * CLEAR-GATED FORWARD-ONLY single-step advance, committed on the loop boundary `at`.
+   * Carries the sticky tier floor (the tier reached here) into the next segment.
+   * Crossfades the current segment's active tier out and the next segment's start tier
+   * in, then disposes the segment left behind after the fade settles (no-hiss). On an
+   * earned advance PAST the last (TERMINAL) segment it does NOT step the index — it
+   * fires {@link complete} (→ the host swaps to the other song via switchTrack).
+   * Token-guarded so a switchTrack/dispose can't land a stale commit.
    */
   private advanceSegment(at: number): void {
     const count = this.segments.length;
     if (count === 0) return;
     const fromIndex = this.segmentIndex;
     const from = this.active();
-    // TERMINAL on the last segment rides out, then loops back to 0 (default). Any
-    // non-last segment steps forward by one.
-    const isLast = this.segmentIndex >= count - 1;
-    const index = isLast ? 0 : this.segmentIndex + 1;
+
+    // End of song: an earned advance off the last segment → switch to the other song
+    // (skin switch via onSongComplete). Lock the in-flight gate + reset the per-segment
+    // progress so the terminal segment keeps looping (no re-fire) until the host swaps.
+    if (this.segmentIndex >= count - 1) {
+      this.transitionInFlight = true;
+      this.segmentScore = 0;
+      this.complete();
+      // release the lock shortly after; if the host swapped tracks, switchTrack already
+      // rebuilt + invalidated this transition, so the token guard makes this a no-op.
+      const token = ++this.transitionToken;
+      this.afterSettle(at + XFADE_S + 0.05, () => {
+        if (token !== this.transitionToken) return;
+        this.transitionInFlight = false;
+      });
+      return;
+    }
+
+    const index = this.segmentIndex + 1;
     const to = this.segments[index];
     if (!to) return;
 
     this.transitionInFlight = true;
     const token = ++this.transitionToken;
+    // The tier reached in THIS segment becomes the next segment's sticky floor.
+    this.entryFloor = this.tier;
 
     // If the next segment hasn't finished loading, advance still happens (silent until
     // its players arrive); kick a load just in case.
@@ -812,31 +925,23 @@ export class InteractiveAudioEngine {
     // Fade the current active tier out.
     this.rampGain(from?.tierGains[this.tier], 0, XFADE_S, at);
 
-    // Enter the destination phase-correct (sets tier/armedTier + gains the start tier
-    // up over the crossfade), carrying the intensity (energy) across. Pass the
-    // boundary time `at` so the in-fade starts where the out-fade did (symmetric).
+    // Enter the destination phase-correct (sets tier/armedTier from the carried floor +
+    // gains the start tier up over the crossfade). Pass the boundary time `at` so the
+    // in-fade starts where the out-fade did (symmetric).
     this.segmentIndex = index;
-    const reachedNewMax = index > this.maxSegmentReached;
     this.maxSegmentReached = Math.max(this.maxSegmentReached, index);
     this.enterSegment(index, /*fresh*/ false, at);
 
     // Reschedule the loop tick for the NEW segment's loop length.
     this.scheduleLoopTick();
 
-    // onSongComplete fires once when we LAND on the final segment for the first time.
-    if (index === count - 1 && reachedNewMax) {
-      this.complete();
-    }
-
     this.afterSettle(at + XFADE_S + 0.05, () => {
       if (token !== this.transitionToken) return;
       this.transitionInFlight = false;
-      // dispose the segment we left — UNLESS it's the same slot we just entered
-      // (a single-segment song loops onto itself; never dispose the live one).
+      // dispose the segment we left (forward-only — never re-entered).
       if (fromIndex !== this.segmentIndex) this.disposeSegment(fromIndex);
-      // prefetch the one after the new active segment (looping back to 0 at the end).
-      const nextIndex = index >= count - 1 ? 0 : index + 1;
-      void this.prefetch(nextIndex);
+      // prefetch the one after the new active segment.
+      void this.prefetch(index + 1);
     });
   }
 
@@ -864,9 +969,9 @@ export class InteractiveAudioEngine {
   }
 
   /**
-   * Route an event. Clears (lineClear/chain) are SILENT — they only RAISE the
-   * gameplay intensity (VERTICAL), never the position. Actions fire their mapped
-   * Layer-4 ad-lib one-shot.
+   * Route an event. Clears (lineClear/chain) are SILENT — they only feed the monotonic
+   * `segmentScore` that drives BOTH the sticky tier reveal and the segment advance.
+   * Actions fire their mapped Layer-4 ad-lib one-shot.
    */
   private play(ev: AudioEvent, time: number): void {
     if (ev.type === "lineClear") {
@@ -882,24 +987,60 @@ export class InteractiveAudioEngine {
   }
 
   /**
-   * Raise the continuous intensity (VERTICAL). Clamped to the active segment's tier
-   * ceiling. Banks the per-pass score so the boundary tick knows it wasn't a dry pass
-   * (no decay this bar). Clearing makes the song FULLER; it NEVER moves the segment.
+   * Feed the monotonic per-segment clear-progress (`segmentScore`). The next loop
+   * boundary reads it to reveal the sticky tier (every TIER_REVEAL_STEP) and to gate
+   * the advance (≥ ADVANCE_THRESHOLD). Clearing makes the song FULLER then moves it
+   * FORWARD; it never moves backward.
+   *
+   * Backlog cap: one huge chain banks at most one extra advance's worth of progress
+   * beyond the gate, so a burst can't pre-load multiple advances (no fast-forward —
+   * the in-flight lock + per-segment reset are the other half of that guarantee).
    *
    * Defends against a non-finite weight (an upstream bug feeding NaN/Infinity squares,
-   * combo, or size): NaN would poison `intensity` and `round(NaN)` would permanently
-   * corrupt the armed tier. A non-finite weight is ignored; intensity is re-clamped to
+   * combo, or size): NaN would poison `segmentScore` and corrupt every downstream
+   * threshold compare. A non-finite weight is ignored; `segmentScore` is re-clamped to
    * a finite value defensively.
    */
   private onScore(weight: number): void {
     if (this.segments.length === 0) return;
     if (!Number.isFinite(weight)) return; // ignore a poisoned weight
-    this.scoreSinceLastPass += weight;
-    const top = this.maxTier(this.active());
-    const next = this.intensity + weight * INTENSITY_PER_SCORE;
-    this.intensity = Number.isFinite(next)
-      ? Math.max(0, Math.min(top, next))
-      : Math.max(0, Math.min(top, this.intensity));
+    const cap = ADVANCE_THRESHOLD * 2;
+    const next = this.segmentScore + weight;
+    this.segmentScore = Number.isFinite(next)
+      ? Math.max(0, Math.min(cap, next))
+      : Math.max(0, Math.min(cap, this.segmentScore));
+  }
+
+  // ── test-only dev hooks (behind ?audiodev=1) ────────────────────────────────
+
+  /**
+   * TEST-ONLY: synchronously bank `count` typical clears' worth of clear-progress (each
+   * weight 4 = a 2-square / combo-1 clear), bypassing the `@16n` transport schedule of
+   * {@link fire} so a headless e2e can drive the CLEAR-GATED model deterministically
+   * (no real-time waits). Exposed only via the `?audiodev=1` engine handle.
+   */
+  __injectClears(count = 1): void {
+    for (let i = 0; i < Math.max(0, count); i++) this.onScore(4);
+  }
+
+  /**
+   * TEST-ONLY: run the active segment's NEXT loop boundary RIGHT NOW (exactly what the
+   * loop tick does on a real bar wrap) — reveal the sticky tier and, if enough clears
+   * are banked, advance ONE segment forward. Lets the headless e2e step the clear-gated
+   * timeline bar-by-bar without waiting the real bar window OR the async fade-settle.
+   *
+   * The previous advance's audio crossfade settles asynchronously (releasing the
+   * in-flight lock after the fade). When a test steps boundaries back-to-back with no
+   * real time elapsing, that settle hasn't run yet, so this first force-releases a
+   * stale in-flight lock — the no-fast-forward guarantee still holds because the
+   * per-segment `segmentScore` was reset to 0 on the prior advance (a fresh advance must
+   * be RE-EARNED). Exercises the REAL boundary path (NOT a clock). Exposed only via the
+   * `?audiodev=1` engine handle.
+   */
+  __stepBoundary(): void {
+    if (!this.started || this.segments.length === 0) return;
+    this.transitionInFlight = false; // release any not-yet-settled prior advance lock
+    this.onLoopBoundary(this.nextBar());
   }
 
   // ── Layer-4 SFX (lazy voice POOL per name, loaded per active song) ──────────
@@ -1078,7 +1219,8 @@ export class InteractiveAudioEngine {
       this.songCompleted = false;
       this.segmentIndex = 0;
       this.maxSegmentReached = 0;
-      this.intensity = 0;
+      this.segmentScore = 0;
+      this.entryFloor = 0;
       this.applyTempo(song);
       await this.loadSegment(0);
       if (this.currentTrack.id !== track.id) {
@@ -1209,8 +1351,9 @@ export class InteractiveAudioEngine {
     this.tier = 0;
     this.armedTier = 0;
     this.targetTier = 0;
-    this.intensity = 0;
-    this.scoreSinceLastPass = 0;
+    this.tierFading = false;
+    this.entryFloor = 0;
+    this.segmentScore = 0;
     this.settleEvents = [];
     this.songCompleted = false;
     this.started = false;
