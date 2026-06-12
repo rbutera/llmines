@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LLMines — Progression Visualizer</title>
+<style>
+  :root{
+    --bg:#0a0c11; --panel:#13171f; --panel2:#1b212c; --line:#2a3342;
+    --txt:#e8edf5; --dim:#8a94a6; --accent:#ff5d3b;
+    --t0:#4f7cff; --t1:#33c5a8; --t2:#ff7ad1;
+    --looper:#3a4a66; --prog:#5a3f7a; --term:#7a5a2a;
+    --play:#3bd17a;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;padding-bottom:150px}
+  header{position:sticky;top:0;z-index:10;background:linear-gradient(180deg,#0a0c11 86%,transparent);padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+  h1{font-size:18px;margin:0 0 2px;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:12.5px;margin:0 0 10px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  select,button{font:inherit}
+  select{padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--txt)}
+  .btn{padding:9px 14px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);cursor:pointer;font-weight:600}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.on{background:var(--play);border-color:var(--play);color:#06210f}
+  section{padding:16px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:4px 0 10px}
+  .note{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:10px 12px;color:var(--dim);font-size:12.5px;margin-bottom:14px}
+  .note b{color:var(--txt)}
+  .cutpill{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);color:var(--dim)}
+  .cutpill.fine{border-color:var(--t1);color:var(--t1)}
+  .cutpill.coarse{border-color:var(--accent);color:var(--accent)}
+
+  .tl-wrap{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+  .tl{position:relative;display:flex;height:64px;gap:2px;border-radius:6px;overflow:hidden}
+  .seg{position:relative;display:flex;flex-direction:column;justify-content:space-between;padding:6px 7px;min-width:12px;overflow:hidden;cursor:pointer;border-radius:4px;transition:filter .12s}
+  .seg:hover{filter:brightness(1.25)}
+  .seg.LOOPER{background:var(--looper)} .seg.PROGRESSION{background:var(--prog)} .seg.TERMINAL{background:var(--term)}
+  .seg.active{outline:2px solid var(--play);outline-offset:-2px}
+  .seg .sid{font-size:10.5px;font-weight:700;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+  .seg .smeta{font-size:9.5px;color:rgba(255,255,255,.7);white-space:nowrap}
+  .playhead{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 8px #fff;z-index:4;pointer-events:none;left:0;opacity:0}
+  .legend{display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--dim);flex-wrap:wrap}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .sw{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+  table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+  th,td{padding:8px 9px;text-align:left;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  td.seglab{white-space:nowrap}
+  td.seglab b{font-weight:700}
+  td.seglab .ty{font-size:10.5px;color:var(--dim);display:block}
+  tr.active td{background:rgba(59,209,122,.07)}
+  .cell{display:inline-flex;align-items:center;justify-content:center;width:34px;height:30px;border-radius:7px;border:1px solid var(--line);background:var(--panel2);cursor:pointer;font-size:11px;font-weight:700}
+  .cell.playing{background:#15321f;border-color:var(--play);box-shadow:0 0 0 1px var(--play) inset}
+  .cell.disabled{opacity:.25;pointer-events:none}
+  .cell.full{border-color:var(--accent);color:var(--accent);font-size:13px}
+  .cell.full.playing{background:#15321f;border-color:var(--play);color:var(--play)}
+  .cell.incl{background:#12231a;border-color:#2c6b46;color:var(--play)}
+
+  .transport{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--panel);border-top:1px solid var(--line);padding:10px 16px calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:9px}
+  .trow{display:flex;align-items:center;gap:12px}
+  .intensity{flex:1;display:flex;align-items:center;gap:10px}
+  .intensity input[type=range]{flex:1;accent-color:var(--accent)}
+  .ilab{font-size:11px;color:var(--dim);min-width:54px}
+  .ival{font-weight:700;min-width:84px;text-align:right;font-size:12.5px}
+  .clock{font-variant-numeric:tabular-nums;color:var(--dim);font-size:12px;min-width:84px}
+  .seglive{font-weight:700;font-size:13px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hint{color:var(--dim);font-size:11px}
+</style>
+</head>
+<body>
+<header>
+  <h1>LLMines — Progression Visualizer</h1>
+  <p class="sub">See the structure. Hear it build. <span id="status" style="color:var(--accent)"></span></p>
+  <div class="row">
+    <select id="cutSel"></select>
+    <select id="songSel"></select>
+    <button class="btn primary" id="playBtn">▶ Play</button>
+    <button class="btn" id="fullSongBtn">▶ Full mix</button>
+    <button class="btn" id="loopBtn">Loop</button>
+    <button class="btn" id="autoBtn">Auto-build</button>
+  </div>
+</header>
+
+<section>
+  <div class="note" id="cutNote"></div>
+
+  <h2>Song timeline — segment sizes to scale</h2>
+  <div class="tl-wrap">
+    <div class="tl" id="timeline"></div>
+    <div class="playhead" id="playhead"></div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--looper)"></i>LOOPER</span>
+      <span><i class="sw" style="background:var(--prog)"></i>PROGRESSION</span>
+      <span><i class="sw" style="background:var(--term)"></i>TERMINAL</span>
+      <span style="margin-left:auto" id="tlmeta"></span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Segment × layer matrix — each ▶ is CUMULATIVE (plays L1 up to it); ▣ = full stack. Green = included.</h2>
+  <table id="matrix">
+    <thead><tr id="mhead"><th>Segment</th><th>bars</th><th>secs</th></tr></thead>
+    <tbody id="mbody"></tbody>
+  </table>
+</section>
+
+<div class="transport">
+  <div class="trow">
+    <span class="clock" id="clock">0:00 / 0:00</span>
+    <span class="seglive" id="seglive">—</span>
+    <button class="btn" id="stopBtn">■ Stop</button>
+  </div>
+  <div class="trow">
+    <div class="intensity">
+      <span class="ilab">Intensity</span>
+      <input type="range" id="intensity" min="0" max="2" step="0.01" value="0">
+      <span class="ival" id="ival">—</span>
+    </div>
+  </div>
+  <div class="hint" id="hint">Tip: push intensity up as the song plays — that's the "player getting better" arc.</div>
+</div>
+
+<script>
+/* Two cuts, normalized to one model:
+   - FINE = v2.7 structure-aware (12/10 sections), additive bed+vox  → "what it's SUPPOSED to sound like"
+   - COARSE = deployed (5/7 sections), cumulative tier0/1/2          → "what's live + broken"
+   Unified song: {id,title,tempo,barSeconds, layerMode:'add'|'replace', layerLabels:[], segments:[{id,type,bars,seconds,layers:[url|null]}]} */
+const CUTS = {
+  fine5: {
+    label:"FINE5 — native stems, multi-layer (the real test)", pill:"fine",
+    note:'<b>FINE5 — the real one.</b> 12 sections (song1) / 10 (song2), cut from your Studio 5.5 stems with a proper CUMULATIVE layer stack. Each ▶ adds a layer (drums → +bass → +instruments → +vocals); ▣ = full song. This is the version to judge — does it sound like the actual song, building?',
+    layerMode:"replace",
+    combined:{base:"../audio/fine5/", manifest:"manifest.json"},
+    labels:{ song1:["drums","+bass","+synth/gtr","+vocals"], song2:["drums","+bass","+synth","+bvox","+vocals"] }
+  },
+  fine: {
+    label:"FINE — v2.7 (bed+vox only, 2 layers)", pill:"fine",
+    note:'<b>FINE (v2.7).</b> Right SECTIONS but only 2 layers — instruments pre-mixed into the bed. Superseded by FINE5 for the layer test; kept for comparison.',
+    layerMode:"add", layerLabels:["bed","+vox"],
+    songs:[
+      {base:"../audio/_v27_old/", manifest:"manifest.json"},
+      {base:"../audio/_v27_old/song2/", manifest:"manifest.json"}
+    ]
+  },
+  coarse: {
+    label:"COARSE — deployed (live, broken)", pill:"coarse",
+    note:'<b>COARSE (deployed/live).</b> Only 5/7 segments — 83% of song1 is two 76s+92s blobs. The broken one; compare against FINE5.',
+    layerMode:"replace",
+    combined:{base:"../audio/", manifest:"manifest.json"},
+    labels:{ song1:["drm+bass","+instr","+vox"], song2:["drm+bass","+instr","+vox"] }
+  }
+};
+let ctx=null, buffers={}, curCut="fine", songs=[], song=null;
+let preview=null, auditionNode=null, loopSong=false, autoBuild=false, intensity=0;
+const maxInt=()=>song.layerLabels.length-1;
+
+const $=s=>document.querySelector(s);
+const fmt=t=>{t=Math.max(0,t|0);return (t/60|0)+":"+String(t%60).padStart(2,"0")};
+async function ensureCtx(){ if(!ctx) ctx=new (window.AudioContext||window.webkitAudioContext)(); if(ctx.state!=="running") await ctx.resume(); return ctx; }
+async function loadBuffer(url){ if(!url) return null; if(buffers[url]) return buffers[url]; const r=await fetch(url); const ab=await r.arrayBuffer(); buffers[url]=await ctx.decodeAudioData(ab); return buffers[url]; }
+function segSecs(s){ return s.seconds; }
+function totalSecs(){ return song.segments.reduce((a,s)=>a+s.seconds,0); }
+
+function mapType(t){ t=(t||"").toUpperCase(); if(t.includes("TERM")||t==="RIDEOUT") return "TERMINAL"; if(t.includes("PROG")) return "PROGRESSION"; return "LOOPER"; }
+
+// gain for layer i at continuous intensity, by mode
+function layerGain(i,inten,mode){
+  if(mode==="add"){ if(i===0) return 0.95; return Math.min(1,Math.max(0,inten-(i-1)))*0.95; }
+  // replace (cumulative): triangular equal-power crossfade, solo at integer
+  const g=Math.max(0,1-Math.abs(inten-i)); return Math.sin(g*Math.PI/2)*0.95;
+}
+
+async function loadCut(key){
+  curCut=key; const c=CUTS[key]; songs=[];
+  const cs=$("#cutSel"); if(cs) cs.value=key;
+  $("#status").textContent="loading cut…";
+  if(c.combined){
+    const j=await (await fetch(c.combined.base+c.combined.manifest)).json();
+    for(const s of j.songs){
+      const tk=Object.keys(s.segments[0].tiers).filter(k=>/^tier\d+$/.test(k)).sort((a,b)=>(+a.slice(4))-(+b.slice(4)));
+      const labels=(c.labels&&c.labels[s.id])||tk.map((t,i)=>i===0?'L1':'+L'+(i+1));
+      songs.push({ id:s.id, title:s.title||s.name, tempo:s.tempo, barSeconds:s.barSeconds,
+        layerMode:c.layerMode, layerLabels:labels,
+        segments:s.segments.map(seg=>({ id:seg.id, type:mapType(seg.type), bars:seg.bars,
+          seconds:seg.lengthSeconds||seg.barWindowSeconds||(seg.bars*s.barSeconds),
+          layers:tk.map(t=>c.combined.base+seg.tiers[t]) })) });
+    }
+  } else {
+    for(const sc of c.songs){
+      const j=await (await fetch(sc.base+sc.manifest)).json();
+      songs.push({ id:j.id, title:j.name||j.title, tempo:j.tempo, barSeconds:j.barSeconds,
+        layerMode:c.layerMode, layerLabels:c.layerLabels,
+        segments:j.segments.map(seg=>({ id:seg.name||seg.id, type:mapType(seg.role||seg.type)|| (seg.isTerminalRideout?"TERMINAL":"LOOPER"),
+          bars:seg.bars, seconds:seg.lengthSeconds||(seg.bars*j.barSeconds),
+          layers:[ sc.base+seg.bed, seg.vox? sc.base+seg.vox : null ] })) });
+    }
+  }
+  $("#status").textContent="";
+  $("#cutNote").innerHTML=c.note;
+  buildSongSelect(); song=songs[0]; setupIntensity(); render();
+}
+
+function buildCutSelect(){ const s=$("#cutSel"); s.innerHTML="";
+  for(const k of Object.keys(CUTS)){ const o=document.createElement("option"); o.value=k; o.textContent=CUTS[k].label; s.appendChild(o); }
+  s.value=curCut; s.onchange=()=>{ stopAll(); loadCut(s.value); };
+}
+function buildSongSelect(){ const s=$("#songSel"); s.innerHTML="";
+  songs.forEach((sg,i)=>{ const o=document.createElement("option"); o.value=i; o.textContent=`${sg.title} (${sg.tempo|0}bpm, ${sg.segments.length} segs)`; s.appendChild(o); });
+  s.onchange=()=>{ stopAll(); song=songs[+s.value]; setupIntensity(); render(); };
+}
+function setupIntensity(){ const r=$("#intensity"); r.max=maxInt(); r.step=0.01; if(intensity>maxInt())intensity=maxInt(); syncIntensityUI(); }
+
+function render(){
+  const tl=$("#timeline"); tl.innerHTML="";
+  song.segments.forEach((seg,i)=>{
+    const d=document.createElement("div"); d.className="seg "+seg.type; d.dataset.i=i; d.style.flexGrow=seg.seconds;
+    d.innerHTML=`<span class="sid">${seg.id}</span><span class="smeta">${seg.bars}b · ${seg.seconds.toFixed(0)}s</span>`;
+    d.title=`${seg.id} — ${seg.type}`; d.onclick=()=>auditionCell(i,Math.min(maxInt(),Math.round(intensity)));
+    tl.appendChild(d);
+  });
+  $("#tlmeta").textContent=`${song.segments.length} segments · ${totalSecs().toFixed(0)}s · ${song.tempo.toFixed(1)} bpm`;
+  // matrix head
+  const mh=$("#mhead"); mh.innerHTML="<th>Segment</th><th>bars</th><th>secs</th>"+song.layerLabels.map(l=>`<th>${l}</th>`).join("")+"<th>full</th>";
+  const mb=$("#mbody"); mb.innerHTML="";
+  song.segments.forEach((seg,i)=>{
+    const tr=document.createElement("tr"); tr.dataset.i=i;
+    tr.innerHTML=`<td class="seglab"><b>${seg.id}</b><span class="ty">${seg.type.toLowerCase()}</span></td><td>${seg.bars}</td><td>${seg.seconds.toFixed(1)}</td>`;
+    seg.layers.forEach((url,k)=>{ const td=document.createElement("td"); const b=document.createElement("button");
+      b.className="cell"+(url?"":" disabled"); b.textContent=url?"▶":"–"; b.dataset.i=i; b.dataset.k=k;
+      if(url) b.onclick=()=>auditionCell(i,k); td.appendChild(b); tr.appendChild(td); });
+    const tdf=document.createElement("td"); const bf=document.createElement("button");
+    bf.className="cell full"; bf.textContent="▣"; bf.title="all layers combined = the full song for this section"; bf.dataset.i=i;
+    bf.onclick=()=>auditionFull(i); tdf.appendChild(bf); tr.appendChild(tdf);
+    mb.appendChild(tr);
+  });
+  updateClock(0);
+}
+
+// CUMULATIVE audition: cell k plays layers 1..k+1 stacked (L1, L1+2, L1+2+3, ...)
+async function auditionCell(i,k){
+  await ensureCtx(); stopAudition();
+  const seg=song.segments[i];
+  // add-mode (isolated stems): sum stems 0..k. replace-mode (cumulative tiers): tier_k already = sum 0..k.
+  const urls = song.layerMode==="add" ? seg.layers.slice(0,k+1).filter(Boolean) : [seg.layers[k]];
+  $("#status").textContent="loading…"; const bufs=(await Promise.all(urls.map(loadBuffer))).filter(Boolean); $("#status").textContent="";
+  const gain = song.layerMode==="add" ? 0.95/Math.max(1,Math.sqrt(bufs.length)) : 0.95; // headroom when summing
+  const nodes=[]; bufs.forEach(buf=>{ const src=ctx.createBufferSource(); src.buffer=buf; src.loop=true; const g=ctx.createGain(); g.gain.value=gain; src.connect(g).connect(ctx.destination); src.start(); nodes.push(src); });
+  // visual: clicked cell = playing, all lower cells = included (shows the cumulative stack)
+  const row=document.querySelectorAll('#mbody tr')[i];
+  if(row){ row.querySelectorAll('.cell').forEach(c=>c.classList.remove('playing','incl')); for(let j=0;j<=k;j++){ const c=row.querySelector(`.cell[data-k="${j}"]`); if(c) c.classList.add(j===k?'playing':'incl'); } }
+  auditionNode={nodes,btn:null,row};
+  $("#seglive").innerHTML=`<b>${seg.id}</b> · L1–${k+1}: ${song.layerLabels.slice(0,k+1).join(' ')}`;
+}
+function stopAudition(){ if(auditionNode){ auditionNode.nodes.forEach(n=>{try{n.stop()}catch(e){}}); if(auditionNode.row) auditionNode.row.querySelectorAll('.cell').forEach(c=>c.classList.remove('playing','incl')); if(auditionNode.btn)auditionNode.btn.classList.remove("playing"); auditionNode=null; } }
+
+// play ALL layers of one segment combined = the full song for that section
+async function auditionFull(i){
+  await ensureCtx(); stopAudition();
+  const seg=song.segments[i];
+  let urls;
+  if(song.layerMode==="add"){ urls=seg.layers.filter(Boolean); }   // additive: sum every stem
+  else { urls=[]; for(let k=seg.layers.length-1;k>=0;k--){ if(seg.layers[k]){ urls=[seg.layers[k]]; break; } } } // cumulative: top tier already = all
+  $("#status").textContent="loading…"; const bufs=(await Promise.all(urls.map(loadBuffer))).filter(Boolean); $("#status").textContent="";
+  const gain = song.layerMode==="add" ? 0.95/Math.max(1,Math.sqrt(urls.length)) : 0.95; // headroom when summing stems
+  const nodes=[]; bufs.forEach(buf=>{ const src=ctx.createBufferSource(); src.buffer=buf; src.loop=true; const g=ctx.createGain(); g.gain.value=gain; src.connect(g).connect(ctx.destination); src.start(); nodes.push(src); });
+  const btn=document.querySelector(`.cell.full[data-i="${i}"]`); if(btn)btn.classList.add("playing");
+  auditionNode={nodes,btn};
+  $("#seglive").innerHTML=`FULL · <b>${seg.id}</b> · all ${bufs.length} layers`;
+}
+
+async function playSong(){
+  await ensureCtx(); stopAll(); $("#status").textContent="loading song…";
+  for(const seg of song.segments) for(const u of seg.layers) await loadBuffer(u);
+  $("#status").textContent="";
+  const t0=ctx.currentTime+0.12; const segs=[]; let acc=0;
+  song.segments.forEach((seg,i)=>{
+    const start=t0+acc; acc+=seg.seconds; const gains=[];
+    seg.layers.forEach((u,k)=>{ if(!u){gains.push(null);return;} const src=ctx.createBufferSource(); src.buffer=buffers[u]; const g=ctx.createGain(); g.gain.value=0; src.connect(g).connect(ctx.destination); src.start(start); src.stop(start+seg.seconds+0.02); gains.push(g); });
+    segs.push({seg,start,dur:seg.seconds,gains,i});
+  });
+  preview={t0,total:totalSecs(),segs,raf:null}; applyIntensityToPreview(); tick();
+}
+function applyIntensityToPreview(){ if(!preview)return; for(const s of preview.segs){ s.gains.forEach((g,k)=>{ if(g) g.gain.setTargetAtTime(layerGain(k,intensity,song.layerMode), ctx.currentTime, 0.05); }); } }
+function tick(){
+  if(!preview)return; const el=ctx.currentTime-preview.t0;
+  if(autoBuild){ intensity=Math.min(maxInt(),(el/preview.total)*(maxInt()+0.05)); syncIntensityUI(); applyIntensityToPreview(); }
+  const ph=$("#playhead"); const frac=Math.min(1,Math.max(0,el/preview.total));
+  ph.style.opacity=1; ph.style.left=(($("#timeline").offsetLeft)+frac*$("#timeline").offsetWidth)+"px";
+  let cur=preview.segs[0]; for(const s of preview.segs){ if(el>=s.start-preview.t0) cur=s; }
+  document.querySelectorAll(".seg").forEach(e=>e.classList.toggle("active",+e.dataset.i===cur.i));
+  document.querySelectorAll("#mbody tr").forEach(e=>e.classList.toggle("active",+e.dataset.i===cur.i));
+  $("#seglive").innerHTML=`<b>${cur.seg.id}</b> · ${cur.seg.type.toLowerCase()} · int ${intensity.toFixed(2)}`;
+  updateClock(el);
+  if(el>=preview.total){ if(loopSong){ playSong(); return; } stopPreview(); return; }
+  preview.raf=requestAnimationFrame(tick);
+}
+function updateClock(el){ $("#clock").textContent=`${fmt(el)} / ${fmt(totalSecs())}`; }
+function stopPreview(){ if(preview){ for(const s of preview.segs) s.gains.forEach(g=>{if(g){try{g.disconnect()}catch(e){}}}); if(preview.raf)cancelAnimationFrame(preview.raf); } preview=null; $("#playhead").style.opacity=0; document.querySelectorAll(".seg.active,#mbody tr.active").forEach(e=>e.classList.remove("active")); $("#playBtn").classList.remove("on"); $("#playBtn").textContent="▶ Play"; }
+function stopAll(){ stopAudition(); stopPreview(); }
+
+function syncIntensityUI(){ $("#intensity").value=intensity; const k=Math.min(maxInt(),Math.round(intensity)); $("#ival").textContent=song.layerLabels[k]; }
+$("#playBtn").onclick=async()=>{ if(preview){ stopPreview(); } else { $("#playBtn").classList.add("on"); $("#playBtn").textContent="… playing"; await playSong(); } };
+$("#fullSongBtn").onclick=async()=>{ stopAll(); intensity=maxInt(); autoBuild=false; $("#autoBtn").classList.remove("on"); $("#intensity").disabled=false; syncIntensityUI(); $("#playBtn").classList.add("on"); $("#playBtn").textContent="… full mix"; await playSong(); };
+$("#stopBtn").onclick=stopAll;
+$("#loopBtn").onclick=function(){ loopSong=!loopSong; this.classList.toggle("on",loopSong); };
+$("#autoBtn").onclick=function(){ autoBuild=!autoBuild; this.classList.toggle("on",autoBuild); $("#intensity").disabled=autoBuild; };
+$("#intensity").oninput=function(){ intensity=+this.value; autoBuild=false; $("#autoBtn").classList.remove("on"); this.disabled=false; syncIntensityUI(); applyIntensityToPreview(); };
+
+(async function init(){ try{ buildCutSelect(); await loadCut("fine5"); }catch(e){ $("#status").textContent="load failed: "+e.message; } })();
+</script>
+</body>
+</html>
