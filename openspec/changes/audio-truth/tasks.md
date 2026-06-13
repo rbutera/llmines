@@ -1,10 +1,10 @@
 ## 1. Event truth — deriver consumes real telemetry (code, no asset/core runtime dependency)
 
-- [ ] 1.1 Add a `readTelemetry(rs)` adapter in `events.ts` that reads the controller's pass-completion (`lastPass`: `{id, squares, comboMultiplier, groupErases}`) and lock (`lastLock`: `{id, cause}`) telemetry fields, returning a normalized `{pass?, lock?}` for the frame; mark it `// TODO(core-lumines-fidelity)` and make absent fields return `undefined` (no pass / no lock) — never a score-based estimate.
-- [ ] 1.2 Rewrite `AudioEventDeriver.derive` to emit `lineClear` from `lastPass.id` advancing AND `pass.squares >= 1` (a zero-square pass-id bump emits nothing) (`squares = pass.squares`, `combo = pass.comboMultiplier - 1`), and `lock` from `lastLock.id` advancing (carrying `cause`); keep `chain` from `lastChainClear.id`, and `move`/`rotate`/`softDrop` unchanged.
-- [ ] 1.3 Delete the `score`-delta branch and the `round(delta/40)` estimate entirely from `events.ts` (no fallback path that infers clears from score) and drop `score` from the deriver `Snapshot`.
-- [ ] 1.4 Extend `AudioEvent` in `engine.ts`: `lock` gains optional `cause: "hard" | "soft" | "gravity"`; confirm `lineClear.combo` now carries the streak offset. Keep the union otherwise stable.
-- [ ] 1.5 Rewrite `events.test.ts` against the real contract: real-clear → one truthful `lineClear`; score-only event (soft-drop/board bonus) → no `lineClear`; multiplied pass not inflated; lock-per-settle for gravity/soft/hard; missing telemetry → silent (no inference). (covers `audio-event-truth`)
+- [x] 1.1 Add a `readTelemetry(rs)` adapter in `events.ts` that reads the controller's pass-completion (`lastPass`: `{id, squares, comboMultiplier, groupErases}`) and lock (`lastLock`: `{id, cause}`) telemetry fields, returning a normalized `{pass?, lock?}` for the frame; mark it `// TODO(core-lumines-fidelity)` and make absent fields return `undefined` (no pass / no lock) — never a score-based estimate.
+- [x] 1.2 Rewrite `AudioEventDeriver.derive` to emit `lineClear` from `lastPass.id` advancing AND `pass.squares >= 1` (a zero-square pass-id bump emits nothing) (`squares = pass.squares`, `combo = pass.comboMultiplier - 1`), and `lock` from `lastLock.id` advancing (carrying `cause`); keep `chain` from `lastChainClear.id`, and `move`/`rotate`/`softDrop` unchanged.
+- [x] 1.3 Delete the `score`-delta branch and the `round(delta/40)` estimate entirely from `events.ts` (no fallback path that infers clears from score) and drop `score` from the deriver `Snapshot`.
+- [x] 1.4 Extend `AudioEvent` in `engine.ts`: `lock` gains optional `cause: "hard" | "soft" | "gravity"`; confirm `lineClear.combo` now carries the streak offset. Keep the union otherwise stable.
+- [x] 1.5 Rewrite `events.test.ts` against the real contract: real-clear → one truthful `lineClear`; score-only event (soft-drop/board bonus) → no `lineClear`; multiplied pass not inflated; lock-per-settle for gravity/soft/hard; missing telemetry → silent (no inference). (covers `audio-event-truth`)
 
 ## 2. Clear-gated progression — weight + mandatory advance (code)
 

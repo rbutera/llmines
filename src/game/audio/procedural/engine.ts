@@ -173,12 +173,22 @@ export function makeTrack(id: string, base: string): TrackBundle {
   return { id, base };
 }
 
-/** A coarse "what just happened" describing one game action, fed to the engine. */
+/**
+ * A coarse "what just happened" describing one game action, fed to the engine.
+ *
+ * `lock.cause` (additive, audio-truth D1/D4): the settle cause carried from the
+ * deriver's `lastLock.cause` so the universal lock thud scales by it (hard hits
+ * hardest). Optional for back-compat — an absent cause routes a neutral lock.
+ *
+ * `lineClear.combo` now carries the REAL streak offset (`comboMultiplier - 1`,
+ * 0 = no streak) from truthful pass telemetry, so the engine's existing
+ * `1 + squares + combo` clear-weight needs no change (audio-truth D1/D2).
+ */
 export type AudioEvent =
   | { type: "move" }
   | { type: "rotate" }
   | { type: "softDrop" }
-  | { type: "lock" }
+  | { type: "lock"; cause?: "hard" | "soft" | "gravity" }
   | { type: "lineClear"; squares: number; combo: number }
   | { type: "chain"; size: number };
 
