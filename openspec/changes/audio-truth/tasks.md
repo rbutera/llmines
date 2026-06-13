@@ -29,10 +29,10 @@
 
 ## 5. Gates for the code waves
 
-- [ ] 5.1 `pnpm test` (vitest) green incl. the rewritten events/sfx/engine specs.
-- [ ] 5.2 `pnpm typecheck` and `pnpm lint` clean.
-- [ ] 5.3 `pnpm build` succeeds.
-- [ ] 5.4 `pnpm test:e2e:production-start` passes and `node scripts/repro-autoplay.mjs <baseURL>` passes under real `--autoplay-policy=document-user-activation-required` (sustained RMS, no autoplay error) — and additionally asserts that a fully-revealed segment's vocals sound and then the song advances (the B2 fix observable, not a proxy).
+- [x] 5.1 `pnpm test` (vitest) green incl. the rewritten events/sfx/engine specs.
+- [x] 5.2 `pnpm typecheck` and `pnpm lint` clean.
+- [x] 5.3 `pnpm build` succeeds.
+- [x] 5.4 `pnpm test:e2e:production-start` passes and `node scripts/repro-autoplay.mjs <baseURL>` passes under real `--autoplay-policy=document-user-activation-required` (sustained RMS, no autoplay error) — and additionally asserts that a fully-revealed segment's vocals sound and then the song advances (the B2 fix observable, not a proxy).
 
 ## 6. Merge ordering with core-lumines-fidelity
 
