@@ -522,6 +522,12 @@ export function GameShell() {
         } as React.CSSProperties
       }
     >
+      {/* VIDEO BACKDROP — per-skin looping clip behind the board, with x-axis
+          parallax driven by the active piece and a transition clip on skin switch. */}
+      <div className="layer" style={{ zIndex: 0 }}>
+        <VideoBackdrop controller={controller} skinId={skinSwitch.skin.id} />
+      </div>
+
       {/* BOARD LAYER — the Three.js scene fills the entire viewport. */}
       <div className="layer" style={{ zIndex: 1 }}>
         <div className="ambient" />
@@ -539,30 +545,16 @@ export function GameShell() {
             >
               <div
                 style={{
-                  position: "relative",
                   width: `min(100vw, calc(100vh * (16 / 10)))`,
                   height: `min(100vh, calc(100vw * (10 / 16)))`,
                   aspectRatio: BOARD_ASPECT,
                 }}
               >
-                {/* VIDEO BACKDROP — scoped to the BOARD BOX (not the whole page):
-                    the per-skin clip backs the game well only, with x-axis parallax
-                    and the skin-switch transition clip. The page surround stays dark. */}
-                <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
-                  <VideoBackdrop
-                    controller={controller}
-                    skinId={skinSwitch.skin.id}
-                  />
-                </div>
-                <div
-                  style={{ position: "relative", zIndex: 1, width: "100%", height: "100%" }}
-                >
-                  <GameCanvas
-                    controller={controller}
-                    palette={skinSwitch.board}
-                  />
-                  {phase === "playing" && <ScoreFx score={score} />}
-                </div>
+                <GameCanvas
+                  controller={controller}
+                  palette={skinSwitch.board}
+                />
+                {phase === "playing" && <ScoreFx score={score} />}
               </div>
             </div>
           </div>
