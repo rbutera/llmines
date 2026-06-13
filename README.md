@@ -196,6 +196,96 @@ attention.
 
 ---
 
+## 3b. Verified Lumines mechanics reference (deep research, 2026-06-13)
+
+Adversarially-verified reference for the original Lumines (PSP 2004) + Lumines Arise (2025),
+produced by a 107-agent research workflow (25 sources fetched, 95 claims extracted, 25 verified by
+3-vote adversarial panels, 16 confirmed). Sources: harddrop.com/wiki/Lumines, tetris.wiki/Lumines,
+Wikipedia, lumines.fandom.com (Timeline / Challenge Mode / Lumines II), diplograph.net Lumines
+Remastered notes, cglab.ca Aloupis et al. academic paper, GamingBolt Arise developer deep-dive,
+Push Square / GameSpot Arise reviews. This section is the implementation ground truth; it
+supersedes the vault notes referenced above where they disagree.
+
+### Confirmed (high confidence unless noted)
+
+1. **Field & pieces.** 16 wide × 10 tall. Pieces are 2×2 (O-tetromino) of dark/light sub-blocks,
+   **entering above the top centre of the field** (the visible field is fully usable; game over =
+   blocks pile to the top).
+2. **Timeline formula.** The sweeper moves **one column per eighth-note** of the current skin's
+   music. One full pass = 16 eighth-notes = exactly **two 4/4 bars at any BPM** (the designer chose
+   the 4/4 mandate to match the 16-column field). Skin BPM range in practice ≈60-90 BPM (slowest,
+   2-3 cols/s, sources disagree which skin is slowest) up to 180 BPM (6 cols/s). **The sweep speed
+   IS the active skin's music BPM** — this coupling is the game.
+3. **Difficulty is the BPM trade-off.** Fast skins shrink the window to build big combos; slow
+   skins give combo time but risk the field filling. Difficulty progression = the skin sequence's
+   BPM curve, not a separate level system.
+4. **Mark-then-batch-erase.** Squares are NOT erased on formation. The timeline **marks** square
+   cells as it passes over them (visual change only). Erasure fires **as a batch when the timeline
+   reaches a column with no marked blocks (a gap) or the right edge** — i.e. per contiguous marked
+   GROUP, after the bar fully passes that group. Overlapping squares merge into one group and erase
+   together. Gravity drops the stack after the group erase (cascades resolve on later passes).
+   Squares completed mid-pass ahead of the bar ARE marked + erased on the current pass.
+5. **Scoring (Challenge Mode), medium confidence on exact values.** 1-3 squares in a sweep = **40
+   pts each** (40/80/120). **4+ squares triggers a ×4 bonus: 4 = 640, then +160 per additional**
+   (5 = 800, 6 = 960). Points are **deferred and awarded when the sweep reaches the right edge**,
+   not at formation/erase time. Soft drop = **+1 pt per cell descended**; hard drop awards no drop
+   points.
+6. **Combo streaks are Lumines II+, not the 2004 original.** Sustaining 4+ squares across
+   successive sweeps chains a streak multiplier (1×/2×/3×/4× labels ≈ ×4/×8/×12/×16 on base) — in
+   Lumines II and later only. The original had just the single-sweep ×4 bonus. (Our COMBO_CURVE is
+   therefore a legitimate sequel mechanic, but the BASE single-sweep ×4 must exist first.)
+7. **Clear-gated music is the ORIGINAL design.** In 2004 Lumines, **if no square was cleared
+   during a skin's musical section, that section looped until a square was cleared.** Lumines II
+   removed this (music advances regardless). Medium confidence. — i.e. LLMines' clear-gated model
+   is faithful to Lumines 1; the autonomous timeline we rejected is the Lumines II behaviour.
+8. **Lumines Arise: Burst.** A chargeable gauge (shown above the timeline); activating Burst (1)
+   freezes pending matched-square clears so a large same-colour cluster can be built, (2) lifts
+   adjacent opposite-colour blocks airborne, (3) on release the frozen clears fire and the lifted
+   blocks fall back, landing into new squares for the next pass — a manufactured cascade. Distinct
+   from Tetris Effect's Zone (which only freezes). Exact charge thresholds/durations unverified.
+9. **Modes (for scope reference).** Classic shipped Challenge (endless skin sequence), Time
+   Attack, Puzzle, VS CPU/2P, Skin Edit. Arise adds Journey (story skins), challenge missions, and
+   Burst-centric multiplayer. LLMines currently implements a single endless Challenge-like mode.
+
+### Refuted by the verification panel (do NOT implement)
+
+- "40 pts/square ×4 (=160/square) for 4+ squares" — the ×4 applies to the package (640 for 4),
+  not linear per-square. Both harddrop's and tetris.wiki's phrasings of linear ×4 were killed 2-1
+  and 3-0.
+- "A square formed while the timeline is mid-square clears the already-passed portion with no
+  points" — killed; the group-batch model above is what's confirmed.
+- "Burst is invincibility for one colour with a scaling countdown" (Wikipedia) — killed 0-3.
+- The exact Arise grid size per-mode is UNCONFIRMED — don't assume 16×10 holds in Burst Battle.
+
+### Open questions the research couldn't settle
+
+- Chain/bonus-block spawn mechanics in the original (spawn rate, exact flood rules) — our 1-in-14
+  rate and orthogonal flood are a deliberate house variant until better data exists.
+- Exact Burst meter charge/duration numbers in Arise.
+- The full original skin sequence with per-skin BPMs.
+
+### What the deployed LLMines does NOT honour (delta vs this reference)
+
+Beyond the root-cause audit below (hard-drop gem loss A1, snapshot-at-pass-start A2, per-column
+erase A3, fixed seed A4, in-field spawn A5, sweep/music BPM decoupling A6, invented scoring A7):
+
+- **D1. No single-sweep ×4 bonus.** We pay 40×squares linearly and bolt a CROSS-pass curve on
+  top; real scoring pays 640/800/960 within ONE sweep. The big-clear payoff — the core risk/reward
+  of stacking toward a multi-square harvest — is missing.
+- **D2. Erase granularity.** Real: mark-on-pass + batch erase per contiguous group at the group's
+  end (gravity after the batch). Ours: snapshot at pass start + per-column delete + per-column
+  immediate settle. Both halves are wrong in different ways (A2 + A3).
+- **D3. Difficulty curve.** Real Lumines derives difficulty from the skin sequence's BPM. Ours
+  invents 120→144→168 BPM core "skins" that aren't the music (A6); with only two ~110/~126 BPM
+  songs the real curve is flat — needs a deliberate design choice (faster songs, or per-skin
+  speed-up variants) rather than the current lie.
+- **D4. Piece entry.** Real pieces enter above the field; ours spawn inside rows 0-1 (A5), losing
+  ~2 rows of usable height and causing early game over.
+- **D5. Single mode, no Burst.** Acceptable scope for now; noted so the gap is a decision, not an
+  accident.
+
+---
+
 ## 4. How it's implemented now
 
 ### Audio engine
@@ -340,3 +430,124 @@ Reported by Rai from playtesting the live build (2026-06-13). **None are fixed y
 
 ### Auth / infra
 - Login via Google just doesn't work.
+
+---
+
+## Root-cause audit (2026-06-13, code-verified against deployed `4509c7e`)
+
+Every finding below was verified by reading the deployed code (local HEAD is docs-only on top of
+the live deploy). File:line refs are to that state. This maps the Known Issues to their actual
+mechanisms and adds divergences-from-Lumines the playtest didn't surface.
+
+### A. Gameplay / game-logic flaws
+
+**A1. Hard drop silently destroys the gem (the "gems disappear when placed" bug).**
+`hardDrop` (`src/game/core/piece.ts:393-408`) rebuilds the active piece on each descent step as
+`{ cells, pos }` — it drops the `special` field. Move, rotate, and gravity-descent all carefully
+carry `special` (each has a comment saying dropping it made the gem vanish), but the hard-drop
+loop was missed. Any gem placed with hard drop — the most common placement — locks as a plain
+block. Fix: carry `active.special` through the descent loop.
+
+**A2. Squares formed mid-pass ahead of the bar don't clear that pass (the "staged blocks didn't
+clear" complaint).** `startPass` (`src/game/core/sweep.ts:24-29`) snapshots marked squares ONCE
+when the bar wraps to column 0. A piece locked after that — even far ahead of the bar — is not in
+the snapshot, so the bar sweeps straight past a completed square and it waits a full extra
+traversal (up to ~8s at 120 BPM). Real Lumines marks squares as the bar reaches them: anything
+completed ahead of the bar clears on the current pass. This makes clear timing feel arbitrary.
+
+**A3. Per-column deletion erases half a square before the bar finishes crossing it.**
+`processColumn` (`sweep.ts:97-115`) deletes each marked column the instant the leading edge
+crosses it and settles that column immediately. Real Lumines erases a marked GROUP only when the
+bar passes its right edge, then drops the stack. Visible symptom: squares visibly "peel"
+column-by-column and blocks above cascade into the bar mid-square.
+
+**A4. Fixed RNG seed — every game is the same piece sequence.** The controller is constructed
+with `seed: 1` and `handleRestart` calls `controller.restart(1)` (`GameShell.tsx:416`,
+`controller.ts:239`). Every run of the deployed game deals identical pieces. Also makes the
+leaderboard a memorisation contest.
+
+**A5. Premature game over: pieces spawn INSIDE the visible field.** `SPAWN_ROW = 0`
+(`constants.ts:17-18`) with game over when the 2×2 can't place at rows 0-1, cols 7-8
+(`piece.ts:130-143`). Real Lumines stages the falling piece ABOVE the playfield; the visible
+field is fully usable. LLMines effectively forfeits the top two rows of stacking height in the
+spawn columns, so the game ends while the board still looks playable — matching "game over often
+happens unexpectedly and prematurely".
+
+**A6. Sweep speed is not the music's tempo (core Lumines contract broken).** The sweep BPM comes
+from the CORE skin list `src/game/core/skins.ts` (120 → 144 → 168, advancing every
+`SKIN_ADVANCE_THRESHOLD = 20` squares) while the audio plays song1 at ~110 BPM or song2 at ~126
+BPM (`public/audio/manifest.json`). Two consequences: (1) the timeline bar is NEVER in sync with
+the audible music — the defining Lumines coupling; (2) there are TWO unrelated "skin" systems
+advancing on unrelated schedules: the core one (sweep speed + `skinIndex` palette, every 20
+squares) and the host one (`src/game/skins/skins.ts` NEON/PIPELINE: colour world + soundtrack, on
+song completion / the N key). The core skin system looks like a leftover that was never unified
+with the v2.5 skin-bundle system.
+
+**A7. Invented scoring constants (pending the mechanics research below).** `COMBO_CURVE = [4, 8,
+12, 16]` with `COMBO_MIN_SQUARES = 4` (`constants.ts:65-68`) — a ×4..×16 cross-pass multiplier —
+plus `SINGLE_COLOUR_BONUS = 1000`, `ALL_CLEAR_BONUS = 10000`. These are not real Lumines values;
+scoring is also banked only at pass completion rather than as groups erase. The mechanics
+reference below is the ground truth to re-derive scoring from.
+
+**A8. No replay/game-record system** — confirmed absent (and the fixed seed of A4 would make one
+trivially cheap: seed + input log is a full replay).
+
+### B. Audio-engine flaws
+
+**B1. "Clears" are inferred from SCORE DELTAS, so non-clear score events drive the song
+(`src/game/audio/procedural/events.ts:63-69`).** The deriver estimates `squares =
+max(1, round(delta/40))` from any score increase and always passes `combo: 0`. So: a banked
+soft-drop bonus (+N on lock) fires a fake `lineClear` and feeds `segmentScore` with no clear
+having happened; a combo-multiplied pass (4 squares × 40 × ×4 = 640) reads as 16 squares; an
+all-clear bonus (10,000) reads as 250 squares and slams the advance cap. The clear-gated design
+is fed by a proxy that routinely lies in both directions. The engine should be fed real
+`(squares, combo)` from the core's pass-completion, not a score diff.
+
+**B2. The "vocals revealed → mandatory advance" rule is structurally dead after the first full
+reveal.** `advanceSegment` carries `entryFloor = this.tier` (`engine.ts:1126`), so once one
+segment reaches its top tier, EVERY subsequent segment enters at the top — vocals playing from
+bar one. But `shouldAdvance` gate (b) (`engine.ts:1082`) requires the top reveal to be EARNED in
+the current segment (`segmentScore ≥ top × TIER_REVEAL_STEP`), explicitly excluding carried-in
+tops. Result: the steady state of a decent run is "vocals loop indefinitely until the player
+grinds out the 30-point clear-gate in every segment" — exactly the reported bug. The carried
+floor should cap below the top tier (vocals re-earned per segment), or a carried-in top should
+also arm the mandatory advance after one full loop.
+
+**B3. Clears are SILENT by design — the brief's clear-stage sound was cut.**
+`play()` (`engine.ts:1183-1191`) returns before SFX routing for `lineClear`/`chain`, and
+`sfxRouting.ts` documents "a clear is SILENT by design". The brief explicitly required a
+CLEAR-STAGE sound, and a `stage` sample is rendered, shipped in the manifest for both songs, and
+never played. The most rewarding moment in the game has no sound.
+
+**B4. Lock thud only fires on hard drops.** The deriver can only see hard-drop locks
+(`events.ts:77-87` — documented spike trade-off), so gravity- and soft-drop locks are silent.
+`move` is also unmapped (`sfxRouting.ts:31-33`). Net audible SFX: rotate, soft-drop tick,
+hard-drop thud — nothing for move, natural lock, clear, or chain. Matches "sfx are really really
+bad and not tied to [actions]".
+
+**B5. SFX are not segment-specific, so they sound out of place (Rai's diagnosis, 2026-06-13).**
+The manifest carries ONE SFX set per SONG (`songs[].sfx = {drop, move, rotate, softdrop, stage}`),
+cut once from the song's ad-libs/palette. Every segment — quiet intro, build, beat-drop, bridge —
+fires the same one-shots, so an ad-lib that fits one section clashes with the rest (wrong energy,
+wrong texture against the current backing). The fix is per-SEGMENT SFX palettes (cut each
+segment's action sounds from that segment's own stems/character, keyed in the manifest alongside
+`tiers`), so the action sounds always belong to what's currently playing.
+(An earlier draft of this audit flagged the `"@16n"` quantise delay (`engine.ts:1167-1176`) as
+the problem — Rai disagreed; the file choice, not the timing, is the issue.)
+
+**B6. The deployed layered mix can't match the full-mix master by construction.** Tier renders
+are cumulative stem sums rendered offline; the master (`0 *.wav`) was mixed/mastered as one bus.
+If the top tier is to sound like the song, the top tier should BE the master (or the render chain
+needs the master-bus processing). Source-of-truth paths are in Known Issues above.
+
+### C. Skins / progression / UI (confirmed mechanisms)
+
+- **Restart keeps the current skin** because the skin id is persisted to localStorage and
+  rehydrated (`useSkinSwitch.ts:16,56-64`), and `handleRestart` never resets it. Rai's rule:
+  restart → base skin.
+- **The "toggle skin" control**: `cycleSkin` is bound to a HUD button and the N key
+  (`GameShell.tsx:240-258`). Slated for removal per Known Issues.
+- **Game-over music reset works** (`resetForNewGame()` on the game-over edge,
+  `GameShell.tsx:215`) — but it resets segments only; the skin/track stays put (see above).
+- **Auth**: Google sign-in broken (Known Issues; not yet root-caused — `RealAccountProvider` /
+  Convex wiring is the suspect area).
