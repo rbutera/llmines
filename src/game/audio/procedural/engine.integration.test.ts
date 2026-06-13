@@ -867,17 +867,30 @@ describe("switchTrack (skin swap) on the manifest model", () => {
     // start a switch whose intro load is DEFERRED (parked, unresolved)...
     mockState.deferLoads = true;
     const switching = e.switchTrack({ id: "song2", base: "/audio/song2" });
-    // ...then SUPERSEDE it with a reset (bumps loadGen) before the intro resolves.
+    // ...then SUPERSEDE it with a reset (bumps loadGen + installs its OWN fresh map)
+    // before the intro resolves.
     e.resetForNewGame();
     await releaseDeferredLoads(); // the superseded switch's intro load now resolves → bail
     await switching;
     await settle();
 
-    // dispose the engine entirely: the OLD song1 SFX voices must be reachable + freed,
-    // not orphaned behind the empty map the aborted switch installed.
-    e.dispose();
-    await settle();
+    // the bail retires the OLD bank it was replacing: the old song1 SFX voices are freed
+    // by the bail itself (not orphaned behind the empty map the aborted switch installed).
     expect(oldSfx.every((p) => p.disposed)).toBe(true); // no leak
+
+    // and the reset-owned game is still HEALTHY — its own tier audio plays at the opening
+    // (the aborted switch must not have disposed the reset's pools or stomped its map). The
+    // fresh load is async; flush any remaining parked loads + settle so it is fully up.
+    await releaseDeferredLoads();
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBe(0);
+    expect(e.getAudioState().activeStems).toBeGreaterThanOrEqual(1);
+    expect(e.getAudioState().layerGains[e.getAudioState().tier]).toBeGreaterThan(0.5);
+
+    // a later full dispose is clean (no double-dispose throw) and frees everything.
+    expect(() => e.dispose()).not.toThrow();
+    await settle();
+    expect(oldSfx.every((p) => p.disposed)).toBe(true); // still freed, no resurrection
   });
 });
 

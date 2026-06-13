@@ -1615,10 +1615,20 @@ export class InteractiveAudioEngine {
     this.transitionInFlight = false;
     this.clearScheduled();
 
-    // Snapshot the old per-segment SFX pools BEFORE the try so the catch can re-attach
-    // them if a partial swap threw (otherwise the old, still-playing bank's SFX pools
-    // would be orphaned + leak — the fresh empty map installed mid-swap has none).
+    // The old (outgoing) per-segment SFX pools. The switch OWNS retiring this bank: it
+    // disposes oldSfx on success (after the crossfade settles) AND on every bail/throw,
+    // so the old voices never leak. `newSfx` is the switch's OWN fresh map; the switch
+    // only ever installs/disposes it under an IDENTITY check, so a concurrent
+    // resetForNewGame/dispose that installs its own map is never stomped.
     const oldSfx = this.sfxPoolsBySegment;
+    let newSfx: Map<number, Partial<Record<SfxName, SfxVoicePool>>> | undefined;
+    // Retire the old bank's SFX (dispose every pool); idempotent (clear() empties it).
+    const disposeOldSfx = () => {
+      for (const pools of oldSfx.values()) {
+        for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
+      }
+      oldSfx.clear();
+    };
 
     try {
       const song = this.resolveSong(manifest, track);
@@ -1634,7 +1644,8 @@ export class InteractiveAudioEngine {
       this.segments = newSegments;
       this.song = song;
       this.currentTrack = track;
-      this.sfxPoolsBySegment = new Map();
+      newSfx = new Map();
+      this.sfxPoolsBySegment = newSfx;
       this.songCompleted = false;
       this.segmentIndex = 0;
       this.maxSegmentReached = 0;
@@ -1643,16 +1654,24 @@ export class InteractiveAudioEngine {
       this.applyTempo(song);
       await this.loadSegment(0);
       // Superseded during the intro load (a reset/dispose/another switch bumped loadGen,
-      // or a later switch changed the track) → don't enter/schedule into this now-stale
-      // bank. Dispose the nodes this switch built and bail. RESTORE the old SFX map onto
-      // the engine first: the old bank keeps playing, so its SFX pools must stay
-      // reachable for a later resetForNewGame/dispose (otherwise they'd leak — the fresh
-      // empty map we installed at the top of the swap has none of them). The bail path
-      // never reached enterSegment/prefetch, so no NEW segment SFX pools were built.
+      // or a later switch changed the track). Dispose the nodes THIS switch built and the
+      // OLD bank it was retiring, then bail. We do NOT re-attach oldSfx: the superseding
+      // op now owns `this.sfxPoolsBySegment` and is responsible for it; we only touch our
+      // OWN map (newSfx), and only if it is still the attached one (an identity check so
+      // we never dispose/replace a reset-owned map). The bail path never reached
+      // enterSegment/prefetch, so newSfx holds no pools — but dispose it defensively.
       if (gen !== this.loadGen || this.currentTrack.id !== track.id) {
         for (const seg of newSegments) this.disposeLoaded(seg);
-        this.disposeAllSfx(); // dispose any (partial) new pools, then re-install the old
-        this.sfxPoolsBySegment = oldSfx;
+        if (this.sfxPoolsBySegment === newSfx) {
+          this.disposeAllSfx(); // our own (empty) map is still attached — free + clear it
+        } else {
+          // a superseding op replaced our map: dispose only our own pools, leave theirs.
+          for (const pools of newSfx.values()) {
+            for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
+          }
+          newSfx.clear();
+        }
+        disposeOldSfx(); // the old bank is being retired by this switch — free its voices
         this.switching = false;
         return;
       }
@@ -1671,18 +1690,23 @@ export class InteractiveAudioEngine {
       const disposeAt = at + seconds + 0.1;
       this.afterSettle(disposeAt, () => {
         for (const seg of oldSegments) this.disposeLoaded(seg);
-        for (const pools of oldSfx.values()) {
-          for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
-        }
-        oldSfx.clear();
+        disposeOldSfx();
       });
     } catch {
       // keep the old track running. If we'd already detached the old SFX map (the throw
-      // landed after the top-of-swap install) but never scheduled its disposal, the old
-      // pools would be orphaned + leak — re-attach them so a later teardown reaches them.
-      if (this.sfxPoolsBySegment !== oldSfx) {
-        this.disposeAllSfx(); // drop any partial new pools
+      // landed after the top-of-swap install), the old pools were never scheduled for
+      // disposal — free them now so they can't leak. Only re-attach our own new map's
+      // slot if it is still the attached one (don't stomp a superseding op's map).
+      if (newSfx !== undefined && this.sfxPoolsBySegment === newSfx) {
+        // our partial new map is still attached: drop it, restore the old bank's map so a
+        // later teardown frees those voices (the old track keeps playing on the catch).
+        this.disposeAllSfx();
         this.sfxPoolsBySegment = oldSfx;
+      } else if (newSfx === undefined) {
+        // threw before we ever detached the old map — nothing to restore.
+      } else {
+        // a superseding op owns the current map: don't touch it; just retire the old bank.
+        disposeOldSfx();
       }
     } finally {
       this.switching = false;
@@ -1723,6 +1747,11 @@ export class InteractiveAudioEngine {
 
       // Silence + tear down the old segment bank (no lingering audio from the last game).
       this.disposeAll();
+      // Install a FRESH SFX map so the reloaded game's pools never share the map object
+      // an in-flight (now-superseded) switchTrack may still hold a reference to — that
+      // switch, on resume, only re-attaches/disposes ITS OWN map (identity-checked), so a
+      // distinct object here keeps reset-owned pools out of its reach.
+      this.sfxPoolsBySegment = new Map();
 
       // Reset all progression state to the song's opening.
       this.segments = [];
