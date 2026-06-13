@@ -1,5 +1,5 @@
 import { chainFlood, type ChainClearRecord } from "./chain-clear";
-import { COLS, ROWS } from "./constants";
+import { COLS, ROWS, SWEEP_WRAP_EPSILON } from "./constants";
 import { isSquareAt } from "./detect";
 import { cloneGrid, settleColumnWithMarks } from "./grid";
 import { boardStateBonus, nextCombo, passPackage, passScore } from "./scoring";
@@ -253,7 +253,7 @@ export function advanceSweep(state: GameState, columns: number): GameState {
     // The leading edge at `sweepX` has reached (entered) column floor(sweepX);
     // clamp to the last column at pass end. `processedCols` is the next column to
     // process, so columns [processedCols, reachedCol] are newly reached this step.
-    const passComplete = sweepX >= COLS - 1e-9;
+    const passComplete = sweepX >= COLS - SWEEP_WRAP_EPSILON;
     const reachedCol = passComplete ? COLS - 1 : Math.floor(sweepX);
     if (reachedCol >= pass.processedCols) {
       crossColumns(
@@ -273,7 +273,7 @@ export function advanceSweep(state: GameState, columns: number): GameState {
     // Pass complete: bank scoring with the faithful rule, advance the combo,
     // apply board-state bonus, wrap, and start a fresh pass (grid already settled
     // by the per-group settles).
-    if (sweepX >= COLS - 1e-9) {
+    if (sweepX >= COLS - SWEEP_WRAP_EPSILON) {
       const squares = pass.distinctSquares;
       score += passScore(squares, combo);
       // RECORD-ONLY (D8): emit the pass-completion event with the squares cleared,

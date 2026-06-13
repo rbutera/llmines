@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { BPM, COLS, ROWS, type Piece, type PublicState } from "../core";
+import {
+  BPM,
+  COLS,
+  ROWS,
+  SWEEP_WRAP_EPSILON,
+  type Piece,
+  type PublicState,
+} from "../core";
 import { __resetAudioClockForTests } from "../audio/clock";
 import { type Clock, FakeClock } from "../time/clock";
 import { forwardDelta, GameController } from "./controller";
@@ -457,6 +464,18 @@ describe("Tempo-driven sweep progression (9.x)", () => {
     const before = c.testState().sweepX;
     c.testBeatFrame(MS_PER_EIGHTH);
     expect(c.testState().sweepX - before).toBeCloseTo(165 / FALLBACK, 6);
+  });
+
+  it("9.8 the controller tempo latch and the core wrap share one boundary tolerance (no drift)", () => {
+    // The core wraps at `sweepX >= COLS - SWEEP_WRAP_EPSILON` (sweep.ts) and the
+    // controller's tempo latch uses the SAME predicate
+    // (`phaseBefore + delta >= COLS - SWEEP_WRAP_EPSILON`), both reading this one
+    // exported constant. If they ever drifted, a frame landing within the epsilon
+    // of COLS would wrap in the core but not latch (delaying the new tempo a whole
+    // pass). Guarding the shared constant makes that drift impossible to ship.
+    // (The behavioural wrap-latch — across a normal wrap and across the first wrap
+    // after a re-suspend — is covered by 9.7 and the re-suspend test above.)
+    expect(SWEEP_WRAP_EPSILON).toBe(1e-9);
   });
 
   it("9.6 clearing squares does NOT advance the skin index (only setSkinIndex does)", () => {

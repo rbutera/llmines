@@ -43,6 +43,14 @@ export const SWEEP_SECONDS_PER_COL = SWEEP_SECONDS_PER_TRAVERSAL / COLS; // 0.25
 export const SWEEP_MS_PER_COL = SWEEP_SECONDS_PER_COL * 1000; // 250ms
 export const SWEEP_COLS_PER_SECOND = COLS / SWEEP_SECONDS_PER_TRAVERSAL; // 4 cols/s
 
+/**
+ * Float tolerance for "the sweep reached the right edge / a pass completed".
+ * `advanceSweep` wraps when `sweepX >= COLS - SWEEP_WRAP_EPSILON`; any other
+ * layer that decides "a pass completed this frame" (e.g. the controller's tempo
+ * latch) MUST use the same tolerance so it never lags a real wrap by an epsilon.
+ */
+export const SWEEP_WRAP_EPSILON = 1e-9;
+
 /** Production gravity tick interval (ms). Not used in test mode. */
 export const GRAVITY_INTERVAL_MS = 700;
 /** Soft-drop gravity interval (ms) while soft-drop is engaged. */

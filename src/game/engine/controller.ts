@@ -26,6 +26,7 @@ import {
   spawnFromQueue,
   spawnPiece,
   SWEEP_MS_PER_COL,
+  SWEEP_WRAP_EPSILON,
   tickHold,
   type GameState,
   type HoldState,
@@ -531,8 +532,11 @@ export class GameController {
       // rarely starts exactly at sweepX === 0; this phase-based crossing test
       // reliably latches even when a frame's net sweepX ends HIGHER than it
       // started (a frame longer than one pass). The CURRENT frame kept the old
-      // tempo through the wrap, so there is no mid-pass jump.
-      if (phaseBefore + delta >= COLS) {
+      // tempo through the wrap, so there is no mid-pass jump. The boundary
+      // tolerance MUST match the core's wrap predicate (advanceSweep uses
+      // `sweepX >= COLS - SWEEP_WRAP_EPSILON`) so the latch never lags a real wrap
+      // by an epsilon.
+      if (phaseBefore + delta >= COLS - SWEEP_WRAP_EPSILON) {
         this.activeBpm = this.pendingTempoBpm;
       }
     }
