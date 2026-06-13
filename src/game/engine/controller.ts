@@ -181,6 +181,17 @@ export interface RenderState {
    * `undefined` until the first lock.
    */
   lastLock?: { id: number; cause: "gravity" | "soft" | "hard" };
+  /**
+   * Additive (render-only): the count of DISTINCT completed 2x2 squares currently
+   * staged for clear on the settled grid this frame, copied straight from
+   * `computeMarked(state.grid).distinctSquares` (the same value `PublicState` exposes).
+   * The audio layer derives the `match` ding from this count RISING versus the previous
+   * frame (a square newly formed by a piece lock OR a post-clear gravity cascade), and
+   * stays silent when it DECREASES (the sweep erasing a square). Lock-independent — a
+   * cascade-formed square does not bump `lastLock.id`, so this count is the only signal
+   * that covers it. Pure projection — no logic change.
+   */
+  markedSquares: number;
 }
 
 export interface ControllerOptions {
@@ -845,6 +856,9 @@ export class GameController {
     // appear to drift. Test mode is always quiescent (no auto-gravity).
     const resting = isResting(this.state);
     const held = isHeld(this.state);
+    // computed once: the marked cells (for the renderer) AND the distinct-square count
+    // (for the audio match-ding deriver) come from the same single grid scan.
+    const markResult = computeMarked(this.state.grid);
     return {
       grid: this.state.grid,
       active: this.state.active,
@@ -856,7 +870,8 @@ export class GameController {
       gameOver: this.state.gameOver,
       sweepX: this.state.sweepX,
       seed: this.state.seed,
-      marked: computeMarked(this.state.grid).marked,
+      marked: markResult.marked,
+      markedSquares: markResult.distinctSquares,
       hold: this.state.hold,
       queue: this.state.queue,
       // Render-only: the host-owned skin index + the current sweep tempo. The

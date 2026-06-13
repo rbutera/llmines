@@ -1,28 +1,32 @@
 /**
- * Per-action SFX routing — audio-truth (D4).
+ * Per-action SFX routing — heat/tone model (design D6).
  *
- * The pure action→SFX one-shot map. There is a SINGLE fixed routing (no mix
- * selector). Each gameplay event fires its mapped recorded one-shot:
- *  - lineClear / chain → `stage` (the clear-stage sound, B3 fix — clears are no
- *    longer silent). `chain` is the bigger, rarer event and is routed audibly
- *    DISTINCT (a hot `stage` plus an optional layered `drop` impact — D4a, a
- *    single decision point so the ear-gate can A/B it).
- *  - lock → `drop` for EVERY settle (gravity / soft / hard), so a settle always
- *    thuds (B4 fix — not only on hard drops). Velocity is scaled by cause at the
- *    call site (engine.play), not here.
- *  - rotate → `rotate`, softDrop → `softdrop` (unchanged).
- *  - move → SILENT by explicit decision (a per-column blip on every step is noise
- *    against a music-led mix; the felt actions are rotate / soft-drop / lock /
- *    clear).
+ * The pure action→SFX one-shot map for SAMPLE mode (the recorded per-segment path).
+ * In TONE mode the engine plays synthesised in-key tones instead and this map is not
+ * used for the audible hit; it is kept as the recorded routing the `"sample"` selector
+ * falls back to. Routing is mode-aware via {@link routeEvent}:
+ *  - SAMPLE mode:
+ *     - match → `stage` (forming a 2x2 square — the clear-stage sound)
+ *     - chain → `stage` + a layered `drop` impact (D4a, audibly distinct)
+ *     - lock → `drop` for EVERY settle (gravity / soft / hard); velocity scaled by
+ *       cause at the call site (engine.play), not here
+ *     - rotate → `rotate`, softDrop → `softdrop`
+ *     - lineClear (sweep CLEAR) → SILENT (clearing makes no noise; only forming a
+ *       match dings)
+ *     - move → SILENT (a per-column blip on every step is noise against a music mix)
+ *  - TONE mode: only `match`, `rotate`, `softDrop`, `lock` route (to tones); `move`,
+ *    `lineClear` (sweep clear) and `chain` are SILENT (a chain is a clear — only
+ *    forming a match dings). The engine builds the actual tone in-key; this returns a
+ *    non-empty routing for the events that SOUND so the engine knows to play a tone.
  *
  * The `SfxName` set matches the manifest keys 1:1 (`move`, `rotate`, `softdrop`,
- * `drop`, `stage`) — the prior `harddrop`→`drop` name quirk is gone.
+ * `drop`, `stage`).
  *
  * Pure data + pure helpers (no Tone import) so the routing stays unit-testable and
  * importable in any environment.
  */
 
-import type { AudioEvent } from "./engine";
+import type { AudioEvent, SfxMode } from "./engine";
 
 /**
  * The action SFX slices. Matches the manifest `sfx` keys ONE-TO-ONE: `move`,
@@ -37,18 +41,19 @@ export interface VoiceRouting {
   /**
    * An optional SECOND one-shot layered under `sfx` (D4a — a `chain` layers a
    * `drop` impact under the hot `stage` so it sounds fatter than a plain clear).
-   * Undefined for every other event.
+   * Undefined for every other event. Sample mode only.
    */
   layer?: SfxName;
 }
 
 /**
- * The single fixed action→SFX map. `lineClear`/`chain` route to the clear `stage`
+ * The SAMPLE-mode action→SFX map. `match`/`chain` route to the clear `stage`
  * (chain also layers a `drop` impact). `lock` routes to `drop` (universal settle).
- * `move` is intentionally absent (silent).
+ * `move` and the sweep `lineClear` are intentionally absent (silent — clearing makes
+ * no noise, only forming a match dings).
  */
-const ACTION_SFX: Partial<Record<AudioEvent["type"], VoiceRouting>> = {
-  lineClear: { sfx: "stage" },
+const SAMPLE_SFX: Partial<Record<AudioEvent["type"], VoiceRouting>> = {
+  match: { sfx: "stage" },
   chain: { sfx: "stage", layer: "drop" },
   lock: { sfx: "drop" },
   rotate: { sfx: "rotate" },
@@ -56,9 +61,26 @@ const ACTION_SFX: Partial<Record<AudioEvent["type"], VoiceRouting>> = {
 };
 
 /**
- * The voice routing for one event (empty object = silence). `move` returns `{}`
- * (silent by decision); every other mapped event returns its one-shot(s).
+ * The TONE-mode routing: which events SOUND a synthesised tone. `match`, `rotate`,
+ * `softDrop` and `lock` sound; `move`, the sweep `lineClear` AND `chain` are silent
+ * (a chain is a clear — only forming a match dings). The `sfx` value is a stable
+ * non-empty marker (the recorded name) so callers can test "does this event sound in
+ * tone mode" purely; the engine picks the actual in-key note from the event type.
  */
-export function routeEvent(ev: AudioEvent): VoiceRouting {
-  return ACTION_SFX[ev.type] ?? {};
+const TONE_SFX: Partial<Record<AudioEvent["type"], VoiceRouting>> = {
+  match: { sfx: "stage" },
+  lock: { sfx: "drop" },
+  rotate: { sfx: "rotate" },
+  softDrop: { sfx: "softdrop" },
+};
+
+/**
+ * The voice routing for one event under the active mode (empty object = silence).
+ * Defaults to `"tone"` when no mode is passed (the engine default). `move`, the sweep
+ * `lineClear` and (in tone mode) `chain` return `{}` (silent by decision); every other
+ * mapped event returns its one-shot(s).
+ */
+export function routeEvent(ev: AudioEvent, mode: SfxMode = "tone"): VoiceRouting {
+  const map = mode === "sample" ? SAMPLE_SFX : TONE_SFX;
+  return map[ev.type] ?? {};
 }

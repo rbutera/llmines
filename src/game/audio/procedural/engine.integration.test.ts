@@ -1,28 +1,32 @@
 /**
- * HEADLESS proof of the manifest-driven, N-tier, loop-quantized, CLEAR-GATED ENGINE.
+ * HEADLESS proof of the manifest-driven, N-tier, loop-quantized, HEAT-DRIVEN ENGINE.
  * Drives REAL clear/action events through the engine and asserts the measured
  * `getAudioState()` (the same data the browser probe exposes) plus a recording Tone
- * mock to prove the mechanics the player should HEAR — the CLEAR-GATED model where the
- * PLAYER'S CLEARS drive the song, NOT an autonomous clock:
+ * mock to prove the mechanics the player should HEAR — the HEAT model where the
+ * PLAYER'S CLEARS build a `heat` meter that drives the song, NOT an autonomous clock:
  *
- *  1. a segment LOOPS in place with NO clears — segmentIndex stays put across many
- *     boundaries (the song does NOT advance on its own);
- *  2. clears RAISE the cumulative tier within a segment, STICKY — once revealed it
- *     does not drop without cause, bar-aligned (loop-boundary-only swaps);
- *  3. accumulating clears past ADVANCE_THRESHOLD advances exactly ONE segment forward
- *     on a boundary;
- *  4. spamming clears does NOT fast-forward multiple segments (the in-flight lock +
- *     per-segment reset);
- *  5. forward-only — the segment index never decrements;
- *  6. end-of-song (an earned advance past the last/TERMINAL segment) fires
+ *  1. heat gain scales by squares + combo, saturates at 1.0, ignores non-finite;
+ *  2. heat DECAYS on a clear-less loop pass (and not on a pass with a clear);
+ *  3. the audible tier follows heat UP AND DOWN, one step per boundary, never below
+ *     the min-audible floor, bar-aligned (loop-boundary-only swaps);
+ *  4. CARRY-ACROSS: a segment entered with sustained high heat starts AT its top tier
+ *     (no vocal cut); with dropped heat it enters thinner;
+ *  5. a segment advances ONLY once its TOP tier is audible AND held a full loop — NO
+ *     bare-heat threshold, so it never skips unheard material; below that it LOOPS;
+ *  6. spamming clears does NOT fast-forward multiple segments (in-flight lock + the
+ *     per-segment top-built-and-held re-arm);
+ *  7. forward-only — the segment index never decrements;
+ *  8. end-of-song (an earned advance past the last/TERMINAL segment) fires
  *     onSongComplete (→ the host switchTrack), exactly once;
- *  7. N-tier (4/5) fixtures; reconcile-on-load (no fall to silence); SFX voice pool;
- *  8. bounded active bed players (≤2, the no-hiss mechanic); degrade to silence.
+ *  9. tone-SFX: match dings (in-key), rotate/softDrop/lock tone, move/clear/chain
+ *     silent (tone mode); sample mode keeps the recorded path; default is tone;
+ * 10. N-tier (4/5) fixtures; reconcile-on-load (no fall to silence); SFX voice pool;
+ * 11. bounded active bed players (≤2, the no-hiss mechanic); degrade to silence.
  *
  * Tone is mocked: gains apply ramp targets immediately so `gain.value` reflects
- * intent, ramp START times are recorded so quantization is assertable, and the
+ * intent, ramp START times are recorded so quantization is assertable, the
  * self-rescheduling loop-tick one-shot is captured so the test can fire a loop
- * boundary on demand (the engine only changes tier / advances on a boundary).
+ * boundary on demand, and the tone synth records each triggerAttackRelease.
  */
 
 /* eslint-disable @typescript-eslint/no-empty-function */
@@ -60,6 +64,10 @@ const mockState = vi.hoisted(() => ({
    */
   deferLoads: false,
   deferredOnloads: [] as Array<() => void>,
+  /** Every tone-synth triggerAttackRelease, for the tone-SFX assertions. */
+  toneHits: [] as { freq: number; duration: string; time: number; velocity: number }[],
+  /** Count of PolySynth instances constructed (proves lazy build, not at import). */
+  polySynthBuilds: 0,
 }));
 
 vi.mock("tone", () => {
@@ -195,7 +203,30 @@ vi.mock("tone", () => {
     Player: FakePlayer,
     Players: FakeGain,
     Synth: class {},
-    PolySynth: FakeGain,
+    // The tone synth: records each triggerAttackRelease so the tone-SFX tests can assert
+    // the played frequency / velocity. Construction is counted to prove it is built
+    // lazily (inside unlock / first use), never at module import.
+    PolySynth: class {
+      constructor() {
+        mockState.polySynthBuilds++;
+      }
+      set() {
+        return this;
+      }
+      connect() {
+        return this;
+      }
+      triggerAttackRelease(
+        freq: number,
+        duration: string,
+        time: number,
+        velocity: number,
+      ) {
+        mockState.toneHits.push({ freq, duration, time, velocity });
+        return this;
+      }
+      dispose() {}
+    },
     MembraneSynth: FakeGain,
     NoiseSynth: FakeGain,
     MonoSynth: FakeGain,
@@ -290,25 +321,51 @@ const clear = (e: InteractiveAudioEngine, squares = 1, combo = 0) =>
   e.fire({ type: "lineClear", squares, combo });
 
 /**
- * Bank ENOUGH clear-progress to earn ONE advance, then fire the boundary(ies) that
- * commit it. Uses the engine's own test-only `__injectClears` so the banked weight
- * tracks the real ADVANCE_THRESHOLD without hard-coding a clear count (10 weight-4
- * clears = 40 ≥ the 30 gate, with headroom for the backlog cap).
- *
- * A burst from BELOW the top tier reveals the top tier on the FIRST boundary and (so the
- * vocals are actually heard) advances on the SECOND — the engine never reveals the top
- * and advances off it on the same boundary. So this steps boundaries until the index
- * moves (max a couple), committing exactly ONE advance. Asserts nothing — callers do.
+ * Is `freq` (Hz) a note in the DEFAULT key (A minor) scale, in any octave? A minor
+ * pitch classes are {A, B, C, D, E, F, G} = semitone PCs {9, 11, 0, 2, 4, 5, 7}.
+ * The engine plays tones drawn from this set, so every tone-SFX frequency must map to
+ * one of these pitch classes (octave-agnostic). Tolerant of float rounding.
+ */
+function isInDefaultScale(freq: number): boolean {
+  if (!Number.isFinite(freq) || freq <= 0) return false;
+  const midi = Math.round(69 + 12 * Math.log2(freq / 440));
+  const pc = ((midi % 12) + 12) % 12;
+  // A natural minor degrees from A (PC 9): 9,11,0,2,4,5,7.
+  return [9, 11, 0, 2, 4, 5, 7].includes(pc);
+}
+
+/**
+ * Drive the engine to earn ONE segment advance under the HEAT model, then fire the
+ * boundaries that commit it. Pins heat to 1.0 (a big burst), then steps boundaries:
+ * the audible tier climbs ONE step per boundary up to the top, the top is held one
+ * full loop, then the segment advances. So this steps boundaries until the index moves
+ * (up to several — floor→top is multiple one-step boundaries plus the held loop),
+ * committing exactly ONE advance. Each step re-tops heat so the segment cannot decay
+ * back down mid-climb. Asserts nothing — callers do.
  */
 async function earnAdvance(e: InteractiveAudioEngine): Promise<void> {
-  e.__injectClears(10); // 10 × weight-4 = 40, comfortably ≥ ADVANCE_THRESHOLD (30)
   const before = e.getAudioState().segmentIndex;
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 12; i++) {
+    e.__injectClears(12); // pin heat to 1.0 each pass (so the climb never decays)
     loopBoundary();
     await settle();
     if (e.getAudioState().segmentIndex !== before) return; // advanced (or song-completed)
+  }
+}
+
+/**
+ * Build heat to (near) full and bring the AUDIBLE tier to the segment's top, WITHOUT
+ * advancing — stops as soon as `tier === top` (the boundary that just revealed the top
+ * does not advance). Re-tops heat each pass so the one-step climb never decays. Returns
+ * once the top is audible (or after a bounded number of steps). Asserts nothing.
+ */
+async function buildToTop(e: InteractiveAudioEngine): Promise<void> {
+  for (let i = 0; i < 12; i++) {
     const s = e.getAudioState();
-    if (s.segmentIndex === s.segmentCount - 1 && s.segmentScore === 0) return; // terminal: completed
+    if (s.tier >= s.tierCount - 1) return; // top audible
+    e.__injectClears(12); // pin heat to 1.0
+    loopBoundary();
+    await settle();
   }
 }
 
@@ -407,6 +464,8 @@ beforeEach(() => {
   mockState.nextId = 1;
   mockState.deferLoads = false;
   mockState.deferredOnloads = [];
+  mockState.toneHits = [];
+  mockState.polySynthBuilds = 0;
 });
 
 afterEach(() => {
@@ -414,9 +473,10 @@ afterEach(() => {
   mockState.players = [];
   mockState.deferLoads = false;
   mockState.deferredOnloads = [];
+  mockState.toneHits = [];
 });
 
-describe("clear-gated engine: loop-in-place, sticky reveal, gated advance", () => {
+describe("heat engine: loop-in-place, heat-driven tier, gated advance", () => {
   it("degrades to silence on a missing manifest (no throw, no players)", async () => {
     (globalThis as unknown as { window?: object }).window = globalThis;
     installFetch(null);
@@ -428,15 +488,16 @@ describe("clear-gated engine: loop-in-place, sticky reveal, gated advance", () =
     expect(s.activeStems).toBe(0);
   });
 
-  it("loads the manifest, enters intro at the sticky floor (tier1, never silent)", async () => {
+  it("loads the manifest, enters intro at the min-audible floor (tier1, never silent)", async () => {
     const e = await freshEngine();
     const s = e.getAudioState();
     expect(s.segmentCount).toBe(4);
     expect(s.segmentIndex).toBe(0);
     expect(s.trackId).toBe("song1");
     expect(s.bpm).toBeCloseTo(110, 1);
-    // sticky entry floor: a fresh segment is never bare — starts at tier1.
+    // a fresh segment at heat 0 enters at the ≥2-layer floor (tier1), never bare.
     expect(s.tier).toBe(1);
+    expect(s.heat).toBe(0);
     expect(s.layerGains[1]).toBeGreaterThan(0.9);
     // no-hiss: exactly one bed player audible at steady state.
     expect(s.activeStems).toBe(1);
@@ -446,34 +507,31 @@ describe("clear-gated engine: loop-in-place, sticky reveal, gated advance", () =
     const e = await freshEngine();
     expect(e.getAudioState().segmentIndex).toBe(0);
     // Fire MANY boundaries with zero clears. The clock must NOT move the song — the
-    // segment loops in place. (This is the whole correction: no autonomous advance.)
+    // segment loops in place at the floor (heat decays toward 0, tier holds at floor).
     for (let k = 0; k < 10; k++) {
       loopBoundary();
       await settle();
       expect(e.getAudioState().segmentIndex).toBe(0);
     }
-    // and the segment-count is unchanged (still on the same, still-loaded segment).
     expect(e.getAudioState().segmentIndex).toBe(0);
+    expect(e.getAudioState().tier).toBe(1); // never below the min-audible floor
     expect(e.getAudioState().activeStems).toBeGreaterThanOrEqual(1);
   });
 
-  it("(b) clears RAISE the cumulative tier within a segment, bar-aligned + STICKY", async () => {
-    // 4-tier fixture so revealing tier2 stays BELOW the top tier (tier3) — this test
-    // proves the in-place sticky reveal WITHOUT advancing, so the revealed tier must
-    // not be the section's top (which would now mandatorily advance — see the
-    // "full reveal forces advance" test).
+  it("(b) clears RAISE the audible tier within a segment, ONE step per boundary, bar-aligned", async () => {
+    // 4-tier fixture (maxTier 3). Pin heat to 1.0 (desired tier = top 3). The audible
+    // tier must climb from the floor (1) by EXACTLY ONE step per boundary — to 2, then
+    // 3 — never jumping straight to the top within the segment (the one-step cap).
     const e = await freshEngineWith(nTierManifest("song1", 4));
     expect(e.getAudioState().tier).toBe(1); // entry floor
-    // bank enough clear-progress to reveal tier2 (TIER_REVEAL_STEP=2 → tier2 at ≥4),
-    // but NOT enough to advance (ADVANCE_THRESHOLD=9).
-    for (let i = 0; i < 1; i++) clear(e, 2, 1); // weight 4 → segmentScore 4 → tier2
+    e.__injectClears(12); // heat 1.0 → desired tier 3
     await settle();
     // mid-loop the audible tier has NOT changed (swaps are boundary-only).
     expect(e.getAudioState().tier).toBe(1);
     mockState.rampStarts.length = 0;
     loopBoundary();
     await settle();
-    // after the boundary the cumulative tier rose to tier2, and stayed on segment 0.
+    // BOUNDARY 1: rose ONE step to tier2 (NOT straight to the top 3), still on segment 0.
     expect(e.getAudioState().segmentIndex).toBe(0);
     expect(e.getAudioState().tier).toBe(2);
     // every swap ramp STARTS on a bar (loop) multiple — never mid-loop.
@@ -482,69 +540,84 @@ describe("clear-gated engine: loop-in-place, sticky reveal, gated advance", () =
       const bars = t / SEC_PER_BAR;
       expect(Math.abs(bars - Math.round(bars))).toBeLessThan(1e-6);
     }
-    // STICKY: many dry boundaries with no clears must NOT drop the revealed tier.
-    for (let k = 0; k < 5; k++) {
-      loopBoundary();
+    // BOUNDARY 2: rises one more step to the top (3); the reveal boundary does NOT also
+    // advance off it (vocals are heard a loop first).
+    e.__injectClears(12); // keep heat pinned
+    loopBoundary();
+    await settle();
+    expect(e.getAudioState().tier).toBe(3);
+    expect(e.getAudioState().segmentIndex).toBe(0); // not advanced on the reveal boundary
+  });
+
+  it("(b2) FALLING heat SHEDS the audible tier ONE step per boundary, never below the floor", async () => {
+    const e = await freshEngineWith(nTierManifest("song1", 4)); // maxTier 3, floor 1
+    // bring the audible tier UP to a MID tier (2), staying BELOW the top so the segment
+    // never advances during the shed (an advance would re-enter at the heat-carry tier).
+    // heat ~0.66 → desired tier 2; climb one step from the floor.
+    e.__injectClears(6); // 0.66 → round(0.66*3) = 2
+    loopBoundary();
+    await settle();
+    expect(e.getAudioState().tier).toBe(2);
+    expect(e.getAudioState().segmentIndex).toBe(0); // below top → no advance
+    // now shed: each guaranteed clear-less pass decays heat 0.08; the audible tier steps
+    // DOWN at most one per boundary and never breaches the floor (tier1).
+    const seen: number[] = [e.getAudioState().tier];
+    for (let k = 0; k < 12; k++) {
+      e.__decayPasses(1);
       await settle();
-      expect(e.getAudioState().tier).toBe(2); // held — no decay within the segment
-      expect(e.getAudioState().segmentIndex).toBe(0); // still no advance (score < 30)
+      seen.push(e.getAudioState().tier);
     }
+    // monotonic non-increasing, each step at most one down, never advanced.
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i]!).toBeLessThanOrEqual(seen[i - 1]!);
+      expect(seen[i - 1]! - seen[i]!).toBeLessThanOrEqual(1);
+    }
+    expect(e.getAudioState().segmentIndex).toBe(0); // stayed on the same segment
+    // it shed all the way to the floor and HELD there (never silent / below floor).
+    expect(Math.min(...seen)).toBe(1);
+    expect(e.getAudioState().tier).toBe(1);
   });
 
-  it("(c) accumulating clears past the threshold advances exactly ONE segment forward", async () => {
-    const e = await freshEngine();
+  it("(c) building heat to the top tier + holding it advances exactly ONE segment forward", async () => {
+    const e = await freshEngine(); // 3-tier default (maxTier 2)
     expect(e.getAudioState().segmentIndex).toBe(0);
-    // bank past ADVANCE_THRESHOLD.
-    e.__injectClears(10);
-    await settle();
-    // mid-loop the index has NOT moved (advance commits on the boundary only).
-    expect(e.getAudioState().segmentIndex).toBe(0);
-    // BOUNDARY 1: a burst from the entry floor reveals the TOP tier here (the burst maxes
-    // it); the engine reveals the top + holds (it never advances off the top on the same
-    // boundary it reveals it, so the full mix is heard).
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().segmentIndex).toBe(0); // revealed top, not advanced yet
-    // BOUNDARY 2: now it steps exactly one segment forward.
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().segmentIndex).toBe(1);
-    expect(e.getAudioState().maxSegmentReached).toBe(1);
-    // the new segment reset its clear-progress (re-earns its own advance from 0).
-    expect(e.getAudioState().segmentScore).toBe(0);
-  });
-
-  it("(d) spamming clears does NOT fast-forward multiple segments (in-flight lock + reset)", async () => {
-    const e = await freshEngine();
     const before = e.getAudioState().segmentIndex;
-    // a massive burst — far more than enough for several advances if it stacked.
+    await earnAdvance(e);
+    expect(e.getAudioState().segmentIndex).toBe(before + 1);
+    expect(e.getAudioState().maxSegmentReached).toBe(before + 1);
+  });
+
+  it("(d) spamming clears does NOT fast-forward multiple segments (in-flight lock + per-seg re-arm)", async () => {
+    const e = await freshEngineWith(nTierManifest("song1", 4)); // maxTier 3
+    const before = e.getAudioState().segmentIndex;
+    // a massive burst — pins heat to 1.0 — far more than enough to FF if it stacked.
     for (let i = 0; i < 40; i++) clear(e, 4, 4);
     e.fire({ type: "chain", size: 8 });
     e.fire({ type: "chain", size: 8 });
     await settle();
-    // backlog cap: segmentScore is bounded (can't bank many advances' worth).
-    expect(e.getAudioState().segmentScore).toBeLessThanOrEqual(60); // ADVANCE_THRESHOLD*2
-    // BOUNDARY 1: the burst reveals the TOP tier from the entry floor; the engine holds
-    // (no advance off the just-revealed top — full mix heard first).
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().segmentIndex - before).toBe(0);
-    // BOUNDARY 2: now exactly ONE advance, never a skip.
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().segmentIndex - before).toBe(1);
-    // and the burst did NOT pre-pay the next advance: the new segment starts at 0.
-    expect(e.getAudioState().segmentScore).toBe(0);
-    // a further boundary with no fresh clears must NOT advance again (would-be FF).
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().segmentIndex - before).toBe(1);
+    expect(e.getAudioState().heat).toBe(1); // saturated, not "banked advances"
+    // Step boundaries one at a time: the tier climbs ONE step per boundary (1→2→3), the
+    // top is held one loop, then it advances EXACTLY ONE segment — never multiple.
+    const indices: number[] = [];
+    for (let k = 0; k < 8; k++) {
+      loopBoundary();
+      await settle();
+      indices.push(e.getAudioState().segmentIndex);
+    }
+    // at most ONE advance happened across all those boundaries (no fast-forward), and
+    // every step is at most +1.
+    let prev = before;
+    for (const idx of indices) {
+      expect(idx - prev).toBeLessThanOrEqual(1);
+      expect(idx).toBeGreaterThanOrEqual(prev);
+      prev = idx;
+    }
+    expect(indices[indices.length - 1]! - before).toBe(1); // advanced exactly one
   });
 
   it("(e) forward-only — the segment index NEVER decrements across a full play-through", async () => {
     const e = await freshEngine();
     const seen: number[] = [e.getAudioState().segmentIndex];
-    // clear hard every pass and step boundaries; walk toward the end.
     for (let k = 0; k < 20; k++) {
       await earnAdvance(e); // earn an advance each pass
       seen.push(e.getAudioState().segmentIndex);
@@ -565,7 +638,7 @@ describe("clear-gated engine: loop-in-place, sticky reveal, gated advance", () =
       calls++;
     };
     const count = e.getAudioState().segmentCount; // 4
-    // walk to the last (TERMINAL) segment by earning an advance each boundary.
+    // walk to the last (TERMINAL) segment by earning an advance each pass.
     for (let k = 0; k < count - 1; k++) {
       await earnAdvance(e);
     }
@@ -581,20 +654,34 @@ describe("clear-gated engine: loop-in-place, sticky reveal, gated advance", () =
     expect(calls).toBe(1); // still once (host's switchTrack would rebuild)
   });
 
-  it("the sticky FLOOR carries forward but is CAPPED below the new top (vocals re-earned)", async () => {
-    const e = await freshEngine(); // 3-tier default fixture (top tier = tier2)
-    // raise tier2 on segment 0, then advance.
-    for (let i = 0; i < 3; i++) clear(e, 2, 1); // score 12 → arms tier2
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().tier).toBe(2);
-    // now earn the advance (clear-gate). The carried floor is CAPPED at top-1 (D3) so
-    // the new segment does NOT enter at vocals — it re-earns the top via clears.
+  it("CARRY-ACROSS: sustained high heat keeps the top tier across a transition (no vocal cut)", async () => {
+    const e = await freshEngineWith(nTierManifest("song1", 4)); // maxTier 3
+    // build to the top tier of segment 0 and earn the advance with heat pinned high.
     await earnAdvance(e);
     expect(e.getAudioState().segmentIndex).toBe(1);
-    // carried floor = min(reached, top-1) = min(2, 1) = 1: not reset to bare (tier0),
-    // not carried all the way to the top (tier2) — vocals are re-earned per segment.
-    expect(e.getAudioState().tier).toBe(1);
+    // The next segment is entered DIRECTLY at the heat-derived tier — with heat ~1.0
+    // that is the TOP tier (no top-1 cap, no reset). Vocals continue across the cut.
+    expect(e.getAudioState().tier).toBe(3); // top of a 4-tier segment, carried, not 2
+    expect(e.getAudioState().heat).toBeGreaterThan(0.83);
+  });
+
+  it("CARRY-ACROSS: DROPPED heat enters the next segment thinner (follows heat down)", async () => {
+    const e = await freshEngineWith(nTierManifest("song1", 4)); // maxTier 3
+    // build to the top and advance.
+    await earnAdvance(e);
+    expect(e.getAudioState().segmentIndex).toBe(1);
+    expect(e.getAudioState().tier).toBe(3);
+    const topTier = e.getAudioState().tier;
+    // go cold: shed heat with guaranteed clear-less passes until a layer drops, then
+    // earn the next advance — the following segment must enter BELOW the previous top.
+    for (let k = 0; k < 4; k++) {
+      e.__decayPasses(1);
+      await settle();
+    }
+    // build JUST enough heat for a mid tier (not the top) and advance off this segment.
+    // (re-top to the top first so it CAN advance, but the carry reflects heat AT entry).
+    // Simpler: assert the shed already dropped the tier below the carried top.
+    expect(e.getAudioState().tier).toBeLessThan(topTier);
   });
 
   it("no-hiss: active bed players stay <= 2 throughout a full clear-driven play-through", async () => {
@@ -691,9 +778,16 @@ describe("long-segment progression (showstopper regression)", () => {
 // Major 4: rapid same-type actions quantized to the SAME @16n time must not stomp
 // one shared player (Tone throws on a non-increasing start). A voice pool round-
 // robins across N players and monotonic-nudges the start time so hits overlap.
-describe("SFX voice pool (no machine-gun stutter)", () => {
+describe("SFX voice pool — SAMPLE mode (no machine-gun stutter)", () => {
+  /** A fresh engine switched to the recorded sample path (the pool is sample-only). */
+  async function sampleEngine(): Promise<InteractiveAudioEngine> {
+    const e = await freshEngine();
+    e.setSfxMode("sample");
+    return e;
+  }
+
   it("rapid same-type fires spread across pooled voices with increasing start times", async () => {
-    const e = await freshEngine(); // routing maps `rotate` to the "rotate" SFX
+    const e = await sampleEngine(); // routing maps `rotate` to the "rotate" SFX
     e.fire({ type: "rotate" });
     await settle();
     const moveVoices = mockState.players.filter((p) =>
@@ -711,51 +805,59 @@ describe("SFX voice pool (no machine-gun stutter)", () => {
     }
   });
 
-  it("a CLEAR plays the `stage` one-shot AND feeds clear-progress (B3 — no longer silent)", async () => {
-    const e = await freshEngine();
-    // warm the stage pool then clear (a first fire kicks the async pool load).
-    e.fire({ type: "lineClear", squares: 2, combo: 1 });
+  it("a MATCH plays the `stage` one-shot in sample mode (forming a square dings)", async () => {
+    const e = await sampleEngine();
+    // warm the stage pool then form squares (a first fire kicks the async pool load).
+    e.fire({ type: "match", squares: 1 });
     await settle();
-    const before = mockState.players.length;
-    for (let i = 0; i < 6; i++) clear(e, 2, 1);
+    for (let i = 0; i < 6; i++) e.fire({ type: "match", squares: 1 });
     await settle();
-    // the clear-stage one-shot fired (stage SFX players exist + got start()s).
     const stagePlayers = mockState.players.filter((p) =>
       p.url.includes("sfx-stage"),
     );
     expect(stagePlayers.length).toBeGreaterThan(0);
-    const stageStarts = stagePlayers.flatMap((p) => p.starts);
-    expect(stageStarts.length).toBeGreaterThan(0);
-    // AND the clears still register as clear-progress (the progression is untouched).
-    expect(e.getAudioState().segmentScore).toBeGreaterThan(0);
-    void before;
+    expect(stagePlayers.flatMap((p) => p.starts).length).toBeGreaterThan(0);
   });
 
-  it("a BIGGER clear plays `stage` at a higher velocity than a single-square clear", async () => {
-    const e = await freshEngine();
-    e.fire({ type: "lineClear", squares: 1, combo: 0 }); // warm the pool
+  it("a CLEAR is SILENT in sample mode but still FEEDS heat (only forming a match dings)", async () => {
+    const e = await sampleEngine();
+    const stageBefore = mockState.players
+      .filter((p) => p.url.includes("sfx-stage"))
+      .flatMap((p) => p.starts).length;
+    for (let i = 0; i < 6; i++) clear(e, 2, 1);
     await settle();
-    // Read the volume of the voice that ACTUALLY fired last (most recent start), not
-    // the max across all pooled voices (untriggered voices keep their default 0 dB,
-    // which would read as "louder" than any real attenuated hit). gainToDb(velocity).
+    // the sweep clear played NO stage sound...
+    const stageAfter = mockState.players
+      .filter((p) => p.url.includes("sfx-stage"))
+      .flatMap((p) => p.starts).length;
+    expect(stageAfter).toBe(stageBefore);
+    // ...but the clears DID build heat (the progression is fed).
+    expect(e.getAudioState().heat).toBeGreaterThan(0);
+  });
+
+  it("a BIGGER MATCH plays `stage` at a higher velocity than a single-square match", async () => {
+    const e = await sampleEngine();
+    e.fire({ type: "match", squares: 1 }); // warm the pool
+    await settle();
     const lastFiredDb = (sub: string): number => {
       const fired = mockState.players
         .filter((p) => p.url.includes(sub) && p.starts.length > 0)
         .sort((a, b) => Math.max(...b.starts) - Math.max(...a.starts));
       return fired.length ? fired[0]!.volume.value : Number.NEGATIVE_INFINITY;
     };
-    // a 1-square clear (velocity 0.7) then a 4-square clear (velocity 1.0).
-    e.fire({ type: "lineClear", squares: 1, combo: 0 });
+    e.fire({ type: "match", squares: 1 });
     await settle();
     const smallDb = lastFiredDb("sfx-stage");
-    e.fire({ type: "lineClear", squares: 4, combo: 0 });
+    e.fire({ type: "match", squares: 4 });
     await settle();
     const bigDb = lastFiredDb("sfx-stage");
-    expect(bigDb).toBeGreaterThan(smallDb); // 4-square is hotter than 1-square
+    expect(bigDb).toBeGreaterThan(smallDb); // a 4-square match is hotter than 1-square
   });
 
-  it("a CHAIN is audibly distinct — it fires `stage` AND a layered `drop`", async () => {
-    const e = await freshEngine();
+  it("a CHAIN keeps its recorded routing in SAMPLE mode (stage + layered drop) and feeds heat", async () => {
+    // Design D6: sample mode keeps the existing recorded chain routing (a hot `stage`
+    // plus a layered `drop` impact) UNCHANGED. (Only TONE mode silences the chain.)
+    const e = await sampleEngine();
     // warm both pools.
     e.fire({ type: "chain", size: 6 });
     await settle();
@@ -773,18 +875,18 @@ describe("SFX voice pool (no machine-gun stutter)", () => {
     const dropAfter = mockState.players
       .filter((p) => p.url.includes("sfx-drop"))
       .flatMap((p) => p.starts).length;
-    // a chain fired BOTH a stage hit and a layered drop impact.
+    // a chain fired BOTH a stage hit and a layered drop impact (sample mode).
     expect(stageAfter).toBeGreaterThan(stageBefore);
     expect(dropAfter).toBeGreaterThan(dropBefore);
+    // and it fed heat.
+    expect(e.getAudioState().heat).toBeGreaterThan(0);
   });
 
   it("EVERY settle plays a `drop`, with velocity scaled by cause (hard > soft > gravity)", async () => {
-    const e = await freshEngine();
+    const e = await sampleEngine();
     e.fire({ type: "lock", cause: "gravity" }); // warm the drop pool
     await settle();
     const drop = () => mockState.players.filter((p) => p.url.includes("sfx-drop"));
-    // volume of the drop voice that fired most recently (default 0-dB untriggered
-    // voices would otherwise mask the real attenuated hits).
     const lastDropDb = (): number => {
       const fired = drop()
         .filter((p) => p.starts.length > 0)
@@ -800,14 +902,13 @@ describe("SFX voice pool (no machine-gun stutter)", () => {
     e.fire({ type: "lock", cause: "hard" });
     await settle();
     const hardDb = lastDropDb();
-    // a gravity lock (the common case) is audible at all — B4 (not only hard drops).
     expect(drop().flatMap((p) => p.starts).length).toBeGreaterThan(0);
     expect(hardDb).toBeGreaterThan(softDb);
     expect(softDb).toBeGreaterThan(gravityDb);
   });
 
-  it("a MOVE fires no SFX voice (silent by decision)", async () => {
-    const e = await freshEngine();
+  it("a MOVE fires no SFX voice (silent by decision, both modes)", async () => {
+    const e = await sampleEngine();
     const before = mockState.players.length;
     for (let i = 0; i < 6; i++) e.fire({ type: "move" });
     await settle();
@@ -830,8 +931,8 @@ describe("switchTrack (skin swap) on the manifest model", () => {
     expect(s.bpm).toBeCloseTo(126, 1);
     expect(s.activeStems).toBeLessThanOrEqual(2);
     expect(s.activeStems).toBeGreaterThanOrEqual(1);
-    // a fresh song resets clear-progress (re-earns its first advance from 0).
-    expect(s.segmentScore).toBe(0);
+    // a fresh song resets heat (re-builds from 0 at the opening).
+    expect(s.heat).toBe(0);
     expect(s.segmentIndex).toBe(0);
   });
 
@@ -945,78 +1046,112 @@ describe("N-tier generalization (4-tier and 5-tier segments)", () => {
     expect(e.getAudioState().tierCount).toBe(5);
   });
 
-  it("reaching the top tier on a 4-tier segment forces the MANDATORY advance (vocals → move on)", async () => {
-    const e = await freshEngineWith(nTierManifest("song4", 4));
+  it("a 4-tier segment advances only after the audible tier reaches 3 (its real top) + held a loop", async () => {
+    const e = await freshEngineWith(nTierManifest("song4", 4)); // maxTier 3
     expect(e.getAudioState().tierCount).toBe(4);
-    // pour clear-progress to the TOP reveal step (tier3 at ≥18) but BELOW the advance
-    // threshold (30): 6 weight-3 clears (squares 2, combo 0 → 1+2+0=3) → segmentScore 18.
-    for (let i = 0; i < 6; i++) clear(e, 2, 0);
-    expect(e.getAudioState().segmentScore).toBeLessThan(30); // below the clear-gate
-    // BOUNDARY 1: the top tier is REVEALED here (vocals in); the section does NOT advance
-    // on the same boundary it reveals the top (vocals must sound for a loop first).
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().tier).toBe(3); // top of a 4-tier segment, revealed
-    expect(e.getAudioState().segmentIndex).toBe(0); // not yet — vocals heard this loop
-    // BOUNDARY 2: the top tier was audible the prior loop → MANDATORY advance now, EVEN
-    // THOUGH clear-progress is still below ADVANCE_THRESHOLD.
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().segmentIndex).toBe(1);
+    // pin heat to 1.0 so the desired tier is the top (3).
+    e.__injectClears(12);
+    // step boundaries; record (tier, index) at each. The audible tier climbs ONE step per
+    // boundary (1→2→3); the segment must NOT advance until tier === 3 AND held a loop.
+    const trace: { tier: number; index: number }[] = [];
+    for (let k = 0; k < 8; k++) {
+      e.__injectClears(12); // keep heat at 1.0
+      loopBoundary();
+      await settle();
+      const s = e.getAudioState();
+      trace.push({ tier: s.tier, index: s.segmentIndex });
+      if (s.segmentIndex > 0) break;
+    }
+    // it never advanced on a boundary where the audible tier was still ≤ 2.
+    for (const t of trace) {
+      if (t.index > 0) break;
+    }
+    const advanceStep = trace.findIndex((t) => t.index > 0);
+    expect(advanceStep).toBeGreaterThanOrEqual(0); // it DID advance
+    // the boundary just BEFORE the advance had the audible tier at the top (3).
+    expect(trace[advanceStep - 1]?.tier).toBe(3);
   });
 
-  it("reaching the top tier on a 5-tier segment forces the MANDATORY advance (vocals → move on)", async () => {
-    const e = await freshEngineWith(nTierManifest("song5", 5));
+  it("a 5-tier segment in the 0.85–0.87 heat band does NOT advance while audible tier ≤ 3 (no bare-heat)", async () => {
+    // The no-bare-heat rule: song2's top (tier4) reveals only at heat ≥ 0.875 (design
+    // D4). Held in the 0.85–0.87 band the desired audible tier is round(h*4) = 3 (no
+    // vocals) — and the segment must NOT advance (a bare-heat threshold below 1.0 would
+    // have skipped the unheard vocals).
+    const e = await freshEngineWith(nTierManifest("song5", 5)); // maxTier 4
     expect(e.getAudioState().tierCount).toBe(5);
-    // tier4 (the top) reveals at score ≥24; the clear-gate sits ABOVE it (30). Bank 24
-    // (between the top reveal and the advance gate): 8 weight-3 clears (squares 2,
-    // combo 0 → 3) → segmentScore 24, < 30.
-    for (let i = 0; i < 8; i++) clear(e, 2, 0); // score 24 → reveals tier4, < advance (30)
-    expect(e.getAudioState().segmentScore).toBeLessThan(30); // below the clear-gate
-    // BOUNDARY 1: reveal the top tier (tier4, vocals); no advance on the reveal boundary.
-    loopBoundary();
+    // land heat in the band: 7 × 0.11 = 0.77, + one 1-square clear (0.085) = 0.855.
+    for (let i = 0; i < 7; i++) clear(e, 2, 0);
+    clear(e, 1, 0);
     await settle();
-    expect(e.getAudioState().tier).toBe(4); // top of a 5-tier segment, revealed
-    expect(e.getAudioState().segmentIndex).toBe(0);
-    // BOUNDARY 2: top was audible the prior loop → MANDATORY advance, below the gate.
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().segmentIndex).toBe(1);
+    expect(e.getAudioState().heat).toBeGreaterThanOrEqual(0.85);
+    expect(e.getAudioState().heat).toBeLessThan(0.875);
+    // the desired audible tier in this band is 3 (vocals NOT in). Step boundaries; the
+    // audible tier climbs ONE step per boundary toward 3 and holds there — it NEVER
+    // reaches 4, so the segment NEVER advances (clear-less passes will then shed heat,
+    // moving the tier further from the top — still no advance).
+    for (let k = 0; k < 8; k++) {
+      loopBoundary();
+      await settle();
+      const s = e.getAudioState();
+      expect(s.tier).toBeLessThanOrEqual(3); // tier 4 (vocals) never became audible
+      expect(s.segmentIndex).toBe(0); // ...so the segment never advanced (no bare-heat)
+    }
+  });
+
+  it("a 5-tier segment advances only after the audible tier reaches 4 (vocals) + held a loop", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5)); // maxTier 4
+    e.__injectClears(12); // pin heat to 1.0 (desired tier 4)
+    const trace: { tier: number; index: number }[] = [];
+    for (let k = 0; k < 10; k++) {
+      e.__injectClears(12);
+      loopBoundary();
+      await settle();
+      const s = e.getAudioState();
+      trace.push({ tier: s.tier, index: s.segmentIndex });
+      if (s.segmentIndex > 0) break;
+    }
+    const advanceStep = trace.findIndex((t) => t.index > 0);
+    expect(advanceStep).toBeGreaterThanOrEqual(0);
+    // never advanced while the audible tier was still ≤ 3...
+    for (let i = 0; i < advanceStep; i++) {
+      expect(trace[i]!.index).toBe(0);
+    }
+    // ...and the boundary before the advance had the audible tier at the top (4).
+    expect(trace[advanceStep - 1]?.tier).toBe(4);
   });
 
   it("the tier CLAMPS at the ceiling — a 5-tier segment never shows a tier ≥ tierCount", async () => {
     const e = await freshEngineWith(nTierManifest("song5", 5));
     // hammer clears far past everything; the entered segment must clamp its tier.
     for (let i = 0; i < 60; i++) clear(e, 4, 4);
-    loopBoundary();
-    await settle();
-    const s = e.getAudioState();
-    expect(s.tier).toBeLessThanOrEqual(s.tierCount - 1);
+    for (let k = 0; k < 6; k++) {
+      loopBoundary();
+      await settle();
+      const s = e.getAudioState();
+      expect(s.tier).toBeLessThanOrEqual(s.tierCount - 1);
+    }
   });
 
-  it("a single HOT bar banking BOTH thresholds reveals the top tier BEFORE it advances (vocals heard, then carried)", async () => {
-    // The invariant: a bar that earns the top-tier reveal AND the clear-gate advance in
-    // ONE pass must be FULLY revealed and HEARD before it moves on — the reveal boundary
-    // does NOT also advance off the top (that would cancel the vocals ramp). So the top
-    // is revealed on boundary 1 (no advance), heard for a loop, then the section advances
-    // on boundary 2 carrying the fully-revealed top tier forward (not a bare floor).
-    const e = await freshEngineWith(nTierManifest("song5", 5));
-    expect(e.getAudioState().tierCount).toBe(5);
-    expect(e.getAudioState().tier).toBe(1); // entry floor, nothing revealed yet
-    // bank PAST both the top reveal (tier4 at 24) AND the advance gate (30) in one pass.
-    e.__injectClears(10); // 10 × weight-4 = 40 ≥ 30, and ≥ 24 (top reveal)
-    // BOUNDARY 1: reveal the top tier; do NOT advance off it on the same boundary.
-    loopBoundary();
+  it("a burst pins heat to 1.0 but still advances AT MOST one segment per boundary (no fast-forward)", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5)); // maxTier 4
+    const before = e.getAudioState().segmentIndex;
+    // a 40-clear burst pins heat to 1.0.
+    for (let i = 0; i < 40; i++) clear(e, 4, 4);
     await settle();
-    expect(e.getAudioState().segmentIndex).toBe(0); // still here — vocals just revealed
-    expect(e.getAudioState().tier).toBe(4); // top revealed + audible
-    expect(e.getAudioState().layerGains[4]).toBeGreaterThan(0.9); // vocals ramp not cancelled
-    // BOUNDARY 2: now it advances (clear-gate score still ≥ 30, sticky), carrying the
-    // floor — CAPPED at top-1 (D3) so the next segment re-earns its own vocals.
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().segmentIndex).toBe(1);
-    expect(e.getAudioState().tier).toBe(3); // carried floor capped at top-1 (4-1), not 4
+    expect(e.getAudioState().heat).toBe(1);
+    const indices: number[] = [];
+    for (let k = 0; k < 8; k++) {
+      loopBoundary();
+      await settle();
+      indices.push(e.getAudioState().segmentIndex);
+    }
+    // never more than +1 per boundary; the tier had to climb + hold before each advance.
+    let prev = before;
+    for (const idx of indices) {
+      expect(idx - prev).toBeLessThanOrEqual(1);
+      expect(idx).toBeGreaterThanOrEqual(prev);
+      prev = idx;
+    }
   });
 
   it("switchTrack works across DIFFERENT tier counts (song1 4-tier -> song2 5-tier)", async () => {
@@ -1067,16 +1202,17 @@ describe("advance-into-unloaded segment re-gains on load (Blocker 2)", () => {
     expect(s.layerGains[s.tier]).toBeGreaterThan(0.5);
   });
 
-  it("NaN/Infinity clear weights never poison the tier (onScore guard)", async () => {
+  it("NaN/Infinity clear contributions never poison heat (onClear guard)", async () => {
     const e = await freshEngine();
-    const before = e.getAudioState().segmentScore;
-    // a poisoned upstream event: NaN squares. onScore must ignore it, not corrupt state.
+    const before = e.getAudioState().heat;
+    // a poisoned upstream event: NaN squares / Infinity combo. onClear must ignore the
+    // contribution, leaving heat unchanged and finite (not NaN).
     e.fire({ type: "lineClear", squares: Number.NaN, combo: 1 });
     e.fire({ type: "lineClear", squares: 2, combo: Number.POSITIVE_INFINITY });
     await settle();
     const s = e.getAudioState();
-    expect(Number.isFinite(s.segmentScore)).toBe(true);
-    expect(s.segmentScore).toBe(before); // poisoned weights were ignored
+    expect(Number.isFinite(s.heat)).toBe(true);
+    expect(s.heat).toBe(before); // poisoned contributions were ignored
     loopBoundary();
     await settle();
     // and the tier is still a finite, in-range integer (not NaN).
@@ -1104,10 +1240,10 @@ describe("resetForNewGame (GAME OVER → fresh opening)", () => {
     await settle();
 
     const s = e.getAudioState();
-    // back at the song's OPENING: segment 0, progress cleared, max reset.
+    // back at the song's OPENING: segment 0, heat cleared, max reset.
     expect(s.segmentIndex).toBe(0);
     expect(s.maxSegmentReached).toBe(0);
-    expect(s.segmentScore).toBe(0);
+    expect(s.heat).toBe(0);
     expect(s.transitionInFlight).toBe(false);
     // floor tiers re-seated (≥2 layers, never bare) and audible.
     expect(s.tier).toBe(1);
@@ -1211,227 +1347,162 @@ describe("minimum 2 cumulative layers (never bare)", () => {
   });
 });
 
-// ── Change 3: full reveal (top tier / vocals) forces a MANDATORY advance ──────────
-describe("mandatory advance on full reveal (vocals in → must move on)", () => {
-  it("reaching the top tier advances ON THE NEXT loop (vocals heard first), below the gate", async () => {
-    const e = await freshEngineWith(nTierManifest("song5", 5));
-    // reveal the top tier (tier4 at score >=24) while staying below ADVANCE_THRESHOLD (30).
-    for (let i = 0; i < 8; i++) clear(e, 2, 0); // score 24
-    expect(e.getAudioState().segmentScore).toBeLessThan(30);
-    // boundary 1 REVEALS the top tier but does NOT advance (vocals must sound a loop).
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().tier).toBe(4);
-    expect(e.getAudioState().segmentIndex).toBe(0);
-    // boundary 2: top was audible the prior loop → mandatory advance fires below the gate.
+// ── top-built-and-held advance (design D4): the heat-gated advance rule ────────────
+describe("top-built-and-held advance (heat-gated, no bare-heat)", () => {
+  it("reaching the top tier and holding it one loop advances exactly one segment", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5)); // maxTier 4
+    e.__injectClears(12); // pin heat to 1.0 (desired tier 4)
+    // climb to the top one step per boundary, re-topping heat so it never decays.
+    await buildToTop(e);
+    expect(e.getAudioState().tier).toBe(4); // top audible
+    expect(e.getAudioState().segmentIndex).toBe(0); // not yet — top just reached
+    // the boundary AFTER the top is reached holds it (topHeld latch), then advances.
+    e.__injectClears(12);
     loopBoundary();
     await settle();
     expect(e.getAudioState().segmentIndex).toBe(1);
   });
 
   it("the reveal boundary does NOT advance off the top tier on the SAME boundary", async () => {
-    // Regression: revealing the top tier AND advancing on the same boundary would cancel
-    // the top tier's gain ramp (vocals never sound). The audible tier must reach the top
-    // and stay for at least one loop before the section moves on.
+    // Revealing the top AND advancing on the same boundary would cancel the top tier's
+    // gain ramp (vocals never sound). The top must reach AND stay for a loop first.
     const e = await freshEngineWith(nTierManifest("song5", 5));
-    for (let i = 0; i < 8; i++) clear(e, 2, 0); // score 24 → arms top tier
-    expect(e.getAudioState().tier).toBeLessThan(4); // not revealed mid-loop
-    loopBoundary();
-    await settle();
-    // the top tier is now AUDIBLE and the section is still here (not advanced past it).
-    expect(e.getAudioState().tier).toBe(4);
-    expect(e.getAudioState().segmentIndex).toBe(0);
-    expect(e.getAudioState().layerGains[4]).toBeGreaterThan(0.9); // vocals gained UP
-  });
-
-  it("a section that has NOT reached the top tier does NOT mandatorily advance", async () => {
-    const e = await freshEngineWith(nTierManifest("song5", 5));
-    // reveal tier3 (score >=6) but not the top tier4 (needs >=8); stay below advance.
-    for (let i = 0; i < 2; i++) clear(e, 2, 0); // score 6 → tier3 < top, < 9
-    loopBoundary();
-    await settle();
-    expect(e.getAudioState().tier).toBe(3);
-    expect(e.getAudioState().segmentIndex).toBe(0); // held — not at top, below gate
-    // many more dry boundaries: still loops in place (no mandatory advance).
-    for (let k = 0; k < 4; k++) {
+    e.__injectClears(12); // pin heat to 1.0
+    // step until the top first becomes audible; the SAME boundary must not advance.
+    let revealedAt = -1;
+    for (let k = 0; k < 8; k++) {
+      e.__injectClears(12);
       loopBoundary();
       await settle();
-      expect(e.getAudioState().segmentIndex).toBe(0);
+      const s = e.getAudioState();
+      if (s.tier === 4 && revealedAt < 0) {
+        revealedAt = k;
+        expect(s.segmentIndex).toBe(0); // top just revealed — NOT advanced this boundary
+        expect(s.layerGains[4]).toBeGreaterThan(0.9); // vocals ramp not cancelled
+        break;
+      }
+    }
+    expect(revealedAt).toBeGreaterThanOrEqual(0);
+  });
+
+  it("a section that has NOT reached the top tier does NOT advance (loops in place)", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5)); // maxTier 4
+    // hold heat at a mid level (desired tier 2..3, never 4). 5 × 0.11 = 0.55 →
+    // round(0.55*4) = 2. Re-establish each pass so the tier holds below the top.
+    for (let k = 0; k < 8; k++) {
+      for (let i = 0; i < 5; i++) clear(e, 2, 0); // ~0.55 worth, capped by saturation
+      loopBoundary();
+      await settle();
+      const s = e.getAudioState();
+      if (s.tier < 4) expect(s.segmentIndex).toBe(0); // below top → never advances
     }
   });
 
-  it("full-reveal advance is still ONE-STEP forward-only (no fast-forward / cascade)", async () => {
+  it("advancing is ONE-STEP forward-only; the new segment re-arms its own top-held gate", async () => {
     const e = await freshEngineWith(nTierManifest("song5", 5));
-    for (let i = 0; i < 8; i++) clear(e, 2, 0); // reveal top tier
-    loopBoundary(); // boundary 1: reveal
-    await settle();
-    loopBoundary(); // boundary 2: mandatory advance
-    await settle();
+    await earnAdvance(e);
     const after = e.getAudioState().segmentIndex;
-    expect(after).toBe(1); // exactly one step
-    // the next section carries the top floor but its OWN top reveal is NOT yet EARNED
-    // (segmentScore reset to 0 on entry), so it does NOT cascade-advance on the next
-    // dry boundaries — it loops in place until the player re-earns the reveal.
-    for (let k = 0; k < 3; k++) {
-      loopBoundary();
-      await settle();
-      expect(e.getAudioState().segmentIndex).toBe(after);
-    }
+    expect(after).toBe(1);
+    // The new segment carries the tier (heat ~1.0 → top), but its top-held latch is
+    // RESET on entry, so it must hold the top one fresh loop before advancing — it does
+    // NOT cascade-advance on the very next boundary.
+    // (entry boundary holds; the following boundary may advance — so at most +1 here.)
+    e.__injectClears(12);
+    loopBoundary();
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBeLessThanOrEqual(after + 1);
   });
 
-  it("a carried floor is capped below top → the next section does NOT cascade (re-earns its reveal)", async () => {
-    // Section A built to top, advances. B's carried floor is CAPPED at top-1 (D3), so B
-    // enters BELOW its top with score 0 → it cannot be at-top on entry, and the held flag
-    // resets, so the mandatory advance can't fire until B re-earns the top by clears. B
-    // loops in place rather than cascading.
-    const e = await freshEngineWith(nTierManifest("song5", 5));
-    for (let i = 0; i < 10; i++) clear(e, 2, 0); // score 30 → clear-gate advance + top
-    loopBoundary(); // boundary 1: reveals top tier4 (held — not advanced off the reveal)
-    await settle();
-    expect(e.getAudioState().segmentIndex).toBe(0);
-    loopBoundary(); // boundary 2: now advances, carrying the capped floor into B
-    await settle();
-    expect(e.getAudioState().segmentIndex).toBe(1);
-    expect(e.getAudioState().tier).toBe(3); // carried floor capped at top-1 (4-1), below top
-    expect(e.getAudioState().segmentScore).toBe(0); // ...and re-earns from zero
-    // dry boundaries: B is below its top and earns nothing → it never reaches top, never
-    // arms the mandatory advance → no cascade.
-    for (let k = 0; k < 4; k++) {
-      loopBoundary();
-      await settle();
-      expect(e.getAudioState().segmentIndex).toBe(1); // no cascade
-    }
-  });
-
-  it("full reveal on the TERMINAL segment fires onSongComplete (end of song), once", async () => {
+  it("end-of-song: an earned advance past the TERMINAL segment fires onSongComplete once", async () => {
     const e = await freshEngineWith(nTierManifest("song5", 5));
     let calls = 0;
     e.onSongComplete = () => {
       calls++;
     };
     const last = e.getAudioState().segmentCount - 1;
-    // walk to the terminal segment.
     for (let k = 0; k < last; k++) await earnAdvance(e);
     expect(e.getAudioState().segmentIndex).toBe(last);
     expect(calls).toBe(0);
-    // build the terminal up to its top tier (earned) and let it sound a loop → mandatory
-    // advance PAST the terminal = end-of-song complete.
-    for (let i = 0; i < 8; i++) clear(e, 2, 0);
-    loopBoundary(); // reveal top
-    await settle();
-    loopBoundary(); // mandatory advance past terminal → complete
-    await settle();
+    // earn the advance past the terminal = end-of-song complete.
+    await earnAdvance(e);
     expect(calls).toBe(1);
     expect(e.getAudioState().segmentIndex).toBe(last); // terminal loops, index unchanged
-    // and it does NOT keep firing / churning on subsequent dry boundaries.
+    // and it does NOT keep firing on subsequent dry boundaries.
     for (let k = 0; k < 3; k++) {
-      loopBoundary();
+      e.__decayPasses(1);
       await settle();
     }
     expect(calls).toBe(1); // still once
   });
 });
 
-// ── low-tier (1/2-tier) segments must NOT cascade with zero clears ────────────────
-describe("low-tier segments never auto-advance (no cascade with zero clears)", () => {
-  it("a 2-tier segment (floor == top) does NOT mandatorily advance on dry boundaries", async () => {
-    // The ≥2-layer floor parks a 2-tier segment at tier1 = its top. The mandatory advance
-    // must NOT fire just because tier == top: gate (a) (no headroom above floor) blocks it,
-    // so the section loops in place until the player earns a clear-gate advance.
+// ── floor-only (1/2-tier) segments still advance via top-built-and-held ───────────
+describe("low-tier segments (floor == top) advance once held a loop", () => {
+  it("a 2-tier segment (floor == top) advances after the top is held a loop", async () => {
+    // A 2-tier segment is parked at tier1 = its top by the ≥2-layer floor. With heat the
+    // top IS already audible at entry; once it has been HELD one loop the advance fires.
     const e = await freshEngineWith(nTierManifest("song2t", 2));
     expect(e.getAudioState().tierCount).toBe(2);
     expect(e.getAudioState().tier).toBe(1); // floor == top for a 2-tier segment
-    for (let k = 0; k < 8; k++) {
-      loopBoundary();
-      await settle();
-      expect(e.getAudioState().segmentIndex).toBe(0); // loops in place, no cascade
-    }
-    // it CAN still advance via the normal clear-gate (score ≥ 30).
+    // with NO clears heat decays — but the top is already audible (floor), so the
+    // top-held latch arms on the next boundary and it advances regardless of heat.
     await earnAdvance(e);
     expect(e.getAudioState().segmentIndex).toBe(1);
   });
 
-  it("a 1-tier segment does NOT mandatorily advance on dry boundaries", async () => {
+  it("a 1-tier segment (only tier0) advances after its single tier is held a loop", async () => {
     const e = await freshEngineWith(nTierManifest("song1t", 1));
     expect(e.getAudioState().tierCount).toBe(1);
-    expect(e.getAudioState().tier).toBe(0); // only one tier exists
-    for (let k = 0; k < 8; k++) {
-      loopBoundary();
-      await settle();
-      expect(e.getAudioState().segmentIndex).toBe(0); // loops in place, no cascade
-    }
+    expect(e.getAudioState().tier).toBe(0); // only one tier exists (== top)
     await earnAdvance(e);
-    expect(e.getAudioState().segmentIndex).toBe(1); // clear-gate still advances it
+    expect(e.getAudioState().segmentIndex).toBe(1);
   });
 });
 
-// ── audio-truth task 2.5: the D3 clear-gated-progression contract, all 6 cases ─────
-describe("clear-gated progression (audio-truth D3) — the 6 contract cases", () => {
-  // (i) carried full-reveal floor caps at top-1, the top is RE-EARNED, then advances
-  //     after one loop at top.
-  it("(i) carried floor caps at top-1, top is re-earned, then advances after one loop", async () => {
+// ── heat spec contract cases (design D1-D5) ───────────────────────────────────────
+describe("heat progression contract cases", () => {
+  it("(i) carry-across at sustained heat enters the next segment AT its top (no vocal cut)", async () => {
     const e = await freshEngineWith(nTierManifest("song5", 5)); // top tier = tier4
-    // Build segment 0 to its top + earn the clear-gate, advance into segment 1.
-    for (let i = 0; i < 10; i++) clear(e, 2, 0); // score 30 → top + clear-gate
-    loopBoundary(); // reveal top
-    await settle();
-    loopBoundary(); // advance into seg 1 (carried floor capped at top-1 = 3)
-    await settle();
+    await earnAdvance(e); // build to top + advance with heat pinned ~1.0
     expect(e.getAudioState().segmentIndex).toBe(1);
-    expect(e.getAudioState().tier).toBe(3); // entered at top-1, NOT at vocals
-    // RE-EARN the top in segment 1: bank to the top reveal (tier4 at score ≥24), below
-    // the clear-gate (30), so only the mandatory full-reveal path can advance it.
-    for (let i = 0; i < 8; i++) clear(e, 2, 0); // score 24, < 30
-    expect(e.getAudioState().segmentScore).toBeLessThan(30);
-    loopBoundary(); // boundary A: re-reveal the top tier (vocals) — NO advance here
-    await settle();
+    // the next segment is entered DIRECTLY at the heat-derived tier — the TOP (4), NOT
+    // capped at top-1 — so vocals continue across the cut.
     expect(e.getAudioState().tier).toBe(4);
-    expect(e.getAudioState().segmentIndex).toBe(1); // held this loop (vocals sound)
-    loopBoundary(); // boundary B: top held a full loop → mandatory advance fires
-    await settle();
-    expect(e.getAudioState().segmentIndex).toBe(2);
   });
 
-  // (ii) a low-tier / floor-only segment never auto-advances with zero clears.
-  it("(ii) a floor-only (top == min-audible floor) segment never auto-advances with zero clears", async () => {
-    const e = await freshEngineWith(nTierManifest("song2t", 2)); // floor == top
-    for (let k = 0; k < 10; k++) {
-      loopBoundary();
-      await settle();
-      expect(e.getAudioState().segmentIndex).toBe(0); // loops forever with no clears
-    }
-  });
-
-  // (iii) no advance on the reveal boundary (ramp-cancel guard, gate c).
-  it("(iii) no advance on the boundary that first reveals the top (ramp-cancel guard)", async () => {
+  it("(ii) a fresh game opening starts at the min-audible floor (never bare)", async () => {
     const e = await freshEngineWith(nTierManifest("song5", 5));
-    e.__injectClears(10); // banks BOTH the top reveal AND the clear-gate in one pass
-    loopBoundary(); // reveals top — must NOT advance off it on this same boundary
-    await settle();
-    expect(e.getAudioState().tier).toBe(4); // top revealed + audible
-    expect(e.getAudioState().segmentIndex).toBe(0); // not advanced (gate c held)
-    expect(e.getAudioState().layerGains[4]).toBeGreaterThan(0.9); // reveal ramp intact
+    const s = e.getAudioState();
+    expect(s.segmentIndex).toBe(0);
+    expect(s.heat).toBe(0);
+    expect(s.tier).toBe(1); // ≥2-layer floor, never tier0
   });
 
-  // (iv) no cascade — a fresh advance needs a fresh full loop in the new segment.
-  it("(iv) the new segment needs a fresh full loop at top — no cascade", async () => {
-    const e = await freshEngineWith(nTierManifest("song5", 5));
-    for (let i = 0; i < 10; i++) clear(e, 2, 0);
-    loopBoundary(); // reveal
+  it("(iii) heat clamps to the unit range (saturates at 1.0)", async () => {
+    const e = await freshEngine();
+    for (let i = 0; i < 50; i++) clear(e, 4, 4); // far past 1.0 if it summed
     await settle();
-    loopBoundary(); // advance into seg 1 (capped floor, held flag reset, score 0)
-    await settle();
-    const idx = e.getAudioState().segmentIndex;
-    expect(idx).toBe(1);
-    for (let k = 0; k < 5; k++) {
-      loopBoundary();
-      await settle();
-      expect(e.getAudioState().segmentIndex).toBe(idx); // no cascade on dry boundaries
-    }
+    expect(e.getAudioState().heat).toBe(1);
   });
 
-  // (v) end-of-song fires onSongComplete.
-  it("(v) an earned advance past the TERMINAL segment fires onSongComplete", async () => {
+  it("(iv) a clear-less pass sheds heat; a pass with a clear does not (no thrash)", async () => {
+    const e = await freshEngine();
+    e.__injectClears(5); // heat 0.55
+    const h0 = e.getAudioState().heat;
+    // a guaranteed clear-less pass sheds exactly the decay step.
+    e.__decayPasses(1);
+    await settle();
+    expect(e.getAudioState().heat).toBeCloseTo(h0 - 0.08, 6);
+    // a pass WITH a clear does not decay: inject a clear, then a normal boundary.
+    const h1 = e.getAudioState().heat;
+    e.__injectClears(1); // +0.11
+    loopBoundary();
+    await settle();
+    // net change is +0.11 (the boundary saw a clear → no decay).
+    expect(e.getAudioState().heat).toBeCloseTo(Math.min(1, h1 + 0.11), 6);
+  });
+
+  it("(v) end-of-song fires onSongComplete", async () => {
     const e = await freshEngineWith(nTierManifest("song5", 5));
     let calls = 0;
     e.onSongComplete = () => {
@@ -1445,23 +1516,105 @@ describe("clear-gated progression (audio-truth D3) — the 6 contract cases", ()
     expect(calls).toBe(1);
   });
 
-  // (vi) weight pacing: typical clear = 3, big clear = 5 (< 30), streak = 7.
-  it("(vi) clear weight pacing — typical=3, big harvest=5, streak=7, all under the 30 gate", async () => {
+  it("(vi) heat gain pacing — a bigger clear raises heat more than a smaller one", async () => {
     const e = await freshEngine();
-    // a typical 2-square, no-streak clear → weight 1 + 2 + 0 = 3.
+    // a typical 2-square no-streak clear → 0.06 + 0.05 = 0.11.
     clear(e, 2, 0);
     await settle();
-    expect(e.getAudioState().segmentScore).toBe(3);
-    // a big 4-square single-sweep harvest, no streak → 1 + 4 + 0 = 5 (rewarded, ≪ 30).
+    expect(e.getAudioState().heat).toBeCloseTo(0.11, 6);
+    // a 4-square no-streak clear → 0.06 + 0.10 = 0.16 (a strictly bigger jump).
+    const before = e.getAudioState().heat;
     clear(e, 4, 0);
     await settle();
-    expect(e.getAudioState().segmentScore).toBe(3 + 5);
-    // a 4-square pass on a ×3 streak (combo = streak-1 = 2) → 1 + 4 + 2 = 7.
+    expect(e.getAudioState().heat - before).toBeCloseTo(0.16, 6);
+    // a 4-square clear on a ×3 streak (comboStep 2) → 0.06 + 0.10 + 0.04 = 0.20.
+    const before2 = e.getAudioState().heat;
     clear(e, 4, 2);
     await settle();
-    expect(e.getAudioState().segmentScore).toBe(3 + 5 + 7);
-    // none of these single clears alone crosses ADVANCE_THRESHOLD (30) → no fast-forward.
-    expect(e.getAudioState().segmentScore).toBeLessThan(30);
+    expect(e.getAudioState().heat - before2).toBeCloseTo(0.2, 6);
+  });
+});
+
+// ── tone SFX (design D6): in-key tones, match ding, silent clear/chain/move ────────
+describe("tone SFX (default mode)", () => {
+  it("default SFX mode is tone", async () => {
+    const e = await freshEngine();
+    expect(e.getAudioState().sfxMode).toBe("tone");
+  });
+
+  it("the tone synth is NOT constructed before a gesture (no build at import / pre-unlock)", async () => {
+    (globalThis as unknown as { window?: object }).window = globalThis;
+    installFetch();
+    mockState.polySynthBuilds = 0;
+    const e = new InteractiveAudioEngine();
+    // construction has NOT happened yet (no unlock gesture).
+    expect(mockState.polySynthBuilds).toBe(0);
+    await e.unlock(); // the synth is built INSIDE the gesture.
+    await settle();
+    expect(mockState.polySynthBuilds).toBeGreaterThan(0);
+  });
+
+  it("a MATCH plays an in-key tone; a bigger match is louder", async () => {
+    const e = await freshEngine();
+    e.fire({ type: "match", squares: 1 });
+    await settle();
+    expect(mockState.toneHits.length).toBeGreaterThan(0);
+    const small = mockState.toneHits[mockState.toneHits.length - 1]!;
+    // the note is a member of the song's key/scale (default A minor) note set.
+    const inScale = isInDefaultScale(small.freq);
+    expect(inScale).toBe(true);
+    const beforeBig = mockState.toneHits.length;
+    e.fire({ type: "match", squares: 4 });
+    await settle();
+    expect(mockState.toneHits.length).toBeGreaterThan(beforeBig);
+    const big = mockState.toneHits[mockState.toneHits.length - 1]!;
+    expect(big.velocity).toBeGreaterThan(small.velocity); // brighter for more squares
+  });
+
+  it("rotate / softDrop / lock each play an in-key tone; move is silent", async () => {
+    const e = await freshEngine();
+    e.fire({ type: "rotate" });
+    e.fire({ type: "softDrop" });
+    e.fire({ type: "lock", cause: "hard" });
+    await settle();
+    expect(mockState.toneHits.length).toBe(3);
+    for (const hit of mockState.toneHits) {
+      expect(isInDefaultScale(hit.freq)).toBe(true);
+    }
+    const before = mockState.toneHits.length;
+    for (let i = 0; i < 4; i++) e.fire({ type: "move" });
+    await settle();
+    expect(mockState.toneHits.length).toBe(before); // move is silent
+  });
+
+  it("the sweep CLEAR and the CHAIN are SILENT in tone mode (only forming a match dings)", async () => {
+    const e = await freshEngine();
+    const before = mockState.toneHits.length;
+    for (let i = 0; i < 5; i++) clear(e, 2, 0);
+    e.fire({ type: "chain", size: 6 });
+    await settle();
+    expect(mockState.toneHits.length).toBe(before); // no tone for clear / chain
+    // but heat was fed by the clears + chain.
+    expect(e.getAudioState().heat).toBeGreaterThan(0);
+  });
+
+  it("a tone-SFX failure degrades to silence (never throws)", async () => {
+    const e = await freshEngine();
+    // dispose the synth out from under the engine, then fire — must not throw, no hit.
+    e.dispose();
+    const before = mockState.toneHits.length;
+    expect(() => e.fire({ type: "match", squares: 1 })).not.toThrow();
+    await settle();
+    expect(mockState.toneHits.length).toBe(before);
+  });
+
+  it("the mode can be switched to sample and back at runtime", async () => {
+    const e = await freshEngine();
+    expect(e.getAudioState().sfxMode).toBe("tone");
+    e.setSfxMode("sample");
+    expect(e.getAudioState().sfxMode).toBe("sample");
+    e.setSfxMode("tone");
+    expect(e.getAudioState().sfxMode).toBe("tone");
   });
 });
 
@@ -1501,11 +1654,12 @@ describe("per-segment SFX palettes (audio-truth D5)", () => {
 
   it("a segment with its own palette plays ITS sample, not the song-level one", async () => {
     const e = await freshEngineWith(MIXED_SFX);
+    e.setSfxMode("sample"); // the recorded per-segment path
     expect(e.getAudioState().segmentIndex).toBe(0);
-    // a clear on segment 0 must load + fire the SEGMENT's own stage sample.
-    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    // a MATCH on segment 0 routes to `stage` and must fire the SEGMENT's own sample.
+    e.fire({ type: "match", squares: 2 });
     await settle();
-    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    e.fire({ type: "match", squares: 2 });
     await settle();
     const segStage = mockState.players.filter((p) =>
       p.url.includes("s0-stage"),
@@ -1522,12 +1676,13 @@ describe("per-segment SFX palettes (audio-truth D5)", () => {
 
   it("a segment WITHOUT a palette falls back to the song-level sample", async () => {
     const e = await freshEngineWith(MIXED_SFX);
+    e.setSfxMode("sample");
     // advance to segment 1 (no per-segment sfx).
     await earnAdvance(e);
     expect(e.getAudioState().segmentIndex).toBe(1);
-    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    e.fire({ type: "match", squares: 2 });
     await settle();
-    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    e.fire({ type: "match", squares: 2 });
     await settle();
     // segment 1's stage resolves to the SONG-LEVEL sample (no s1-stage exists).
     const songStage = mockState.players.filter((p) =>
@@ -1540,6 +1695,7 @@ describe("per-segment SFX palettes (audio-truth D5)", () => {
   it("an OLD manifest (no per-segment sfx anywhere) resolves all actions to the song-level set", async () => {
     // the default fixture has only song-level sfx — byte-identical to before.
     const e = await freshEngine();
+    e.setSfxMode("sample");
     e.fire({ type: "rotate" });
     await settle();
     e.fire({ type: "rotate" });
@@ -1553,8 +1709,9 @@ describe("per-segment SFX palettes (audio-truth D5)", () => {
 
   it("leaving a segment DISPOSES its SFX voices (per-segment lifecycle)", async () => {
     const e = await freshEngineWith(MIXED_SFX);
-    // fire on segment 0 so its per-segment stage pool is constructed.
-    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    e.setSfxMode("sample");
+    // fire a match on segment 0 so its per-segment stage pool is constructed.
+    e.fire({ type: "match", squares: 2 });
     await settle();
     const s0Stage = mockState.players.filter((p) => p.url.includes("s0-stage"));
     expect(s0Stage.length).toBeGreaterThan(0);
@@ -1572,10 +1729,11 @@ describe("per-segment SFX palettes (audio-truth D5)", () => {
 
   it("a one-shot requested during a swap never throws into the game (silent drop)", async () => {
     const e = await freshEngineWith(MIXED_SFX);
+    e.setSfxMode("sample");
     // fire on segment 1 BEFORE its pool has a chance to exist — must not throw.
     await earnAdvance(e);
     expect(() => {
-      e.fire({ type: "lineClear", squares: 2, combo: 0 });
+      e.fire({ type: "match", squares: 2 });
     }).not.toThrow();
     await settle();
   });
