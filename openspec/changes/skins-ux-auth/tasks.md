@@ -11,13 +11,13 @@ Merge AFTER `core-lumines-fidelity` (owns `sweep.ts` / `GameState`) and after/al
 
 ## 2. Wave 1 — Core deletion + controller tempo seam (pure)
 
-- [ ] 2.1 Delete `src/game/core/skins.ts` (the `Skin` type, `SKINS`, `skinAt`, `skinBpm`) and its test `src/game/core/skins.test.ts`.
-- [ ] 2.2 Remove `export * from "./skins"` and the `skinBpm` import/use from `src/game/core/index.ts`.
-- [ ] 2.3 Remove `SKIN_ADVANCE_THRESHOLD` from `src/game/core/constants.ts`.
-- [ ] 2.4 In `src/game/core/sweep.ts` (post-`core-lumines-fidelity` shape): delete `advanceSkin` and every read/write of `skinIndex`/`clearsInSkin` in `advanceSweep` and `runFullSweep`.
-- [ ] 2.5 In `src/game/core/types.ts`: remove `skinIndex` and `clearsInSkin` from `GameState`.
-- [ ] 2.6 In `src/game/engine/controller.ts`: add `setTempo(bpm: number)` storing a pending tempo; change `currentSweepBpm()` to latch the pushed tempo at the pass boundary (sweepX === 0) with a `FALLBACK_BPM` default before the first push. Controller must NOT import the audio engine.
-- [ ] 2.7 In `controller.ts`: change `RenderState.bpm` to the controller's current latched sweep tempo; remove the `skinBpm`/`skinIndex` reads. Remove `RenderState.skinIndex` (or repoint it) and the `testSetSkin`/`clearsInSkin`-related test helpers that referenced the deleted fields.
+- [x] 2.1 Delete `src/game/core/skins.ts` (the `Skin` type, `SKINS`, `skinAt`, `skinBpm`) and its test `src/game/core/skins.test.ts`.
+- [x] 2.2 Remove `export * from "./skins"` and the `skinBpm` import/use from `src/game/core/index.ts`.
+- [x] 2.3 Remove `SKIN_ADVANCE_THRESHOLD` from `src/game/core/constants.ts`.
+- [x] 2.4 In `src/game/core/sweep.ts` (post-`core-lumines-fidelity` shape): delete `advanceSkin` and every read/write of `skinIndex`/`clearsInSkin` in `advanceSweep` and `runFullSweep`.
+- [x] 2.5 In `src/game/core/types.ts`: remove `skinIndex` and `clearsInSkin` from `GameState`.
+- [x] 2.6 In `src/game/engine/controller.ts`: add `setTempo(bpm: number)` storing a pending tempo; change `currentSweepBpm()` to latch the pushed tempo at the pass boundary (sweepX === 0) with a `FALLBACK_BPM` default before the first push. Controller must NOT import the audio engine.
+- [x] 2.7 In `controller.ts`: change `RenderState.bpm` to the controller's current latched sweep tempo; remove the `skinBpm`/`skinIndex` reads. Repoint `RenderState.skinIndex` to a host-pushed `setSkinIndex(n)` seam (render-only); `testSetSkin` → `testSetTempo`; test-api `setSkin` → `setTempo`.
 
 ## 3. Wave 2 — Host skin = single source + tempo on the bundle
 
