@@ -200,4 +200,31 @@ export interface GameState {
    * 0; spawning a new piece also resets it.
    */
   softDropBonus: number;
+  /**
+   * RECORD-ONLY (design D8, audio-truth contract): the most recent pass-
+   * completion event, emitted by `advanceSweep` when a pass completes at the
+   * right edge. Carries a monotonic `id` (the consumer fires once per new id), the
+   * `squares` cleared this pass, the `comboMultiplier` actually applied to the
+   * package, and the per-group `groupErases` (each group's erased cell coords +
+   * whether a chain flood fired). Carried forward unchanged between passes (the
+   * monotonic id means an unchanged value never re-fires), exactly like
+   * `lastChainClear`. Never read by gameplay/scoring/timing — additive and record-
+   * only, so it cannot affect determinism. `undefined` until the first pass
+   * completion that cleared something / first completed pass.
+   */
+  lastPassComplete?: {
+    id: number;
+    squares: number;
+    comboMultiplier: number;
+    groupErases: GroupErase[];
+  };
+  /**
+   * RECORD-ONLY (design D8, audio-truth contract): the most recent lock event,
+   * emitted whenever a piece locks, carrying a monotonic `id` and the `cause`
+   * (`gravity` | `soft` | `hard`) so the audio layer can route the right
+   * lock/thud SFX (fixes B4's "lock only audible on hard drop"). Carried forward
+   * unchanged between locks. Never read by gameplay/scoring/timing.
+   * `undefined` until the first lock.
+   */
+  lastLock?: { id: number; cause: "gravity" | "soft" | "hard" };
 }

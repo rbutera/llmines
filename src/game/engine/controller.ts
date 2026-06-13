@@ -124,6 +124,28 @@ export interface RenderState {
    * `undefined` until the first hard drop. Pure projection; no logic change.
    */
   lastHardDrop?: { id: number; cols: number[]; row: number; distance: number };
+  /**
+   * Additive (render-only, D8 audio-truth contract): the most recent pass-
+   * completion event, copied straight from the core's RECORD-ONLY
+   * `state.lastPassComplete`. Carries a monotonic `id` (fire once per new id), the
+   * `squares` cleared, the `comboMultiplier` applied, and per-group `groupErases`.
+   * The audio layer reads real clear truth instead of inferring from score deltas.
+   * Pure projection — no logic change. `undefined` until the first completed pass.
+   */
+  lastPassComplete?: {
+    id: number;
+    squares: number;
+    comboMultiplier: number;
+    groupErases: { cells: number[]; hadChain: boolean }[];
+  };
+  /**
+   * Additive (render-only, D8 audio-truth contract): the most recent lock event,
+   * copied straight from the core's RECORD-ONLY `state.lastLock`. Carries a
+   * monotonic `id` and the `cause` ("gravity" | "soft" | "hard") so the audio
+   * layer plays the right lock/thud SFX on EVERY lock. Pure projection.
+   * `undefined` until the first lock.
+   */
+  lastLock?: { id: number; cause: "gravity" | "soft" | "hard" };
 }
 
 export interface ControllerOptions {
@@ -730,6 +752,9 @@ export class GameController {
       lastHardDrop: this.lastHardDrop,
       // Render-only: cells a gem is about to flood-clear (pre-clear marking).
       floodPreview: this.computeFloodPreview(),
+      // D8 audio-truth telemetry passthrough (record-only, no logic change).
+      lastPassComplete: this.state.lastPassComplete,
+      lastLock: this.state.lastLock,
     };
   }
 

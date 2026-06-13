@@ -2,6 +2,11 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { COLS, ROWS } from "./constants";
+import { createGame } from "./grid";
+import { hardDrop, spawnPiece } from "./piece";
+import { advanceSweep } from "./sweep";
+import type { GameState, Piece } from "./types";
 
 /**
  * The pure core is load-bearing for the deterministic test seam and the eval:
@@ -71,4 +76,46 @@ describe("core purity", () => {
       }
     });
   }
+});
+
+describe("D8 telemetry is record-only (no gameplay effect)", () => {
+  const MONO: Piece = [
+    [0, 0],
+    [0, 0],
+  ];
+
+  function clearableBoard(): GameState {
+    const base = createGame();
+    base.grid[ROWS - 1]![0] = 0;
+    base.grid[ROWS - 1]![1] = 0;
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    return base;
+  }
+
+  it("advanceSweep deletion + score are identical whether or not prior telemetry is present", () => {
+    const a = advanceSweep(clearableBoard(), COLS);
+    // Seed the next call's state with arbitrary prior telemetry: it must not change
+    // the deletion result or the score.
+    const seeded: GameState = {
+      ...clearableBoard(),
+      lastPassComplete: { id: 99, squares: 7, comboMultiplier: 4, groupErases: [] },
+      lastLock: { id: 42, cause: "hard" },
+    };
+    const b = advanceSweep(seeded, COLS);
+    expect(b.grid).toEqual(a.grid);
+    expect(b.score).toBe(a.score);
+    expect(b.specials).toEqual(a.specials);
+  });
+
+  it("lockPiece settles + scores identically regardless of prior lastLock", () => {
+    const plain = hardDrop(spawnPiece(createGame(), MONO));
+    const seeded = hardDrop(
+      spawnPiece({ ...createGame(), lastLock: { id: 5, cause: "soft" } }, MONO),
+    );
+    expect(seeded.grid).toEqual(plain.grid);
+    expect(seeded.score).toBe(plain.score);
+    // The event itself advances (bumped id), but the GAME outcome is unchanged.
+    expect(seeded.lastLock?.id).toBe(6);
+  });
 });

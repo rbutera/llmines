@@ -19,6 +19,7 @@ import {
   releaseHold,
   rotateCW,
   rotateCells,
+  softDrop,
   spawnPiece,
   tickHold,
 } from "./piece";
@@ -1095,5 +1096,126 @@ describe("new-block hold (core)", () => {
     // controller / test tick), so it still descends a held piece by one row —
     // from the staging row -2 to -1 (one row down, still above the field).
     expect(gravityStep(s).state.active?.pos.row).toBe(-1);
+  });
+});
+
+describe("telemetry: lock events (D8, record-only)", () => {
+  it("a gravity lock reports cause 'gravity' with a bumped id", () => {
+    let s = spawnPiece(createGame(), MONO_A);
+    let r = gravityStep(s);
+    while (!r.locked) {
+      s = r.state;
+      r = gravityStep(s);
+    }
+    expect(r.state.lastLock?.cause).toBe("gravity");
+    expect(r.state.lastLock?.id).toBe(1);
+  });
+
+  it("a soft-drop lock reports cause 'soft'", () => {
+    let s = spawnPiece(createGame(), MONO_A);
+    let r = softDrop(s);
+    // softDrop descends one row if it can, else locks; drive until it locks.
+    while (!r.locked) {
+      s = r.state;
+      r = softDrop(s);
+    }
+    expect(r.state.lastLock?.cause).toBe("soft");
+  });
+
+  it("a hard-drop lock reports cause 'hard'", () => {
+    const s = hardDrop(spawnPiece(createGame(), MONO_A));
+    expect(s.lastLock?.cause).toBe("hard");
+    expect(s.lastLock?.id).toBe(1);
+  });
+
+  it("the lock id is monotonic across successive locks", () => {
+    const a = hardDrop(spawnPiece(createGame(), MONO_A));
+    const b = hardDrop(spawnPiece(a, MONO_B));
+    expect(b.lastLock?.id).toBe((a.lastLock?.id ?? 0) + 1);
+  });
+});
+
+describe("telemetry: pass-completion events (D8, record-only)", () => {
+  function squareAt(base: GameState, c: number, color: 0 | 1): void {
+    base.grid[ROWS - 1]![c] = color;
+    base.grid[ROWS - 1]![c + 1] = color;
+    base.grid[ROWS - 2]![c] = color;
+    base.grid[ROWS - 2]![c + 1] = color;
+  }
+
+  it("emits truthful clear data (squares + applied multiplier) on pass completion", () => {
+    // 4 squares (mono 1x5 band) at no prior streak -> package 640 x x1.
+    const base = createGame();
+    for (let c = 0; c < 5; c++) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    const s = advanceSweep(base, COLS);
+    expect(s.lastPassComplete).toBeDefined();
+    expect(s.lastPassComplete!.squares).toBe(4);
+    expect(s.lastPassComplete!.comboMultiplier).toBe(1);
+    // The 4 overlapping squares are one contiguous group -> one groupErase, no chain.
+    expect(s.lastPassComplete!.groupErases.length).toBeGreaterThanOrEqual(1);
+    expect(s.lastPassComplete!.groupErases.every((g) => g.hadChain)).toBe(false);
+  });
+
+  it("reports two groups, one with a chain, when a gem-bearing group floods", () => {
+    const base = createGame();
+    // Group A (cols 2-3) carrying a chain special, gap at col 4, group B (cols 6-7).
+    squareAt(base, 2, 0);
+    squareAt(base, 6, 1);
+    base.specials = new Set([(ROWS - 1) * COLS + 2]); // gem in group A
+    const s = advanceSweep(base, COLS);
+    expect(s.lastPassComplete!.squares).toBe(2);
+    expect(s.lastPassComplete!.groupErases.length).toBe(2);
+    const chained = s.lastPassComplete!.groupErases.filter((g) => g.hadChain);
+    expect(chained.length).toBe(1);
+    // Each group's cells carry the real erased coordinates.
+    for (const g of s.lastPassComplete!.groupErases) {
+      expect(g.cells.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("the multiplier reflects the streak actually applied (4 squares at x2)", () => {
+    const base = createGame();
+    for (let c = 0; c < 5; c++) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    const s = advanceSweep({ ...base, combo: 1 }, COLS); // streak selects x2
+    expect(s.lastPassComplete!.squares).toBe(4);
+    expect(s.lastPassComplete!.comboMultiplier).toBe(2);
+  });
+
+  it("monotonic id fires once per completed pass; unchanged when no pass completes", () => {
+    const base = createGame();
+    squareAt(base, 0, 0);
+    const p1 = advanceSweep(base, COLS);
+    expect(p1.lastPassComplete!.id).toBe(1);
+    // Advancing without completing a pass leaves the event unchanged (same id).
+    const partial = advanceSweep(p1, 3);
+    expect(partial.lastPassComplete).toEqual(p1.lastPassComplete);
+    // The next completed pass bumps the id.
+    const p2grid = createGame();
+    squareAt(p2grid, 0, 1);
+    const p2 = advanceSweep(
+      { ...partial, grid: p2grid.grid, sweepPass: null, sweepX: 0 },
+      COLS,
+    );
+    expect(p2.lastPassComplete!.id).toBe(2);
+  });
+
+  it("is record-only: reading lastPassComplete/lastLock does not change deletion or score", () => {
+    // The same board swept twice yields identical grid + score regardless of the
+    // telemetry fields (they are additive, never read by gameplay).
+    const mk = (): GameState => {
+      const b = createGame();
+      squareAt(b, 0, 0);
+      return b;
+    };
+    const a = advanceSweep(mk(), COLS);
+    const b = advanceSweep({ ...mk(), lastPassComplete: a.lastPassComplete, lastLock: a.lastLock }, COLS);
+    expect(b.grid).toEqual(a.grid);
+    expect(b.score).toBe(a.score);
   });
 });

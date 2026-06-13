@@ -2,7 +2,7 @@ import { chainFlood, type ChainClearRecord } from "./chain-clear";
 import { COLS, ROWS, SKIN_ADVANCE_THRESHOLD } from "./constants";
 import { isSquareAt } from "./detect";
 import { cloneGrid, settleColumnWithMarks } from "./grid";
-import { boardStateBonus, nextCombo, passScore } from "./scoring";
+import { boardStateBonus, nextCombo, passPackage, passScore } from "./scoring";
 import { SKINS } from "./skins";
 import type { GameState, Grid, SweepPass } from "./types";
 
@@ -131,7 +131,18 @@ function eraseGroup(
         // Flood the connected same-colour region (including cells ahead of the
         // bar); extras score nothing. The flood clears its cells' marks too, so a
         // cell a flood consumes is never re-targeted by identity-based deletion.
-        chainFlood(grid, coord, colour, specials, pass.marks, record);
+        // A local record sink captures the flooded component so this batch's
+        // telemetry `cells` includes the flood extent (D8), while the optional
+        // `record` (render wavefront) is fed too.
+        const localSink: ChainClearRecord[] = [];
+        chainFlood(grid, coord, colour, specials, pass.marks, localSink);
+        for (const r of localSink) {
+          if (record) record.push(r);
+          // Skip the origin (dist 0) — already pushed above as `coord`.
+          for (const oc of r.cells) {
+            if (oc.cell !== coord) erased.push(oc.cell);
+          }
+        }
         hadChain = true;
       }
     }
@@ -250,6 +261,9 @@ export function advanceSweep(state: GameState, columns: number): GameState {
   // RECORD-ONLY sink for chain-flood clears this call (render wavefront). Does
   // not influence deletion/scoring/timing.
   const chainRecords: ChainClearRecord[] = [];
+  // RECORD-ONLY (D8): the latest pass-completion event this call, if any pass
+  // completed; carried forward from the prior state otherwise.
+  let lastPassComplete = state.lastPassComplete;
   let pass: SweepPass = state.sweepPass
     ? clonePass(state.sweepPass)
     : startPass();
@@ -287,6 +301,17 @@ export function advanceSweep(state: GameState, columns: number): GameState {
     if (sweepX >= COLS - 1e-9) {
       const squares = pass.distinctSquares;
       score += passScore(squares, combo);
+      // RECORD-ONLY (D8): emit the pass-completion event with the squares cleared,
+      // the multiplier ACTUALLY applied to the package, and the per-group erases.
+      // `combo` here is the streak count that scored THIS pass (advanced below).
+      const comboMultiplier =
+        squares > 0 ? passScore(squares, combo) / passPackage(squares) : 1;
+      lastPassComplete = {
+        id: (lastPassComplete?.id ?? 0) + 1,
+        squares,
+        comboMultiplier,
+        groupErases: pass.groupErases,
+      };
       combo = nextCombo(combo, squares);
       if (squares > 0) {
         // Board-state bonuses are only assessed when a clear actually happened
@@ -312,6 +337,7 @@ export function advanceSweep(state: GameState, columns: number): GameState {
     clearsInSkin,
     sweepPass: pass,
     lastChainClear: nextChainClear(state.lastChainClear, chainRecords),
+    lastPassComplete,
   };
 }
 
@@ -356,6 +382,15 @@ export function runFullSweep(state: GameState): GameState {
 
   const squares = pass.distinctSquares;
   let score = state.score + passScore(squares, state.combo);
+  // RECORD-ONLY (D8): emit the pass-completion event (this path completes a pass).
+  const comboMultiplier =
+    squares > 0 ? passScore(squares, state.combo) / passPackage(squares) : 1;
+  const lastPassComplete = {
+    id: (state.lastPassComplete?.id ?? 0) + 1,
+    squares,
+    comboMultiplier,
+    groupErases: pass.groupErases,
+  };
   const combo = nextCombo(state.combo, squares);
   let skinIndex = state.skinIndex;
   let clearsInSkin = state.clearsInSkin;
@@ -376,5 +411,6 @@ export function runFullSweep(state: GameState): GameState {
     sweepX: 0,
     sweepPass: null,
     lastChainClear: nextChainClear(state.lastChainClear, chainRecords),
+    lastPassComplete,
   };
 }

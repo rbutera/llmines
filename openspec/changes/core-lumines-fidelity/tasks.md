@@ -87,20 +87,20 @@
 
 ## 5. Wave 5 — Telemetry: pass-completion + lock events
 
-- [ ] 5.1 `src/game/core/types.ts`: add record-only `lastPassComplete?: { id; squares; comboMultiplier;
+- [x] 5.1 `src/game/core/types.ts`: add record-only `lastPassComplete?: { id; squares; comboMultiplier;
   groupErases: { cells: number[]; hadChain: boolean }[] }` and `lastLock?: { id; cause:
   "gravity"|"soft"|"hard" }` to `GameState`. Document as record-only (no gameplay effect).
-- [ ] 5.2 `src/game/core/sweep.ts` `eraseGroup`: accumulate `{cells, hadChain}` per batch into the
+- [x] 5.2 `src/game/core/sweep.ts` `eraseGroup`: accumulate `{cells, hadChain}` per batch into the
   pass; at right-edge completion attach the pass's `groupErases`, `squares`, applied
   `comboMultiplier`, and bump `lastPassComplete.id`. Verify: telemetry scenario (4 squares, ×8, two
   groups, one chain).
-- [ ] 5.3 `src/game/core/piece.ts`: thread a `cause` into the lock path — `lockPiece(state, cause =
+- [x] 5.3 `src/game/core/piece.ts`: thread a `cause` into the lock path — `lockPiece(state, cause =
   "gravity")` stamps `lastLock` with a bumped `id`; `gravityStep` → "gravity", `softDrop` → "soft",
   `hardDrop` → "hard". Verify: lock-cause scenarios for all three.
-- [ ] 5.4 `src/game/engine/controller.ts` + `src/game/core/index.ts`: pass `lastPassComplete` and
+- [x] 5.4 `src/game/engine/controller.ts` + `src/game/core/index.ts`: pass `lastPassComplete` and
   `lastLock` through `RenderState` and `PublicState` as pure projections. Verify: projections carry
   the events; unchanged `id` never re-fires.
-- [ ] 5.5 Run gates. Add telemetry assertions to `core.test.ts`/`scoring.test.ts`; assert
+- [x] 5.5 Run gates. Add telemetry assertions to `core.test.ts`/`scoring.test.ts`; assert
   record-only-ness in `purity.test.ts` (deletion/scoring identical with/without reading the fields).
   Verify: all gates green.
 
