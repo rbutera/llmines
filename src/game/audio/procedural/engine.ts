@@ -119,7 +119,10 @@ const SFX_RETRIGGER_EPSILON = 0.002;
  * the usual trigger and this clear-gate is the higher fallback (it still governs any
  * segment that has no tier above its min-audible floor, where the mandatory path is
  * intentionally disabled — see shouldAdvance gate (a)). A clear feeds weight =
- * 1 + squares + combo (≈3–5 typical).
+ * `1 + squares + combo` where `combo` is the REAL streak offset (`comboMultiplier - 1`,
+ * 0 = no streak) from truthful pass telemetry (audio-truth D2): a typical 2-square
+ * no-streak clear = 1+2+0 = 3, a 4-square single-sweep harvest = 1+4+0 = 5 (rewarded,
+ * still ≪ 30 = no fast-forward), a 4-square pass on a ×3 streak = 1+4+2 = 7.
  */
 const ADVANCE_THRESHOLD = 30;
 /**
@@ -400,6 +403,19 @@ export class InteractiveAudioEngine {
    * burst that earns one advance leaves the next segment back at 0.
    */
   private segmentScore = 0;
+  /**
+   * Per-segment flag (reset on every {@link enterSegment}): the segment's TOP tier
+   * has been AUDIBLE for at least one full loop. Set true on the boundary AFTER the
+   * one that first makes `this.tier === top`, so the top mix (vocals) is heard for a
+   * whole loop before the mandatory full-reveal advance can arm — see {@link
+   * shouldAdvance} gate (b). This is the B2 fix: it replaces the old
+   * "top reveal earned in-segment (segmentScore ≥ top·STEP)" gate so a segment that
+   * reached the top by ANY path advances after one loop instead of looping vocals
+   * forever. The carried entry floor is capped at `top - 1` (see enterSegment), so
+   * the top is always RE-EARNED in-segment, then held one loop — the rule fires
+   * uniformly with no special case for carries.
+   */
+  private topHeldSinceBoundary = false;
   /** A segment hand-off crossfade is mid-flight (the in-flight advance lock). */
   private transitionInFlight = false;
   private transitionToken = 0;
@@ -813,11 +829,17 @@ export class InteractiveAudioEngine {
     // The sticky floor carried in from the previous segment (0 on a fresh first entry),
     // raised to the hard min-audible floor (tierFloorFor → ≥2 layers) so EVERY entry —
     // the opening included — always has at least drums + bass, never a bare ≈1 layer.
-    // The carried floor may be the previous section's TOP tier (fully-revealed carries
-    // forward); the MANDATORY full-reveal advance does NOT cascade off that, because
-    // {@link shouldAdvance} requires the top reveal to be EARNED by clears in THIS
-    // segment (segmentScore ≥ top·TIER_REVEAL_STEP), not merely carried — see its (b).
     let startTier = Math.max(this.entryFloor, this.tierFloorFor(seg));
+    // B2 FIX (D3): CAP the carried floor below this segment's TOP so vocals are
+    // RE-EARNED per segment. A fully-revealed previous segment would otherwise carry
+    // its top tier in and the section would enter AT vocals with segmentScore 0 —
+    // either looping vocals forever (old gate (b)) or, if gate (b) accepted carries,
+    // auto-advancing every post-climax segment with zero clears (autonomous timeline
+    // by the back door). Capping at `max(tierFloorFor, top - 1)` forces the player's
+    // clears to re-reveal the top in THIS segment, keeping clears in the loop while
+    // still guaranteeing the top never loops forever. The ≥2-layer min-audible floor
+    // still wins for a low-tier segment (tierFloorFor ≥ top - 1 there).
+    startTier = Math.min(startTier, Math.max(this.tierFloorFor(seg), top - 1));
     // Clamp to this segment's ceiling (a 4-tier seg can't show tier4) + a loaded tier.
     startTier = Math.max(0, Math.min(top, startTier));
     startTier = this.nearestAvailableAtOrBelow(seg, startTier);
@@ -826,6 +848,9 @@ export class InteractiveAudioEngine {
     this.armedTier = startTier;
     this.tierFading = false;
     this.segmentScore = 0;
+    // Reset the full-reveal-held flag: the top must be re-earned + heard a full loop
+    // in THIS segment before the mandatory advance can arm (no cascade across entries).
+    this.topHeldSinceBoundary = false;
     // The floor THIS segment will hold to (sticky reveal never drops below it).
     this.entryFloor = startTier;
     // Record what this segment SHOULD sound at, so a tier whose player loads AFTER
@@ -986,6 +1011,15 @@ export class InteractiveAudioEngine {
     // immediately cancelled by the advance's fade-out).
     const tierBefore = this.tier;
 
+    // TOP-HELD latch (D3 gate (b)): if the top tier was ALREADY audible coming INTO
+    // this boundary (it was revealed on a PRIOR boundary and has now played a full
+    // loop), mark it held. This is set on the boundary AFTER the one that first put
+    // `this.tier === top` — so the top mix is heard for one whole loop before the
+    // mandatory advance can arm. Reset to false on every enterSegment (no cascade).
+    if (tierBefore >= this.maxTier(seg)) {
+      this.topHeldSinceBoundary = true;
+    }
+
     // 1) VERTICAL FIRST: reveal the sticky cumulative tier earned so far and crossfade
     //    up to it on this boundary. Updating `this.tier` here means an advance committed
     //    in step 2 carries the JUST-REVEALED tier forward as the next segment's floor.
@@ -1058,9 +1092,13 @@ export class InteractiveAudioEngine {
    *       ≥2-layer floor parks at its ceiling) has nothing to "earn", so it never
    *       mandatorily advances (it can still advance via the clear-gate). This is what
    *       prevents a low-tier segment from auto-advancing every bar with zero clears.
-   *   (b) the top reveal was EARNED by clears (`segmentScore ≥ maxTier·TIER_REVEAL_STEP`)
-   *       — being at the top because it was the carried entry floor is NOT enough; the
-   *       player must have actually cleared up to the top in THIS segment.
+   *   (b) the top tier has been AUDIBLE for a full loop (`topHeldSinceBoundary`) — set
+   *       on the boundary AFTER the one that first revealed the top (B2/D3). The carried
+   *       entry floor is capped at `top - 1` (see enterSegment), so the top is always
+   *       RE-EARNED in THIS segment by clears and then held one loop; the rule fires
+   *       uniformly whether the top was earned from the floor or from bare, with no
+   *       special case for carries. A carried-in top is impossible (the cap), so this
+   *       never fires on a zero-clear segment that merely inherited a high floor.
    *   (c) the top tier was ALREADY audible coming INTO this boundary (`tierBefore ≥ top`)
    *       — so a boundary that JUST revealed the top tier does not also advance off it on
    *       the same boundary (which would cancel the reveal ramp and the vocals would
@@ -1089,7 +1127,7 @@ export class InteractiveAudioEngine {
     if (this.segmentScore >= ADVANCE_THRESHOLD) return true;
     // MANDATORY full-reveal advance — see the three gates (a)/(b)/(c) above.
     if (top <= this.tierFloorFor(seg)) return false; // (a) no headroom above the floor
-    if (this.segmentScore < top * TIER_REVEAL_STEP) return false; // (b) reveal not earned
+    if (!this.topHeldSinceBoundary) return false; // (b) top not yet audible a full loop
     if (tierBefore < top) return false; // (c) top wasn't audible yet (don't cut vocals)
     return true;
   }
@@ -1531,6 +1569,7 @@ export class InteractiveAudioEngine {
       this.targetTier = 0;
       this.tierFading = false;
       this.entryFloor = 0;
+      this.topHeldSinceBoundary = false;
       this.bedReady = false;
 
       // Rebuild + re-enter the current track from segment 0 (fresh opening, floor tiers).
@@ -1664,6 +1703,7 @@ export class InteractiveAudioEngine {
     this.targetTier = 0;
     this.tierFading = false;
     this.entryFloor = 0;
+    this.topHeldSinceBoundary = false;
     this.segmentScore = 0;
     this.settleEvents = [];
     this.settleTimeouts = [];

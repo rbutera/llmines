@@ -567,19 +567,20 @@ describe("clear-gated engine: loop-in-place, sticky reveal, gated advance", () =
     expect(calls).toBe(1); // still once (host's switchTrack would rebuild)
   });
 
-  it("the sticky FLOOR carries forward — the next segment never resets to bare", async () => {
-    const e = await freshEngine(); // 3-tier default fixture
+  it("the sticky FLOOR carries forward but is CAPPED below the new top (vocals re-earned)", async () => {
+    const e = await freshEngine(); // 3-tier default fixture (top tier = tier2)
     // raise tier2 on segment 0, then advance.
     for (let i = 0; i < 3; i++) clear(e, 2, 1); // score 12 → arms tier2
     loopBoundary();
     await settle();
     expect(e.getAudioState().tier).toBe(2);
-    // now earn the advance (clear-gate). The just-revealed top tier carries forward.
+    // now earn the advance (clear-gate). The carried floor is CAPPED at top-1 (D3) so
+    // the new segment does NOT enter at vocals — it re-earns the top via clears.
     await earnAdvance(e);
     expect(e.getAudioState().segmentIndex).toBe(1);
-    // the carried floor = the tier reached (2), clamped to the new segment's ceiling —
-    // not reset to tier0/bare (the fully-revealed tier carries forward).
-    expect(e.getAudioState().tier).toBe(2); // not reset to tier0/bare
+    // carried floor = min(reached, top-1) = min(2, 1) = 1: not reset to bare (tier0),
+    // not carried all the way to the top (tier2) — vocals are re-earned per segment.
+    expect(e.getAudioState().tier).toBe(1);
   });
 
   it("no-hiss: active bed players stay <= 2 throughout a full clear-driven play-through", async () => {
@@ -825,11 +826,12 @@ describe("N-tier generalization (4-tier and 5-tier segments)", () => {
     expect(e.getAudioState().segmentIndex).toBe(0); // still here — vocals just revealed
     expect(e.getAudioState().tier).toBe(4); // top revealed + audible
     expect(e.getAudioState().layerGains[4]).toBeGreaterThan(0.9); // vocals ramp not cancelled
-    // BOUNDARY 2: now it advances (clear-gate score still ≥ 30, sticky), carrying the top.
+    // BOUNDARY 2: now it advances (clear-gate score still ≥ 30, sticky), carrying the
+    // floor — CAPPED at top-1 (D3) so the next segment re-earns its own vocals.
     loopBoundary();
     await settle();
     expect(e.getAudioState().segmentIndex).toBe(1);
-    expect(e.getAudioState().tier).toBe(4); // carried the fully-revealed top forward
+    expect(e.getAudioState().tier).toBe(3); // carried floor capped at top-1 (4-1), not 4
   });
 
   it("switchTrack works across DIFFERENT tier counts (song1 4-tier -> song2 5-tier)", async () => {
@@ -1092,21 +1094,23 @@ describe("mandatory advance on full reveal (vocals in → must move on)", () => 
     }
   });
 
-  it("a carried top floor does NOT cascade — the next section re-earns its reveal", async () => {
-    // Section A built to top, advances carrying the top tier as B's floor. B enters at
-    // top but with score 0 → the mandatory advance must NOT fire until B's top reveal is
-    // EARNED again by clears (gate (b)), so B loops in place rather than cascading.
+  it("a carried floor is capped below top → the next section does NOT cascade (re-earns its reveal)", async () => {
+    // Section A built to top, advances. B's carried floor is CAPPED at top-1 (D3), so B
+    // enters BELOW its top with score 0 → it cannot be at-top on entry, and the held flag
+    // resets, so the mandatory advance can't fire until B re-earns the top by clears. B
+    // loops in place rather than cascading.
     const e = await freshEngineWith(nTierManifest("song5", 5));
     for (let i = 0; i < 10; i++) clear(e, 2, 0); // score 30 → clear-gate advance + top
     loopBoundary(); // boundary 1: reveals top tier4 (held — not advanced off the reveal)
     await settle();
     expect(e.getAudioState().segmentIndex).toBe(0);
-    loopBoundary(); // boundary 2: now advances, carrying the top tier as B's floor
+    loopBoundary(); // boundary 2: now advances, carrying the capped floor into B
     await settle();
     expect(e.getAudioState().segmentIndex).toBe(1);
-    expect(e.getAudioState().tier).toBe(4); // carried the top tier forward
-    expect(e.getAudioState().segmentScore).toBe(0); // ...but re-earns from zero
-    // dry boundaries: B is at its top by carry, but the reveal wasn't earned here → holds.
+    expect(e.getAudioState().tier).toBe(3); // carried floor capped at top-1 (4-1), below top
+    expect(e.getAudioState().segmentScore).toBe(0); // ...and re-earns from zero
+    // dry boundaries: B is below its top and earns nothing → it never reaches top, never
+    // arms the mandatory advance → no cascade.
     for (let k = 0; k < 4; k++) {
       loopBoundary();
       await settle();
@@ -1173,5 +1177,105 @@ describe("low-tier segments never auto-advance (no cascade with zero clears)", (
     }
     await earnAdvance(e);
     expect(e.getAudioState().segmentIndex).toBe(1); // clear-gate still advances it
+  });
+});
+
+// ── audio-truth task 2.5: the D3 clear-gated-progression contract, all 6 cases ─────
+describe("clear-gated progression (audio-truth D3) — the 6 contract cases", () => {
+  // (i) carried full-reveal floor caps at top-1, the top is RE-EARNED, then advances
+  //     after one loop at top.
+  it("(i) carried floor caps at top-1, top is re-earned, then advances after one loop", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5)); // top tier = tier4
+    // Build segment 0 to its top + earn the clear-gate, advance into segment 1.
+    for (let i = 0; i < 10; i++) clear(e, 2, 0); // score 30 → top + clear-gate
+    loopBoundary(); // reveal top
+    await settle();
+    loopBoundary(); // advance into seg 1 (carried floor capped at top-1 = 3)
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBe(1);
+    expect(e.getAudioState().tier).toBe(3); // entered at top-1, NOT at vocals
+    // RE-EARN the top in segment 1: bank to the top reveal (tier4 at score ≥24), below
+    // the clear-gate (30), so only the mandatory full-reveal path can advance it.
+    for (let i = 0; i < 8; i++) clear(e, 2, 0); // score 24, < 30
+    expect(e.getAudioState().segmentScore).toBeLessThan(30);
+    loopBoundary(); // boundary A: re-reveal the top tier (vocals) — NO advance here
+    await settle();
+    expect(e.getAudioState().tier).toBe(4);
+    expect(e.getAudioState().segmentIndex).toBe(1); // held this loop (vocals sound)
+    loopBoundary(); // boundary B: top held a full loop → mandatory advance fires
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBe(2);
+  });
+
+  // (ii) a low-tier / floor-only segment never auto-advances with zero clears.
+  it("(ii) a floor-only (top == min-audible floor) segment never auto-advances with zero clears", async () => {
+    const e = await freshEngineWith(nTierManifest("song2t", 2)); // floor == top
+    for (let k = 0; k < 10; k++) {
+      loopBoundary();
+      await settle();
+      expect(e.getAudioState().segmentIndex).toBe(0); // loops forever with no clears
+    }
+  });
+
+  // (iii) no advance on the reveal boundary (ramp-cancel guard, gate c).
+  it("(iii) no advance on the boundary that first reveals the top (ramp-cancel guard)", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5));
+    e.__injectClears(10); // banks BOTH the top reveal AND the clear-gate in one pass
+    loopBoundary(); // reveals top — must NOT advance off it on this same boundary
+    await settle();
+    expect(e.getAudioState().tier).toBe(4); // top revealed + audible
+    expect(e.getAudioState().segmentIndex).toBe(0); // not advanced (gate c held)
+    expect(e.getAudioState().layerGains[4]).toBeGreaterThan(0.9); // reveal ramp intact
+  });
+
+  // (iv) no cascade — a fresh advance needs a fresh full loop in the new segment.
+  it("(iv) the new segment needs a fresh full loop at top — no cascade", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5));
+    for (let i = 0; i < 10; i++) clear(e, 2, 0);
+    loopBoundary(); // reveal
+    await settle();
+    loopBoundary(); // advance into seg 1 (capped floor, held flag reset, score 0)
+    await settle();
+    const idx = e.getAudioState().segmentIndex;
+    expect(idx).toBe(1);
+    for (let k = 0; k < 5; k++) {
+      loopBoundary();
+      await settle();
+      expect(e.getAudioState().segmentIndex).toBe(idx); // no cascade on dry boundaries
+    }
+  });
+
+  // (v) end-of-song fires onSongComplete.
+  it("(v) an earned advance past the TERMINAL segment fires onSongComplete", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5));
+    let calls = 0;
+    e.onSongComplete = () => {
+      calls++;
+    };
+    const last = e.getAudioState().segmentCount - 1;
+    for (let k = 0; k < last; k++) await earnAdvance(e);
+    expect(e.getAudioState().segmentIndex).toBe(last);
+    expect(calls).toBe(0);
+    await earnAdvance(e); // advance PAST the terminal segment
+    expect(calls).toBe(1);
+  });
+
+  // (vi) weight pacing: typical clear = 3, big clear = 5 (< 30), streak = 7.
+  it("(vi) clear weight pacing — typical=3, big harvest=5, streak=7, all under the 30 gate", async () => {
+    const e = await freshEngine();
+    // a typical 2-square, no-streak clear → weight 1 + 2 + 0 = 3.
+    clear(e, 2, 0);
+    await settle();
+    expect(e.getAudioState().segmentScore).toBe(3);
+    // a big 4-square single-sweep harvest, no streak → 1 + 4 + 0 = 5 (rewarded, ≪ 30).
+    clear(e, 4, 0);
+    await settle();
+    expect(e.getAudioState().segmentScore).toBe(3 + 5);
+    // a 4-square pass on a ×3 streak (combo = streak-1 = 2) → 1 + 4 + 2 = 7.
+    clear(e, 4, 2);
+    await settle();
+    expect(e.getAudioState().segmentScore).toBe(3 + 5 + 7);
+    // none of these single clears alone crosses ADVANCE_THRESHOLD (30) → no fast-forward.
+    expect(e.getAudioState().segmentScore).toBeLessThan(30);
   });
 });
