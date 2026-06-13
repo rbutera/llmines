@@ -413,7 +413,7 @@ export function GameShell() {
 
   const handleRestart = useCallback(() => {
     if (!controller) return;
-    controller.restart(1);
+    controller.restart();
     setScore(0);
     setPaused(false);
     gameOverSubmittedRef.current = false;

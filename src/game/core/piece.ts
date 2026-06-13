@@ -116,6 +116,19 @@ export function spawnFromQueue(state: GameState): GameState {
   return refillQueue(spawned);
 }
 
+/**
+ * Can a freshly spawned piece ENTER the visible field (audit A5/D4)? A piece
+ * stages above the field at {@link SPAWN_ROW} (= -2) and always "places" there
+ * (its cells are above row 0). The real top-out condition is whether it can reach
+ * an in-field row: test `canPlace` at the FIRST in-field row it would occupy —
+ * the 2x2 at row 0 (cells in rows 0-1 of the spawn columns). If those cells are
+ * blocked, the piece can never enter -> game over ("blocks pile to the top",
+ * README §3b item 1).
+ */
+function canEnterField(grid: Grid, cells: Piece): boolean {
+  return canPlace(grid, cells, { row: 0, col: SPAWN_COL });
+}
+
 /** Coordinate (`row*COLS+col`) of the cell at `cellIndex` for a piece at `pos`. */
 function specialCoordFor(pos: PiecePos, cellIndex: 0 | 1 | 2 | 3): number {
   const row = pos.row + (cellIndex >= 2 ? 1 : 0);
@@ -132,7 +145,9 @@ export function spawnGeneratedPiece(
   gp: GeneratedPiece,
 ): GameState {
   const pos: PiecePos = { row: SPAWN_ROW, col: SPAWN_COL };
-  if (!canPlace(state.grid, gp.cells, pos)) {
+  // Game over only when the piece cannot ENTER the field (its in-field entry
+  // cells are blocked) — NOT merely because it stages above the field (A5/D4).
+  if (!canEnterField(state.grid, gp.cells)) {
     return {
       ...state,
       active: null,
@@ -171,7 +186,9 @@ export function canPlace(grid: Grid, cells: Piece, pos: PiecePos): boolean {
  */
 export function spawnPiece(state: GameState, cells: Piece): GameState {
   const pos: PiecePos = { row: SPAWN_ROW, col: SPAWN_COL };
-  if (!canPlace(state.grid, cells, pos)) {
+  // Game over only when the piece cannot ENTER the field (A5/D4), not when it
+  // stages above it.
+  if (!canEnterField(state.grid, cells)) {
     return {
       ...state,
       active: null,
@@ -278,10 +295,27 @@ function canDescend(state: GameState): boolean {
   return canPlace(state.grid, state.active.cells, pos);
 }
 
-/** Merge the active piece into the settled grid, then settle by gravity. */
-export function lockPiece(state: GameState): GameState {
+/**
+ * Merge the active piece into the settled grid, then settle by gravity. Stamps
+ * the RECORD-ONLY `lastLock` event with a bumped monotonic `id` and the given
+ * `cause` (design D8) so the audio layer can route the right lock SFX on EVERY
+ * lock, not just hard drops. `cause` defaults to "gravity"; the three lock
+ * callers pass their own: `gravityStep` -> "gravity", `softDrop` -> "soft",
+ * `hardDrop` -> "hard". Record-only: never read by gameplay/scoring/timing.
+ */
+export function lockPiece(
+  state: GameState,
+  cause: "gravity" | "soft" | "hard" = "gravity",
+): GameState {
   if (!state.active) return state;
   const grid = cloneGrid(state.grid);
+  // Top-out on a mid-air lock (A5/D4): if the piece locks with ANY cell still
+  // above row 0 (in the staging rows) it cannot fit inside the field — that IS
+  // the "blocks pile to the top" condition (e.g. a staged piece shoved sideways
+  // over a full-height column then unable to descend). The in-field cells still
+  // merge (so the visible pile is faithful), but the game ends rather than
+  // silently discarding the above-field cells with play continuing.
+  const locksAboveField = pieceCells(state.active).some(({ row }) => row < 0);
   for (const { row, col, color } of pieceCells(state.active)) {
     if (inBounds(row, col) && color !== null) grid[row]![col] = color;
   }
@@ -308,6 +342,10 @@ export function lockPiece(state: GameState): GameState {
     active: null,
     score: state.score + state.softDropBonus,
     softDropBonus: 0,
+    // A lock with any cell above the field tops the game out (A5/D4).
+    gameOver: state.gameOver || locksAboveField,
+    // RECORD-ONLY (D8): stamp the lock event with a bumped id + cause.
+    lastLock: { id: (state.lastLock?.id ?? 0) + 1, cause },
   };
 }
 
@@ -342,9 +380,15 @@ export function settleSpecials(
 
 /**
  * Advance one gravity step. Returns the new state and whether the piece locked.
- * In test mode the controller calls this and never auto-spawns.
+ * In test mode the controller calls this and never auto-spawns. `cause` (D8) is
+ * stamped onto `lastLock` IF this step locks — defaults to "gravity"; `softDrop`
+ * passes "soft" so a sustained/tapped soft-drop lock is attributed correctly even
+ * though it routes through this same primitive.
  */
-export function gravityStep(state: GameState): {
+export function gravityStep(
+  state: GameState,
+  cause: "gravity" | "soft" | "hard" = "gravity",
+): {
   state: GameState;
   locked: boolean;
 } {
@@ -361,7 +405,7 @@ export function gravityStep(state: GameState): {
       locked: false,
     };
   }
-  return { state: lockPiece(state), locked: true };
+  return { state: lockPiece(state, cause), locked: true };
 }
 
 /**
@@ -379,7 +423,9 @@ export function softDrop(state: GameState): {
   state: GameState;
   locked: boolean;
 } {
-  const result = gravityStep(state);
+  // Route through gravityStep but attribute the lock to a soft drop (D8): a soft-
+  // drop step that locks must stamp lastLock.cause = "soft", not "gravity".
+  const result = gravityStep(state, "soft");
   if (!result.locked) {
     return {
       state: { ...result.state, softDropBonus: result.state.softDropBonus + 1 },
@@ -402,9 +448,13 @@ export function hardDrop(state: GameState): GameState {
     active = {
       cells: active.cells,
       pos: { row: active.pos.row + 1, col: active.pos.col },
+      // Carry the chain special through every rebuilt `active` in the descent
+      // loop, exactly as movePiece / rotateCW / gravityStep do. Without this a
+      // gem hard-dropped (the common case) locked as a plain block (audit A1).
+      special: active.special,
     };
   }
-  return lockPiece({ ...state, active });
+  return lockPiece({ ...state, active }, "hard");
 }
 
 /** Is the active piece currently resting (cannot descend)? */

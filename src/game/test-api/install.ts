@@ -1,6 +1,6 @@
 import type { Piece, PublicState } from "../core";
 import { mockStore } from "../account/mock-store";
-import type { GameController } from "../engine/controller";
+import type { GameController, ReplayRecord } from "../engine/controller";
 
 /** Deterministic auth hooks (TEST_MODE only) — drive the mock identity. */
 export interface LuminesAuthApi {
@@ -59,12 +59,48 @@ export interface LuminesTestApi {
    * while off.
    */
   forceGem(on?: boolean): void;
+  /**
+   * Audit A8 replay seam: the current run's replay record `{ schemaVersion, seed,
+   * inputs }`. Seed + ordered inputs reproduce the run.
+   */
+  getReplay(): ReplayRecord;
+  /**
+   * Serialise the replay record to JSON and trigger a browser download. Browser-
+   * only (uses a Blob + anchor); a no-op when no DOM is available (SSR/tests).
+   * A minimal dev/game-over export affordance for A8.
+   */
+  downloadReplay(): void;
 }
 
 declare global {
   interface Window {
     __lumines?: LuminesTestApi;
   }
+}
+
+/**
+ * Serialise a replay record to JSON and trigger a browser download (audit A8).
+ * Browser-only: guards on `document`/`URL.createObjectURL` so it is a safe no-op
+ * under SSR or the test/Node environment. Never runs in the pure core.
+ */
+export function downloadReplay(replay: ReplayRecord): void {
+  if (
+    typeof document === "undefined" ||
+    typeof URL === "undefined" ||
+    typeof URL.createObjectURL !== "function"
+  ) {
+    return; // no DOM (SSR / tests): no-op
+  }
+  const json = JSON.stringify(replay, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `llmines-replay-${replay.seed}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 /**
@@ -101,6 +137,8 @@ export function installTestApi(controller: GameController): () => void {
     setSpecial: (row, col) => controller.testSetSpecial(row, col),
     setSkin: (index) => controller.testSetSkin(index),
     forceGem: (on = true) => controller.setForceGem(on),
+    getReplay: () => controller.getReplay(),
+    downloadReplay: () => downloadReplay(controller.getReplay()),
   };
   window.__lumines = api;
   return () => {

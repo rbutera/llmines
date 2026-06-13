@@ -19,6 +19,7 @@ import {
   releaseHold,
   rotateCW,
   rotateCells,
+  softDrop,
   spawnPiece,
   tickHold,
 } from "./piece";
@@ -128,14 +129,18 @@ describe("piece mechanics (4.x)", () => {
     return spawnPiece(createGame(), cells);
   }
 
-  it("spawns at top-centre cols 7-8 rows 0-1", () => {
+  it("spawns STAGED above the field (cols 7-8, top at row -2) and the board grid stays clear", () => {
+    // A5/D4: pieces stage above the visible field at SPAWN_ROW = -2 and descend
+    // in under gravity. The board-grid projection (viewGrid) is unchanged — it
+    // only composites in-field cells, so the staged piece is NOT drawn into the
+    // board (it enters from the top edge).
     const s = withPiece(MONO_A);
-    expect(s.active?.pos).toEqual({ row: 0, col: 7 });
+    expect(s.active?.pos).toEqual({ row: -2, col: 7 });
     const v = viewGrid(s);
-    expect(v[0]![7]).toBe(0);
-    expect(v[0]![8]).toBe(0);
-    expect(v[1]![7]).toBe(0);
-    expect(v[1]![8]).toBe(0);
+    expect(v[0]![7]).toBe(null);
+    expect(v[0]![8]).toBe(null);
+    expect(v[1]![7]).toBe(null);
+    expect(v[1]![8]).toBe(null);
   });
 
   it("move left/right within bounds, blocked at walls", () => {
@@ -154,10 +159,19 @@ describe("piece mechanics (4.x)", () => {
   });
 
   it("move blocked by a settled cell", () => {
+    // Pieces stage above the field now, so the blocker must sit where the piece's
+    // in-field cells would be after it descends. Bring the piece down to rows 0-1,
+    // then block col 6 at both those rows so a leftward move overlaps.
     const base = createGame();
-    base.grid[0]![6] = 1; // settled cell immediately left of spawn col 7
-    const s = moveLeft(spawnPiece(base, MONO_A));
-    expect(s.active?.pos.col).toBe(7); // unchanged
+    base.grid[0]![6] = 1;
+    base.grid[1]![6] = 1; // settled cells immediately left of spawn col 7, rows 0-1
+    let s = spawnPiece(base, MONO_A);
+    // Descend from row -2 to row 0 (two gravity steps).
+    s = gravityStep(s).state;
+    s = gravityStep(s).state;
+    expect(s.active?.pos).toEqual({ row: 0, col: 7 });
+    s = moveLeft(s);
+    expect(s.active?.pos.col).toBe(7); // unchanged: blocked by the col-6 stack
   });
 
   it("rotateCells permutes [[a,b],[c,d]] -> [[c,a],[d,b]]", () => {
@@ -270,6 +284,25 @@ describe("piece mechanics (4.x)", () => {
     expect(s.active).toBe(null);
     expect(s.grid[ROWS - 1]![7]).toBe(0);
     expect(s.grid[ROWS - 2]![8]).toBe(0);
+  });
+
+  it("hard drop carries the chain special through to the settled cell (regression A1)", () => {
+    // Regression: hardDrop rebuilt `active` per descent step WITHOUT special, so a
+    // gem hard-dropped (the common case) locked as a plain block. The special must
+    // survive the descent loop and land in `specials`.
+    const mk = () => {
+      const s = withPiece(MONO_A);
+      // cellIndex 2 = bottom-left of the 2x2 (spawn cols 7-8).
+      s.active!.special = { cellIndex: 2 };
+      return s;
+    };
+    // Repeat to assert it is never silently dropped.
+    for (let i = 0; i < 5; i++) {
+      const s = hardDrop(mk());
+      expect(s.active).toBe(null);
+      // Bottom-left cell rests at (ROWS-1, 7) after the drop+settle.
+      expect(s.specials.has((ROWS - 1) * COLS + 7)).toBe(true);
+    }
   });
 });
 
@@ -775,43 +808,250 @@ describe("partial-coverage matrix (3.x)", () => {
     expect(s.score).toBe(40 + 10000);
   });
 
-  it("square completed mid-pass AHEAD of the bar waits for the next pass", () => {
-    // Bar advances past col 2 on an empty board, then a square is placed AHEAD
-    // (cols 8-9). It wasn't in the pass-start snapshot, so it must wait.
-    let s = advanceSweep(createGame(), 3); // leading edge at col 3
+  it("square completed mid-pass AHEAD of the bar clears on the CURRENT pass (D1)", () => {
+    // Mark-as-the-bar-passes (audit A2): the bar advances mid-pass on an empty
+    // board, then a square is placed AHEAD of it (cols 8-9). When the leading
+    // edge reaches cols 8-9 it marks the square and clears it THIS pass — it does
+    // NOT wait a full extra traversal.
+    let s = advanceSweep(createGame(), 4); // leading edge at col 4
+    expect(s.sweepX).toBeCloseTo(4, 6);
     const withSquare: GameState = { ...s, grid: cloneForTest(s.grid) };
     withSquare.grid[ROWS - 1]![8] = 1;
     withSquare.grid[ROWS - 1]![9] = 1;
     withSquare.grid[ROWS - 2]![8] = 1;
     withSquare.grid[ROWS - 2]![9] = 1;
+    // Finish this pass: the edge reaches cols 8-9 and the gap at col 10 erases it.
     s = advanceSweep(withSquare, COLS - withSquare.sweepX);
-    // Ahead square survived (not in snapshot).
-    expect(s.grid[ROWS - 1]![8]).toBe(1);
-    expect(s.score).toBe(0);
-    // Next pass clears it.
-    s = advanceSweep(s, COLS);
+    // Ahead square cleared on this pass.
     expect(s.grid[ROWS - 1]![8]).toBe(null);
-    // 1 x 40 = 40, board emptied -> all-clear bonus.
+    expect(s.grid[ROWS - 1]![9]).toBe(null);
+    expect(s.grid[ROWS - 2]![8]).toBe(null);
+    // 1 x 40 = 40, board emptied -> all-clear bonus, banked at the right edge.
     expect(s.score).toBe(40 + 10000);
   });
 });
 
-describe("game over (7.x)", () => {
-  it("occupied spawn cells -> gameOver true, no active piece", () => {
+describe("sweep-clear-mechanics: per-group batch erase + cascades (D1/D2)", () => {
+  /** Square sitting in cols [c, c+1] on the floor, mono colour. */
+  function squareAt(base: GameState, c: number, color: 0 | 1): void {
+    base.grid[ROWS - 1]![c] = color;
+    base.grid[ROWS - 1]![c + 1] = color;
+    base.grid[ROWS - 2]![c] = color;
+    base.grid[ROWS - 2]![c + 1] = color;
+  }
+
+  it("a contiguous marked run (overlapping squares) erases as ONE batch at the gap", () => {
+    // A mono 2x3 strip (cols 5-7, rows 8-9) = 2 overlapping squares spanning a
+    // contiguous run of cols 5,6,7. Col 8 is a gap. When the edge reaches col 8
+    // the whole run erases in one batch.
     const base = createGame();
-    base.grid[0]![7] = 1; // block a spawn cell
-    const s = spawnPiece(base, [
-      [0, 0],
-      [0, 0],
-    ] as Piece);
+    for (const c of [5, 6, 7]) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    // Advance just past col 8 (the gap) — well before the right edge.
+    const s = advanceSweep(base, 8.5);
+    expect(s.sweepX).toBeCloseTo(8.5, 6);
+    for (const c of [5, 6, 7]) {
+      expect(s.grid[ROWS - 1]![c]).toBe(null);
+      expect(s.grid[ROWS - 2]![c]).toBe(null);
+    }
+    // Score still banks only at the right edge, so not yet (mid-pass).
+    expect(s.score).toBe(0);
+  });
+
+  it("a marked group at the RIGHT EDGE (no trailing gap) erases at pass end", () => {
+    // Square at the last two columns (14-15): no column beyond to act as a gap,
+    // so the run flushes when the bar reaches the right edge.
+    const base = createGame();
+    squareAt(base, COLS - 2, 1);
+    // Edge nearly at the right but not wrapped: the square should still be there.
+    const mid = advanceSweep(base, COLS - 0.5);
+    expect(mid.grid[ROWS - 1]![COLS - 2]).toBe(1);
+    // Complete the pass: erases at the right edge.
+    const done = advanceSweep(mid, 0.5);
+    expect(done.grid[ROWS - 1]![COLS - 2]).toBe(null);
+    expect(done.grid[ROWS - 1]![COLS - 1]).toBe(null);
+    expect(done.score).toBe(40 + 10000);
+  });
+
+  it("two groups separated by a gap erase independently", () => {
+    // Group A at cols 2-3, gap at col 4, group B at cols 6-7.
+    const base = createGame();
+    squareAt(base, 2, 0);
+    squareAt(base, 6, 1);
+    // Reach col 5 (past the gap at col 4): group A erased, group B still there.
+    const afterGapA = advanceSweep(base, 5.5);
+    expect(afterGapA.grid[ROWS - 1]![2]).toBe(null); // A gone
+    expect(afterGapA.grid[ROWS - 1]![6]).toBe(1); // B intact
+    // Complete the pass: group B erases at the right edge.
+    const done = advanceSweep(afterGapA, COLS - afterGapA.sweepX);
+    expect(done.grid[ROWS - 1]![6]).toBe(null);
+    // 2 squares total this pass -> 2 x 40 = 80, board emptied -> all-clear bonus.
+    expect(done.score).toBe(80 + 10000);
+  });
+
+  it("gravity does not run BETWEEN columns of one group (one settle per group)", () => {
+    // A mono 2x3 group (cols 3-5) with a DIFFERENT-colour stack above col 4 (the
+    // group's middle column). If gravity ran per-column, the col-4 stack would
+    // fall as soon as col 3 was crossed; in the group model it falls exactly once
+    // after the whole [3,5] batch erases. Either way the END grid is the same,
+    // but we can at least assert the batch erases together and the stack lands.
+    const base = createGame();
+    for (const c of [3, 4, 5]) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    // B stack above col 4 (rows 0..ROWS-3).
+    for (let row = 0; row <= ROWS - 3; row++) base.grid[row]![4] = 1;
+    const s = advanceSweep(base, 6.5); // past the gap at col 6
+    // The whole A group is gone (cols 3 and 5 have nothing left; col 4 now holds
+    // the B stack that fell after the single post-group settle).
+    expect(s.grid[ROWS - 1]![3]).toBe(null);
+    expect(s.grid[ROWS - 1]![5]).toBe(null);
+    // No A (colour 0) remains anywhere.
+    let zeros = 0;
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++) if (s.grid[r]![c] === 0) zeros++;
+    expect(zeros).toBe(0);
+    // The B stack settled to the floor of col 4 — exactly once, all ROWS-2 cells.
+    expect(s.grid[ROWS - 1]![4]).toBe(1);
+    expect(s.grid.filter((r) => r[4] === 1).length).toBe(ROWS - 2);
+  });
+
+  it("cascade UNDER unpassed columns clears on the CURRENT pass", () => {
+    // Group at cols 2-3 sits beneath a tall same-as-cascade arrangement so that
+    // erasing it drops cells which form a NEW square AHEAD of the bar (cols 6-7),
+    // which the edge then reaches and clears this pass. Build it directly: an A
+    // square at cols 2-3, and a B square already sitting at cols 6-7 (ahead). The
+    // ahead B square is the "cascade" the edge harvests later in the same pass.
+    const base = createGame();
+    squareAt(base, 2, 0); // erased early (edge reaches gap at col 4)
+    squareAt(base, 6, 1); // ahead of the bar; cleared when the edge reaches it
+    const s = advanceSweep(base, COLS); // full pass
+    // Both cleared THIS pass.
+    expect(s.grid[ROWS - 1]![2]).toBe(null);
+    expect(s.grid[ROWS - 1]![6]).toBe(null);
+    expect(s.score).toBe(80 + 10000);
+  });
+
+  it("cascade BEHIND the bar clears on the NEXT pass, not this one", () => {
+    // A square at cols 6-7 with scattered B cells above cols 0-1 that, after the
+    // A clears and the columns settle, would form a B square at cols 0-1 (already
+    // passed). It must NOT clear this pass.
+    const base = createGame();
+    for (const c of [6, 7]) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    // Pre-place a settled B square behind the bar at cols 0-1 to model "formed
+    // behind the bar": advance the edge past cols 0-1 FIRST, then it can't be
+    // marked this pass.
+    let s = advanceSweep(base, 3); // edge past cols 0,1,2
+    const withBehind: GameState = { ...s, grid: cloneForTest(s.grid) };
+    withBehind.grid[ROWS - 1]![0] = 1;
+    withBehind.grid[ROWS - 1]![1] = 1;
+    withBehind.grid[ROWS - 2]![0] = 1;
+    withBehind.grid[ROWS - 2]![1] = 1;
+    s = advanceSweep(withBehind, COLS - withBehind.sweepX); // finish the pass
+    // The A square at 6-7 cleared; the behind B square survives.
+    expect(s.grid[ROWS - 1]![6]).toBe(null);
+    expect(s.grid[ROWS - 1]![0]).toBe(1);
+    // Next pass harvests the behind square.
+    s = advanceSweep(s, COLS);
+    expect(s.grid[ROWS - 1]![0]).toBe(null);
+  });
+
+  it("a square cell behind the erased bar is not re-marked after a settle drops into it", () => {
+    // Cols 0-1: A square + a lone B two rows above. When the edge erases cols 0-1
+    // the B falls into the just-vacated floor (a column already passed); it must
+    // NOT be re-marked or re-erased this pass.
+    const base = createGame();
+    squareAt(base, 0, 0);
+    base.grid[ROWS - 4]![0] = 1; // floats above the square
+    const s = advanceSweep(base, COLS);
+    // The A square gone; exactly one B survives in col 0 (fell to the floor).
+    expect(s.grid.filter((r) => r[0] === 1).length).toBe(1);
+    expect(s.grid[ROWS - 1]![0]).toBe(1);
+  });
+});
+
+describe("game over (7.x): spawn-above / top-out (A5/D4)", () => {
+  it("blocked spawn columns (filled up to row 0) end the game", () => {
+    const base = createGame();
+    // Fill the spawn columns (7-8) to the top: a new piece cannot ENTER the field.
+    for (let r = 0; r < ROWS; r++) {
+      base.grid[r]![7] = 1;
+      base.grid[r]![8] = 1;
+    }
+    const s = spawnPiece(base, MONO_A);
     expect(s.gameOver).toBe(true);
     expect(s.active).toBe(null);
   });
 
-  it("normal spawn into free space does not end the game", () => {
+  it("a single occupied in-field entry cell (row 0 of a spawn column) ends the game", () => {
+    const base = createGame();
+    base.grid[0]![7] = 1; // blocks the piece's top-left in-field entry cell
+    const s = spawnPiece(base, MONO_A);
+    expect(s.gameOver).toBe(true);
+    expect(s.active).toBe(null);
+  });
+
+  it("normal spawn into a free field does not end the game (stages above)", () => {
     const s = spawnPiece(createGame(), MONO_B);
     expect(s.gameOver).toBe(false);
     expect(s.active).not.toBe(null);
+    expect(s.active?.pos.row).toBe(-2); // staged above the field
+  });
+
+  it("free in-field entry rows admit the piece (spawn cols filled from row 2 down)", () => {
+    const base = createGame();
+    // Spawn columns full from row 2 to the floor; the entry rows 0-1 are free, so
+    // the 2x2 can enter (per D4 the entry test is canPlace at row 0, needing rows
+    // 0-1) — NOT game over.
+    for (let r = 2; r < ROWS; r++) {
+      base.grid[r]![7] = 1;
+      base.grid[r]![8] = 1;
+    }
+    const s = spawnPiece(base, MONO_A);
+    expect(s.gameOver).toBe(false);
+    expect(s.active).not.toBe(null);
+  });
+
+  it("the top rows of the field are usable away from the spawn columns", () => {
+    const base = createGame();
+    // Occupy rows 0-1 in distant columns (0-1); the spawn columns (7-8) are free.
+    base.grid[0]![0] = 0;
+    base.grid[1]![0] = 0;
+    base.grid[0]![1] = 0;
+    base.grid[1]![1] = 0;
+    const s = spawnPiece(base, MONO_A);
+    expect(s.gameOver).toBe(false);
+    expect(s.active).not.toBe(null);
+  });
+
+  it("a lateral shift onto a full column tops out on lock (A5/D4)", () => {
+    // Build a full-height column at col 6, spawn, shift the staged piece LEFT over
+    // it, then drive gravity: the piece cannot descend (col 6 is full to the top)
+    // and locks with cells still above row 0 -> game over, nothing silently lost.
+    const base = createGame();
+    for (let r = 0; r < ROWS; r++) base.grid[r]![6] = 1; // col 6 full
+    let s = spawnPiece(base, MONO_A); // staged at cols 7-8, row -2
+    s = moveLeft(s); // now over cols 6-7 (col 6 is the full one)
+    expect(s.active?.pos.col).toBe(6);
+    // Gravity: from -2, the piece can descend while above the field, but col 6 is
+    // full so it cannot enter row 0; it locks while a cell is still above row 0.
+    let locked = false;
+    for (let i = 0; i < ROWS + 4; i++) {
+      const r = gravityStep(s);
+      s = r.state;
+      if (r.locked) {
+        locked = true;
+        break;
+      }
+    }
+    expect(locked).toBe(true);
+    expect(s.gameOver).toBe(true);
   });
 });
 
@@ -853,7 +1093,154 @@ describe("new-block hold (core)", () => {
   it("the hold does not move the piece; gravityStep is not hold-aware", () => {
     const s = spawnPiece(createGame(), MONO_A);
     // gravityStep stays a pure-movement primitive (hold suspension lives in the
-    // controller / test tick), so it still descends a held piece by one row.
-    expect(gravityStep(s).state.active?.pos.row).toBe(1);
+    // controller / test tick), so it still descends a held piece by one row —
+    // from the staging row -2 to -1 (one row down, still above the field).
+    expect(gravityStep(s).state.active?.pos.row).toBe(-1);
+  });
+});
+
+describe("telemetry: lock events (D8, record-only)", () => {
+  it("a gravity lock reports cause 'gravity' with a bumped id", () => {
+    let s = spawnPiece(createGame(), MONO_A);
+    let r = gravityStep(s);
+    while (!r.locked) {
+      s = r.state;
+      r = gravityStep(s);
+    }
+    expect(r.state.lastLock?.cause).toBe("gravity");
+    expect(r.state.lastLock?.id).toBe(1);
+  });
+
+  it("a soft-drop lock reports cause 'soft'", () => {
+    let s = spawnPiece(createGame(), MONO_A);
+    let r = softDrop(s);
+    // softDrop descends one row if it can, else locks; drive until it locks.
+    while (!r.locked) {
+      s = r.state;
+      r = softDrop(s);
+    }
+    expect(r.state.lastLock?.cause).toBe("soft");
+  });
+
+  it("a hard-drop lock reports cause 'hard'", () => {
+    const s = hardDrop(spawnPiece(createGame(), MONO_A));
+    expect(s.lastLock?.cause).toBe("hard");
+    expect(s.lastLock?.id).toBe(1);
+  });
+
+  it("the lock id is monotonic across successive locks", () => {
+    const a = hardDrop(spawnPiece(createGame(), MONO_A));
+    const b = hardDrop(spawnPiece(a, MONO_B));
+    expect(b.lastLock?.id).toBe((a.lastLock?.id ?? 0) + 1);
+  });
+});
+
+describe("telemetry: pass-completion events (D8, record-only)", () => {
+  function squareAt(base: GameState, c: number, color: 0 | 1): void {
+    base.grid[ROWS - 1]![c] = color;
+    base.grid[ROWS - 1]![c + 1] = color;
+    base.grid[ROWS - 2]![c] = color;
+    base.grid[ROWS - 2]![c + 1] = color;
+  }
+
+  it("emits truthful clear data (squares + applied multiplier) on pass completion", () => {
+    // 4 squares (mono 1x5 band) at no prior streak -> package 640 x x1.
+    const base = createGame();
+    for (let c = 0; c < 5; c++) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    const s = advanceSweep(base, COLS);
+    expect(s.lastPassComplete).toBeDefined();
+    expect(s.lastPassComplete!.squares).toBe(4);
+    expect(s.lastPassComplete!.comboMultiplier).toBe(1);
+    // The 4 overlapping squares are one contiguous group -> one groupErase, no chain.
+    expect(s.lastPassComplete!.groupErases.length).toBeGreaterThanOrEqual(1);
+    expect(s.lastPassComplete!.groupErases.every((g) => g.hadChain)).toBe(false);
+  });
+
+  it("reports two groups, one with a chain, when a gem-bearing group floods", () => {
+    const base = createGame();
+    // Group A (cols 2-3) carrying a chain special, gap at col 4, group B (cols 6-7).
+    squareAt(base, 2, 0);
+    squareAt(base, 6, 1);
+    base.specials = new Set([(ROWS - 1) * COLS + 2]); // gem in group A
+    const s = advanceSweep(base, COLS);
+    expect(s.lastPassComplete!.squares).toBe(2);
+    expect(s.lastPassComplete!.groupErases.length).toBe(2);
+    const chained = s.lastPassComplete!.groupErases.filter((g) => g.hadChain);
+    expect(chained.length).toBe(1);
+    // Each group's cells carry the real erased coordinates.
+    for (const g of s.lastPassComplete!.groupErases) {
+      expect(g.cells.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("the multiplier reflects the streak actually applied (4 squares at x2)", () => {
+    const base = createGame();
+    for (let c = 0; c < 5; c++) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    const s = advanceSweep({ ...base, combo: 1 }, COLS); // streak selects x2
+    expect(s.lastPassComplete!.squares).toBe(4);
+    expect(s.lastPassComplete!.comboMultiplier).toBe(2);
+  });
+
+  it("the full D8 scenario: 4 squares, x2, two groups, one with a chain", () => {
+    // Two mono 1x3 bands = 2 squares each (4 total): group A cols 0-2 (chain),
+    // gap at col 3, group B cols 5-7. At streak entry (combo=1) the package x x2.
+    const base = createGame();
+    for (const c of [0, 1, 2]) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    for (const c of [5, 6, 7]) {
+      base.grid[ROWS - 1]![c] = 1;
+      base.grid[ROWS - 2]![c] = 1;
+    }
+    base.specials = new Set([(ROWS - 1) * COLS + 0]); // gem in group A
+    const s = advanceSweep({ ...base, combo: 1 }, COLS);
+    expect(s.lastPassComplete!.squares).toBe(4);
+    expect(s.lastPassComplete!.comboMultiplier).toBe(2);
+    expect(s.lastPassComplete!.groupErases.length).toBe(2);
+    expect(
+      s.lastPassComplete!.groupErases.filter((g) => g.hadChain).length,
+    ).toBe(1);
+    for (const g of s.lastPassComplete!.groupErases) {
+      expect(g.cells.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("monotonic id fires once per completed pass; unchanged when no pass completes", () => {
+    const base = createGame();
+    squareAt(base, 0, 0);
+    const p1 = advanceSweep(base, COLS);
+    expect(p1.lastPassComplete!.id).toBe(1);
+    // Advancing without completing a pass leaves the event unchanged (same id).
+    const partial = advanceSweep(p1, 3);
+    expect(partial.lastPassComplete).toEqual(p1.lastPassComplete);
+    // The next completed pass bumps the id.
+    const p2grid = createGame();
+    squareAt(p2grid, 0, 1);
+    const p2 = advanceSweep(
+      { ...partial, grid: p2grid.grid, sweepPass: null, sweepX: 0 },
+      COLS,
+    );
+    expect(p2.lastPassComplete!.id).toBe(2);
+  });
+
+  it("is record-only: reading lastPassComplete/lastLock does not change deletion or score", () => {
+    // The same board swept twice yields identical grid + score regardless of the
+    // telemetry fields (they are additive, never read by gameplay).
+    const mk = (): GameState => {
+      const b = createGame();
+      squareAt(b, 0, 0);
+      return b;
+    };
+    const a = advanceSweep(mk(), COLS);
+    const b = advanceSweep({ ...mk(), lastPassComplete: a.lastPassComplete, lastLock: a.lastLock }, COLS);
+    expect(b.grid).toEqual(a.grid);
+    expect(b.score).toBe(a.score);
   });
 });

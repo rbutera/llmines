@@ -13,9 +13,15 @@ export const ROWS = 10;
  */
 export const BOARD_ASPECT = `${COLS} / ${ROWS}`;
 
-/** Spawn position of the piece's top-left cell (columns 7-8, rows 0-1). */
+/**
+ * Spawn position of the piece's top-left cell. Columns 7-8; ROW = -2 so the 2x2
+ * STAGES ABOVE the visible field (top cell at row -2, bottom at row -1) and
+ * descends into the 16x10 field under gravity (audit A5/D4). The visible field's
+ * top two rows are therefore fully usable for stacking, and game over is decided
+ * by whether the piece can ENTER the field, not by the spawn row being occupied.
+ */
 export const SPAWN_COL = 7;
-export const SPAWN_ROW = 0;
+export const SPAWN_ROW = -2;
 
 /** Tempo: 120 BPM -> one beat = 0.5s. */
 export const BPM = 120;
@@ -54,17 +60,35 @@ export const BACKING_TRACK_URL = "/backing-track.mp3";
 
 // --- V2 depth: scoring / specials / preview / progression ------------------
 
-/** Base points per distinct square cleared in a pass. */
+/** Base points per distinct square cleared in a pass (1-3 squares). */
 export const SQUARE_BASE_SCORE = 40;
 
 /**
- * Cross-pass combo multiplier curve. A pass clearing >= 4 squares applies a
- * multiplier indexed by the consecutive-qualifying-pass count (`combo`), capped
- * at the final entry. A pass clearing < 4 squares applies x1 and resets combo.
+ * Single-sweep big-clear package (faithful Lumines, README §3b item 5; audit
+ * A7/D1). A pass clearing >= `BIG_CLEAR_THRESHOLD` distinct squares scores
+ * `BIG_CLEAR_BASE + (squares - THRESHOLD) * BIG_CLEAR_STEP`, i.e. 4 = 640,
+ * 5 = 800, 6 = 960. This package (NOT a linear per-square value) is the base any
+ * house multiplier multiplies.
  */
-export const COMBO_CURVE = [4, 8, 12, 16] as const;
+export const BIG_CLEAR_THRESHOLD = 4;
+export const BIG_CLEAR_BASE = 640;
+export const BIG_CLEAR_STEP = 160;
 
-/** Minimum squares in one pass to trigger the combo multiplier. */
+/**
+ * Cross-pass STREAK multiplier curve (Lumines II+ house mechanic, design D3).
+ * Applied to the WHOLE faithful pass package, indexed by the consecutive-
+ * qualifying-pass count (`combo`), capped at the final entry. A pass clearing
+ * < BIG_CLEAR_THRESHOLD squares applies x1 and resets the streak.
+ *
+ * The big-clear package ALREADY contains the single-sweep x4 (640 + 160(n-4) ≡
+ * 40n × 4 for n >= 4), so this curve is `[1, 2, 3, 4]` — NOT the legacy
+ * `[4, 8, 12, 16]`, which would double-count the x4 and pay a first qualifying
+ * pass 2560 instead of 640. Consecutive 4-square passes therefore pay
+ * 640 → 1280 → 1920 → 2560.
+ */
+export const STREAK_CURVE = [1, 2, 3, 4] as const;
+
+/** Minimum squares in one pass to trigger the streak multiplier / big-clear. */
 export const COMBO_MIN_SQUARES = 4;
 
 /** Flat bonus when the settled field is reduced to a single colour. */

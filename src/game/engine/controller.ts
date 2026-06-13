@@ -7,6 +7,7 @@ import {
   createGame,
   floodFill,
   GRAVITY_INTERVAL_MS,
+  randomSeed,
   gravityStep,
   hardDrop,
   isHeld,
@@ -43,6 +44,21 @@ export type InputAction =
   | "softDrop"
   | "hardDrop";
 
+/**
+ * A full deterministic replay of a run (audit A8): the seed plus the ordered
+ * input log. Because the core is a pure function of (seed, inputs), seed + this
+ * ordered log reproduces the run exactly. Recording is controller-owned (the
+ * controller is the only layer that sees wall-clock time + the input stream);
+ * playback (re-driving the core) is out of scope here — recording + export is the
+ * deliverable.
+ */
+export interface ReplayRecord {
+  schemaVersion: 1;
+  seed: number;
+  /** Each player input with `t` = ms since game start, in order. */
+  inputs: { t: number; action: InputAction }[];
+}
+
 /** Rich per-frame snapshot for the renderer + React HUD. */
 export interface RenderState {
   /** Settled stack only (active piece drawn separately for smooth descent). */
@@ -53,6 +69,12 @@ export interface RenderState {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  /**
+   * Additive (render-only): the raw per-game seed, copied straight from
+   * `state.seed`. Lets the HUD / game-over screen display the seed so a run can
+   * be reproduced. Pure projection.
+   */
+  seed: number;
   marked: MarkedCell[];
   /** Spawn-hold for the active piece (held => no descent; "ready to place"). */
   hold: HoldState;
@@ -117,6 +139,28 @@ export interface RenderState {
    * `undefined` until the first hard drop. Pure projection; no logic change.
    */
   lastHardDrop?: { id: number; cols: number[]; row: number; distance: number };
+  /**
+   * Additive (render-only, D8 audio-truth contract): the most recent pass-
+   * completion event, copied straight from the core's RECORD-ONLY
+   * `state.lastPassComplete`. Carries a monotonic `id` (fire once per new id), the
+   * `squares` cleared, the `comboMultiplier` applied, and per-group `groupErases`.
+   * The audio layer reads real clear truth instead of inferring from score deltas.
+   * Pure projection — no logic change. `undefined` until the first completed pass.
+   */
+  lastPassComplete?: {
+    id: number;
+    squares: number;
+    comboMultiplier: number;
+    groupErases: { cells: number[]; hadChain: boolean }[];
+  };
+  /**
+   * Additive (render-only, D8 audio-truth contract): the most recent lock event,
+   * copied straight from the core's RECORD-ONLY `state.lastLock`. Carries a
+   * monotonic `id` and the `cause` ("gravity" | "soft" | "hard") so the audio
+   * layer plays the right lock/thud SFX on EVERY lock. Pure projection.
+   * `undefined` until the first lock.
+   */
+  lastLock?: { id: number; cause: "gravity" | "soft" | "hard" };
 }
 
 export interface ControllerOptions {
@@ -227,6 +271,15 @@ export class GameController {
     | undefined = undefined;
   private hardDropSeq = 0;
   /**
+   * Replay recording (audit A8): every player input tagged with `t` = ms since
+   * game start, in order. `replayStartT` is the absolute clock time (seconds) the
+   * run started, set on `start()` so each input's `t` is `clock.now()*1000 -
+   * replayStartT*1000`. Reset on `restart()`. Controller-owned: timestamps are
+   * wall-clock and the core is time-free, but seed + this log reproduces the run.
+   */
+  private replayInputs: { t: number; action: InputAction }[] = [];
+  private replayStartT = 0;
+  /**
    * The BPM the sweep is currently advancing at. Sourced from the active skin,
    * but only re-read at a bar/pass boundary (when `sweepX` wraps) so a mid-pass
    * skin change does NOT discontinuously move the bar — the new tempo takes
@@ -236,7 +289,9 @@ export class GameController {
 
   constructor(opts: ControllerOptions = {}) {
     this.testMode = opts.testMode ?? false;
-    this.state = createGame(opts.seed ?? 1);
+    // Production seeds a fresh random run (audit A4); an explicit opts.seed pins
+    // a reproducible game (tests). NOT a fixed default of 1.
+    this.state = createGame(opts.seed ?? randomSeed());
     // Default time source per mode: a manual FakeClock in tests, the
     // AudioContext-backed clock in production. AudioContext is browser-only, so
     // it is only constructed in production (where the rAF loop also lives).
@@ -253,6 +308,9 @@ export class GameController {
   start(): void {
     if (this.started) return;
     this.started = true;
+    // Anchor the replay clock to the run start so each recorded input's `t` is ms
+    // since the game began (audit A8).
+    this.replayStartT = this.clock.now();
     if (!this.testMode) {
       // The Start click IS the user gesture: resume the AudioContext here so
       // musical time starts immediately, rather than waiting for the first
@@ -317,7 +375,9 @@ export class GameController {
   /** Reset to a fresh game (optionally reseeded) and restart play. */
   restart(seed?: number): void {
     this.stop();
-    this.state = createGame(seed ?? 1);
+    // A no-argument restart reseeds RANDOMLY (audit A4) — never back to seed 1,
+    // which dealt an identical run every time. An explicit seed still pins one.
+    this.state = createGame(seed ?? randomSeed());
     this.gravityAccumMs = 0;
     this.lastClockNow = 0;
     this.sweepStartT = 0;
@@ -325,6 +385,9 @@ export class GameController {
     this.activeBpm = 0;
     this.paused = false;
     this.softDropSustained = false;
+    // Fresh run -> fresh replay log (re-anchored by start() below).
+    this.replayInputs = [];
+    this.replayStartT = 0;
     // Re-arm the gesture-resume so start() resumes the context again. The
     // AudioContext itself is already running, so resume() is a cheap no-op, but
     // the flag must not short-circuit the start() path.
@@ -500,15 +563,28 @@ export class GameController {
       // Clear sustained mode on a natural lock too, for symmetry with the
       // soft-drop lock path (the next piece's spawn-hold must be honoured).
       this.softDropSustained = false;
-      this.state = spawnFromQueue(this.state); // production auto-spawns
+      // A lock that topped the game out (A5/D4: cells above row 0) must NOT
+      // auto-spawn the next piece — the game is over.
+      if (!this.state.gameOver) this.state = spawnFromQueue(this.state);
     }
   }
 
   // ---- player input (active only while playing) ----------------------------
 
+  /**
+   * Record a player input into the replay log with `t` = ms since game start
+   * (audit A8). `t` is non-decreasing as long as the clock is monotonic. Called by
+   * the player-input entry points so seed + this log reproduces the run.
+   */
+  private recordInput(action: InputAction): void {
+    const t = Math.max(0, this.clock.now() * 1000 - this.replayStartT * 1000);
+    this.replayInputs.push({ t, action });
+  }
+
   input(action: InputAction): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
     this.resumeClockOnFirstGesture();
+    this.recordInput(action);
     switch (action) {
       case "left":
         // Move/rotate are always allowed — including during the spawn-hold.
@@ -544,6 +620,7 @@ export class GameController {
    */
   pressSoftDrop(): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
+    this.recordInput("softDrop");
     if (!this.testMode) this.softDropSustained = true;
     this.state = releaseHold(this.state);
     this.softDropStep();
@@ -561,6 +638,7 @@ export class GameController {
   /** A FRESH, deliberate hard-drop press: ends any hold and drops immediately. */
   pressHardDrop(): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
+    this.recordInput("hardDrop");
     this.state = releaseHold(this.state);
     this.hardDropStep();
     this.emit();
@@ -590,7 +668,8 @@ export class GameController {
       // the player must press soft-drop again to fast-fall it, matching the
       // deliberate-placement model (a held key cannot cascade into a new piece).
       this.softDropSustained = false;
-      this.state = spawnFromQueue(this.state);
+      // A top-out lock (A5/D4) must NOT auto-spawn — the game is over.
+      if (!this.state.gameOver) this.state = spawnFromQueue(this.state);
     }
   }
 
@@ -623,7 +702,8 @@ export class GameController {
     this.state = hardDrop(this.state);
     if (!this.testMode) {
       this.gravityAccumMs = 0;
-      this.state = spawnFromQueue(this.state);
+      // A top-out lock (A5/D4) must NOT auto-spawn — the game is over.
+      if (!this.state.gameOver) this.state = spawnFromQueue(this.state);
     }
   }
 
@@ -696,6 +776,7 @@ export class GameController {
       score: this.state.score,
       gameOver: this.state.gameOver,
       sweepX: this.state.sweepX,
+      seed: this.state.seed,
       marked: computeMarked(this.state.grid).marked,
       hold: this.state.hold,
       queue: this.state.queue,
@@ -714,11 +795,44 @@ export class GameController {
       lastHardDrop: this.lastHardDrop,
       // Render-only: cells a gem is about to flood-clear (pre-clear marking).
       floodPreview: this.computeFloodPreview(),
+      // D8 audio-truth telemetry passthrough (record-only, no logic change).
+      // COPIED (not aliased) so a subscriber can never mutate the core's internal
+      // telemetry — `lastPassComplete.groupErases[].cells` are nested mutable
+      // arrays, and this is a contract a sibling audio change consumes. Mirrors the
+      // deep-copy `publicState()` already does for the same fields.
+      lastPassComplete: this.state.lastPassComplete
+        ? {
+            id: this.state.lastPassComplete.id,
+            squares: this.state.lastPassComplete.squares,
+            comboMultiplier: this.state.lastPassComplete.comboMultiplier,
+            groupErases: this.state.lastPassComplete.groupErases.map((g) => ({
+              cells: g.cells.slice(),
+              hadChain: g.hadChain,
+            })),
+          }
+        : undefined,
+      lastLock: this.state.lastLock
+        ? { id: this.state.lastLock.id, cause: this.state.lastLock.cause }
+        : undefined,
     };
   }
 
   getRenderState(): RenderState {
     return this.renderState();
+  }
+
+  /**
+   * The replay record for the current run (audit A8): `{ schemaVersion, seed,
+   * inputs }`. Seed + ordered inputs reproduce the run because the core is a pure
+   * function of (seed, inputs). Exposed on game over for download/inspection.
+   * Returns a copy of the input log so callers cannot mutate the controller state.
+   */
+  getReplay(): ReplayRecord {
+    return {
+      schemaVersion: 1,
+      seed: this.state.seed,
+      inputs: this.replayInputs.map((i) => ({ t: i.t, action: i.action })),
+    };
   }
 
   /** Test-only: the injected time source, for asserting mode-appropriate defaults. */

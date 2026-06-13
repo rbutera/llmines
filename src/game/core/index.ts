@@ -26,6 +26,11 @@ export interface PublicState {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  /**
+   * Additive: the raw per-game seed (`state.seed`), so a test can assert
+   * reproducibility (same seed -> same run) and the game-over screen can show it.
+   */
+  seed: number;
   /** Spawn-hold for the currently active piece. */
   hold: HoldState;
   /**
@@ -63,6 +68,24 @@ export interface PublicState {
    * chain clear. Render-only: never feeds gameplay/scoring/timing.
    */
   lastChainClear?: { origin: number; cells: OrderedCell[]; id: number };
+  /**
+   * Additive (record-only, D8 audio-truth contract): the most recent pass-
+   * completion event — monotonic `id`, `squares` cleared, `comboMultiplier`
+   * applied, and per-group `groupErases`. Exposed so tests can assert the payload.
+   * Never feeds gameplay/scoring/timing.
+   */
+  lastPassComplete?: {
+    id: number;
+    squares: number;
+    comboMultiplier: number;
+    groupErases: { cells: number[]; hadChain: boolean }[];
+  };
+  /**
+   * Additive (record-only, D8 audio-truth contract): the most recent lock event —
+   * monotonic `id` and `cause` ("gravity" | "soft" | "hard"). Exposed so tests can
+   * assert the cause. Never feeds gameplay/scoring/timing.
+   */
+  lastLock?: { id: number; cause: "gravity" | "soft" | "hard" };
 }
 
 /** Project internal state to the public `state()` shape (composites the piece). */
@@ -72,6 +95,7 @@ export function publicState(state: GameState): PublicState {
     score: state.score,
     gameOver: state.gameOver,
     sweepX: state.sweepX,
+    seed: state.seed,
     hold: state.hold ?? { active: false, remainingMs: 0 },
     // Detection is over the settled grid (matches `marked()` semantics); the
     // active falling piece is excluded until it locks.
@@ -94,6 +118,24 @@ export function publicState(state: GameState): PublicState {
             id: state.lastChainClear.id,
           },
         }
+      : {}),
+    // D8 audio-truth telemetry passthrough (record-only). Copied (not aliased) so
+    // the public projection never shares the internal arrays.
+    ...(state.lastPassComplete
+      ? {
+          lastPassComplete: {
+            id: state.lastPassComplete.id,
+            squares: state.lastPassComplete.squares,
+            comboMultiplier: state.lastPassComplete.comboMultiplier,
+            groupErases: state.lastPassComplete.groupErases.map((g) => ({
+              cells: g.cells.slice(),
+              hadChain: g.hadChain,
+            })),
+          },
+        }
+      : {}),
+    ...(state.lastLock
+      ? { lastLock: { id: state.lastLock.id, cause: state.lastLock.cause } }
       : {}),
   };
 }
