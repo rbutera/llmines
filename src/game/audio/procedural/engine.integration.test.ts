@@ -42,8 +42,14 @@ const mockState = vi.hoisted(() => ({
   pending: [] as { cb: (t: number) => void; time: number; id: number }[],
   /** every gain ramp start time recorded for quantization assertions. */
   rampStarts: [] as number[],
-  /** every FakePlayer constructed, for loopEnd / SFX-pool assertions. */
-  players: [] as { url: string; loopEnd: number; starts: number[] }[],
+  /** every FakePlayer constructed, for loopEnd / SFX-pool / velocity assertions. */
+  players: [] as {
+    url: string;
+    loopEnd: number;
+    starts: number[];
+    /** volume PARAM: value = gainToDb(velocity); read for SFX velocity scaling. */
+    volume: { value: number };
+  }[],
   nextId: 1,
   /**
    * When true, a FakePlayer does NOT fire onload immediately; its onload is parked in
@@ -244,7 +250,13 @@ const MANIFEST = {
         seg("s1-break", "LOOPER", 1),
         seg("s1-outro", "TERMINAL", 1),
       ],
-      sfx: { move: "sfx-move.opus", rotate: "sfx-rotate.opus", drop: "sfx-drop.opus" },
+      sfx: {
+        move: "sfx-move.opus",
+        rotate: "sfx-rotate.opus",
+        softdrop: "sfx-softdrop.opus",
+        drop: "sfx-drop.opus",
+        stage: "sfx-stage.opus",
+      },
     },
     {
       id: "song2",
@@ -697,18 +709,110 @@ describe("SFX voice pool (no machine-gun stutter)", () => {
     }
   });
 
-  it("a CLEAR is silent — it fires NO SFX voice (only feeds clear-progress)", async () => {
+  it("a CLEAR plays the `stage` one-shot AND feeds clear-progress (B3 — no longer silent)", async () => {
     const e = await freshEngine();
+    // warm the stage pool then clear (a first fire kicks the async pool load).
+    e.fire({ type: "lineClear", squares: 2, combo: 1 });
+    await settle();
     const before = mockState.players.length;
     for (let i = 0; i < 6; i++) clear(e, 2, 1);
     await settle();
-    // no new SFX players were constructed by the clears (clears are silent).
-    const sfxPlayers = mockState.players
-      .slice(before)
-      .filter((p) => p.url.includes("sfx-"));
-    expect(sfxPlayers.length).toBe(0);
-    // but the clears DID register as clear-progress (the audible effect is the tier).
+    // the clear-stage one-shot fired (stage SFX players exist + got start()s).
+    const stagePlayers = mockState.players.filter((p) =>
+      p.url.includes("sfx-stage"),
+    );
+    expect(stagePlayers.length).toBeGreaterThan(0);
+    const stageStarts = stagePlayers.flatMap((p) => p.starts);
+    expect(stageStarts.length).toBeGreaterThan(0);
+    // AND the clears still register as clear-progress (the progression is untouched).
     expect(e.getAudioState().segmentScore).toBeGreaterThan(0);
+    void before;
+  });
+
+  it("a BIGGER clear plays `stage` at a higher velocity than a single-square clear", async () => {
+    const e = await freshEngine();
+    e.fire({ type: "lineClear", squares: 1, combo: 0 }); // warm the pool
+    await settle();
+    // Read the volume of the voice that ACTUALLY fired last (most recent start), not
+    // the max across all pooled voices (untriggered voices keep their default 0 dB,
+    // which would read as "louder" than any real attenuated hit). gainToDb(velocity).
+    const lastFiredDb = (sub: string): number => {
+      const fired = mockState.players
+        .filter((p) => p.url.includes(sub) && p.starts.length > 0)
+        .sort((a, b) => Math.max(...b.starts) - Math.max(...a.starts));
+      return fired.length ? fired[0]!.volume.value : Number.NEGATIVE_INFINITY;
+    };
+    // a 1-square clear (velocity 0.7) then a 4-square clear (velocity 1.0).
+    e.fire({ type: "lineClear", squares: 1, combo: 0 });
+    await settle();
+    const smallDb = lastFiredDb("sfx-stage");
+    e.fire({ type: "lineClear", squares: 4, combo: 0 });
+    await settle();
+    const bigDb = lastFiredDb("sfx-stage");
+    expect(bigDb).toBeGreaterThan(smallDb); // 4-square is hotter than 1-square
+  });
+
+  it("a CHAIN is audibly distinct — it fires `stage` AND a layered `drop`", async () => {
+    const e = await freshEngine();
+    // warm both pools.
+    e.fire({ type: "chain", size: 6 });
+    await settle();
+    const stageBefore = mockState.players
+      .filter((p) => p.url.includes("sfx-stage"))
+      .flatMap((p) => p.starts).length;
+    const dropBefore = mockState.players
+      .filter((p) => p.url.includes("sfx-drop"))
+      .flatMap((p) => p.starts).length;
+    e.fire({ type: "chain", size: 6 });
+    await settle();
+    const stageAfter = mockState.players
+      .filter((p) => p.url.includes("sfx-stage"))
+      .flatMap((p) => p.starts).length;
+    const dropAfter = mockState.players
+      .filter((p) => p.url.includes("sfx-drop"))
+      .flatMap((p) => p.starts).length;
+    // a chain fired BOTH a stage hit and a layered drop impact.
+    expect(stageAfter).toBeGreaterThan(stageBefore);
+    expect(dropAfter).toBeGreaterThan(dropBefore);
+  });
+
+  it("EVERY settle plays a `drop`, with velocity scaled by cause (hard > soft > gravity)", async () => {
+    const e = await freshEngine();
+    e.fire({ type: "lock", cause: "gravity" }); // warm the drop pool
+    await settle();
+    const drop = () => mockState.players.filter((p) => p.url.includes("sfx-drop"));
+    // volume of the drop voice that fired most recently (default 0-dB untriggered
+    // voices would otherwise mask the real attenuated hits).
+    const lastDropDb = (): number => {
+      const fired = drop()
+        .filter((p) => p.starts.length > 0)
+        .sort((a, b) => Math.max(...b.starts) - Math.max(...a.starts));
+      return fired.length ? fired[0]!.volume.value : Number.NEGATIVE_INFINITY;
+    };
+    e.fire({ type: "lock", cause: "gravity" });
+    await settle();
+    const gravityDb = lastDropDb();
+    e.fire({ type: "lock", cause: "soft" });
+    await settle();
+    const softDb = lastDropDb();
+    e.fire({ type: "lock", cause: "hard" });
+    await settle();
+    const hardDb = lastDropDb();
+    // a gravity lock (the common case) is audible at all — B4 (not only hard drops).
+    expect(drop().flatMap((p) => p.starts).length).toBeGreaterThan(0);
+    expect(hardDb).toBeGreaterThan(softDb);
+    expect(softDb).toBeGreaterThan(gravityDb);
+  });
+
+  it("a MOVE fires no SFX voice (silent by decision)", async () => {
+    const e = await freshEngine();
+    const before = mockState.players.length;
+    for (let i = 0; i < 6; i++) e.fire({ type: "move" });
+    await settle();
+    const movePlayers = mockState.players
+      .slice(before)
+      .filter((p) => p.url.includes("sfx-move"));
+    expect(movePlayers.length).toBe(0);
   });
 });
 

@@ -92,6 +92,38 @@ const SNAP_S = 0.012;
 const SFX_VOICES = 4;
 /** Min spacing between two starts on the SFX pool so Tone never sees a tie. */
 const SFX_RETRIGGER_EPSILON = 0.002;
+/** Default velocity for the non-scaled action one-shots (rotate / soft-drop). */
+const SFX_ACTION_VELOCITY = 0.85;
+/** Fixed-hot velocity for a chain's clear-stage hit (bigger than any plain clear). */
+const SFX_CHAIN_VELOCITY = 0.95;
+
+/**
+ * Clear-stage velocity from the clear size: a bigger clear sounds hotter (D4).
+ * `clamp(0.6 + 0.1*squares, 0.6, 1.0)` — a 1-square clear = 0.7, a 4-square = 1.0.
+ * Exported for the routing/velocity unit test.
+ */
+export function stageVelocityForSquares(squares: number): number {
+  const s = Number.isFinite(squares) ? Math.max(0, squares) : 0;
+  return Math.max(0.6, Math.min(1.0, 0.6 + 0.1 * s));
+}
+
+/**
+ * Universal-lock velocity from the settle cause (D4): hard hits hardest, gravity /
+ * soft are softer. An absent/unknown cause (neutral lock) uses the gravity floor.
+ * Exported for the routing/velocity unit test.
+ */
+export function dropVelocityForCause(
+  cause: "hard" | "soft" | "gravity" | undefined,
+): number {
+  switch (cause) {
+    case "hard":
+      return 1.0;
+    case "soft":
+      return 0.7;
+    default: // "gravity" or undefined → the neutral floor
+      return 0.6;
+  }
+}
 
 // ── clear-gated tuning (the named knobs — sized for the FINE cut) ─────────────
 //
@@ -270,17 +302,18 @@ function tierCountOf(seg: LoadedSegment): number {
   return seg.tierKeys.length;
 }
 
-/** Resolve the {move,rotate,softdrop,harddrop,stage} SfxName set from manifest sfx. */
+/**
+ * Resolve the {move,rotate,softdrop,drop,stage} SfxName set from a manifest sfx
+ * map. `SfxName` now matches the `ManifestSfx` keys ONE-TO-ONE (the prior
+ * harddrop→drop quirk is gone), so this is a direct lookup.
+ */
 function sfxUrlFor(
   name: SfxName,
   sfx: ManifestSfx | undefined,
   base: string,
 ): string | undefined {
   if (!sfx) return undefined;
-  // The SFX routing calls hard-drop "harddrop"; the manifest names it "drop". Every
-  // other SfxName is also a ManifestSfx key, so this maps the one mismatch.
-  const key: keyof ManifestSfx = name === "harddrop" ? "drop" : name;
-  const rel = sfx[key];
+  const rel = sfx[name];
   return rel ? `${base}/${rel}` : undefined;
 }
 
@@ -1224,21 +1257,40 @@ export class InteractiveAudioEngine {
   }
 
   /**
-   * Route an event. Clears (lineClear/chain) are SILENT — they only feed the monotonic
-   * `segmentScore` that drives BOTH the sticky tier reveal and the segment advance.
-   * Actions fire their mapped Layer-4 ad-lib one-shot.
+   * Route an event. Clears (lineClear/chain) BOTH feed the monotonic `segmentScore`
+   * (the progression — sticky tier reveal + segment advance) AND fire the clear-stage
+   * one-shot (B3 — clears are no longer silent). Every other action fires its mapped
+   * one-shot at a cause-/size-scaled velocity. `move` is silent (no routing entry).
    */
   private play(ev: AudioEvent, time: number): void {
+    // Clears drive progression first (unchanged weight: 1 + squares + combo, where
+    // combo is the real streak offset; chain: 2 + min(8, size)). The early `return`
+    // that suppressed their SFX is gone — they now ALSO route the clear-stage sound.
     if (ev.type === "lineClear") {
       this.onScore(1 + ev.squares + ev.combo);
+      const route = routeEvent(ev);
+      if (route.sfx) {
+        this.playSfx(route.sfx, time, stageVelocityForSquares(ev.squares));
+      }
       return;
     }
     if (ev.type === "chain") {
       this.onScore(2 + Math.min(8, ev.size));
+      const route = routeEvent(ev);
+      // A chain is audibly DISTINCT: a hot `stage` plus a layered `drop` impact (D4a).
+      if (route.sfx) this.playSfx(route.sfx, time, SFX_CHAIN_VELOCITY);
+      if (route.layer) this.playSfx(route.layer, time, SFX_CHAIN_VELOCITY);
       return;
     }
     const route = routeEvent(ev);
-    if (route.sfx) this.playSfx(route.sfx, time, 0.85);
+    if (!route.sfx) return; // move (and any unmapped action) is silent
+    // A lock thuds on EVERY settle, scaled by cause (hard hardest); other actions use
+    // the default action velocity.
+    const velocity =
+      ev.type === "lock"
+        ? dropVelocityForCause(ev.cause)
+        : SFX_ACTION_VELOCITY;
+    this.playSfx(route.sfx, time, velocity);
   }
 
   /**

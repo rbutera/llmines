@@ -16,10 +16,10 @@
 
 ## 3. Action SFX — clear-stage, universal lock, name cleanup (code)
 
-- [ ] 3.1 In `sfxRouting.ts`: rename `SfxName` member `harddrop` → `drop` (manifest-aligned 1:1), route `lineClear` → `stage`, `chain` → distinct (hot `stage`, optionally layered `drop`), `lock` → `drop`, keep `rotate`/`softDrop`, leave `move` unrouted; delete the "clear is SILENT by design" comment.
-- [ ] 3.2 Remove the early `return` in `engine.play` for `lineClear`/`chain` so they BOTH feed `onScore` AND route SFX; compute `stage` velocity from `squares` (`clamp(0.6 + 0.1*squares, 0.6, 1.0)`) and `drop` velocity from `lock.cause` (`hard 1.0 / soft 0.7 / gravity 0.6`).
-- [ ] 3.3 Remove the `harddrop`→`drop` special case in `sfxUrlFor` now that names match the manifest keys.
-- [ ] 3.4 Rewrite `sfxRouting.test.ts`: clear plays `stage` (and feeds progress); bigger clear = higher velocity; chain distinct from plain clear; every settle plays `drop` scaled by cause; move silent; rotate/softDrop mapped. (covers `action-sfx` routing requirements)
+- [x] 3.1 In `sfxRouting.ts`: rename `SfxName` member `harddrop` → `drop` (manifest-aligned 1:1), route `lineClear` → `stage`, `chain` → distinct (hot `stage`, optionally layered `drop`), `lock` → `drop`, keep `rotate`/`softDrop`, leave `move` unrouted; delete the "clear is SILENT by design" comment.
+- [x] 3.2 Remove the early `return` in `engine.play` for `lineClear`/`chain` so they BOTH feed `onScore` AND route SFX; compute `stage` velocity from `squares` (`clamp(0.6 + 0.1*squares, 0.6, 1.0)`) and `drop` velocity from `lock.cause` (`hard 1.0 / soft 0.7 / gravity 0.6`).
+- [x] 3.3 Remove the `harddrop`→`drop` special case in `sfxUrlFor` now that names match the manifest keys.
+- [x] 3.4 Rewrite `sfxRouting.test.ts`: clear plays `stage` (and feeds progress); bigger clear = higher velocity; chain distinct from plain clear; every settle plays `drop` scaled by cause; move silent; rotate/softDrop mapped. (covers `action-sfx` routing requirements)
 
 ## 4. Per-segment SFX palettes — schema + engine pool hot-swap (code, song-level fallback)
 
