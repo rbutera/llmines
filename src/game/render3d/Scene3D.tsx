@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import type * as THREE from "three";
 import { COLS, ROWS, type Cell } from "../core";
@@ -19,7 +19,7 @@ import { ChainWavefront, type ChainWavefrontHandle } from "./ChainWavefront";
 import { PreviewDock } from "./PreviewDock";
 import { DropShell, type DropShellHandle } from "./DropShell";
 import { surgeStyleForSkin } from "./surgeStyles";
-import { BOARD_H, BOARD_W, CELL, cellX, cellY } from "./layout";
+import { CELL, cellX, cellY } from "./layout";
 
 /**
  * Super-saturated corona RGB (0..1, additive-ready) for a cleared cell's own
@@ -479,7 +479,6 @@ export function Scene3D({
     };
   });
 
-  const half = useMemo(() => ({ w: BOARD_W, h: BOARD_H }), []);
 
   return (
     <group ref={rootGroupRef}>
@@ -497,18 +496,12 @@ export function Scene3D({
         />
       )}
 
-      {/* Well backplate — TRANSLUCENT so the video backdrop shows through the play
-          area (Lumines Arise), while still darkening it enough that blocks read. */}
-      <mesh position={[0, 0, -(CELL + 0.1)]}>
-        <planeGeometry args={[half.w + 0.4, half.h + 0.4]} />
-        <meshStandardMaterial
-          color="#0d1018"
-          roughness={1}
-          metalness={0}
-          transparent
-          opacity={0.45}
-        />
-      </mesh>
+      {/* NO well backplate — a translucent Three mesh gets its alpha clobbered to
+          OPAQUE by the bloom EffectComposer (the play area went solid, occluding the
+          video, while the bare-canvas margins stayed transparent). The playfield is
+          left fully transparent so the video backdrop shows THROUGH it; readability
+          dimming is the DOM scrim in VideoBackdrop, which composites with reliable
+          alpha. (Lumines Arise: board floats on the video.) */}
 
       <CellGrid opacity={settings.gridOpacity} color={palette?.darkEdge} />
 

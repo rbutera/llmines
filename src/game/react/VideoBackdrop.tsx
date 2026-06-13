@@ -152,13 +152,14 @@ export function VideoBackdrop({
         }}
       />
 
-      {/* Dim scrim — keeps the board the hero; the backdrop is atmosphere, not focus. */}
+      {/* Dim scrim — light touch so the video reads clearly THROUGH the playfield
+          (the board is transparent; the pieces' own bloom keeps them the hero). */}
       <div
         style={{
           position: "absolute",
           inset: 0,
           background:
-            "radial-gradient(120% 120% at 50% 50%, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.62) 100%)",
+            "radial-gradient(120% 120% at 50% 50%, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.4) 100%)",
         }}
       />
     </div>
