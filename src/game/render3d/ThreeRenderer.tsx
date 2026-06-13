@@ -14,6 +14,14 @@ import { BOARD_H, BOARD_W, CELL } from "./layout";
 import { type BoardPalette, SKIN_NEON } from "../skins/skins";
 
 /**
+ * Bloom postprocessing is OFF: the `@react-three/postprocessing` composer writes an
+ * opaque canvas alpha on some GPUs/browsers, which blocks the DOM video backdrop
+ * behind the transparent canvas. Until there's an alpha-preserving bloom path, keep
+ * this false so the video-through-the-board transparency is deterministic.
+ */
+const BLOOM_ENABLED = false;
+
+/**
  * FIX 4: auto-fit the orthographic zoom to the live canvas size so the well (plus
  * the preview gutter) FILLS the canvas, and recompute on every resize. For a
  * drei OrthographicCamera, `zoom` is pixels-per-world-unit, so to fit a world
@@ -213,7 +221,15 @@ export function ThreeRenderer({
           palette={palette}
         />
 
-        {settings.bloomIntensity > 0 && (
+        {/* Bloom EffectComposer DISABLED: a postprocessing composer writes an
+            OPAQUE alpha to the canvas on some browser/GPU setups (it varies — the
+            same code rendered transparent for me but opaque for the owner), which
+            blocks the DOM video backdrop behind the canvas. Transparency of the
+            video-through-the-board must be DETERMINISTIC, so we drop the composer
+            and rely on the plain alpha clear (gl alpha:true + setClearAlpha(0)).
+            The pieces keep their material emissive; if we want bloom back it has to
+            be via an alpha-preserving path. */}
+        {BLOOM_ENABLED && settings.bloomIntensity > 0 && (
           <EffectComposer>
             <Bloom
               intensity={settings.bloomIntensity}
