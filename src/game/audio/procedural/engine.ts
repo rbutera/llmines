@@ -204,8 +204,10 @@ function buildScaleMidis(key: { root: string; scale: ScaleName }): number[] {
  *  - a typical no-streak 2-square clear = 0.06 + 0.05 + 0 = 0.11;
  *  - a strong 4-square single-sweep harvest = 0.06 + 0.10 + 0 = 0.16; on a ×3 streak
  *    (comboStep 2) = 0.20.
- * So a steady clearer reaches full layers (heat 1.0 → top tier) in ~9-10 clears; a
- * strong run in ~5-6. These are Rai's ear-check, not a blocker — easy to retune.
+ * So a steady clearer reaches full layers (heat 1.0 → top tier) in ~9-10 clears; a strong
+ * run in ~5-6. Combined with the responsive jump-to-tier build below + the brisk EVAL_BARS
+ * boundary cadence, good play builds + advances the opening in well under a minute. Rai's
+ * ear-check, not a blocker — easy to retune.
  */
 const HEAT_GAIN_BASE = 0.06;
 /** Heat per square cleared this pass (design D1). */
@@ -245,6 +247,20 @@ const MIN_AUDIBLE_LAYERS = 2;
  * layers), clamped down for any segment with fewer tiers.
  */
 const TIER_ENTRY_FLOOR = MIN_AUDIBLE_LAYERS - 1;
+
+/**
+ * How often (in whole bars) the engine runs an intra-loop TIER tick — the responsive
+ * VERTICAL build sub-grid. DECOUPLED from the segment's full audio loop window: a section
+ * loops for many bars (song1's intro = 16 bars ≈ 35s), and the old model only re-evaluated
+ * the tier at that full-loop wrap, so the opening took one whole loop PER layer (~3 × 35s ≈
+ * 100s) just to build to the top. The tier tick builds layers every EVAL_BARS bars WITHIN
+ * the playing loop instead, so a hot opening reaches its top tier during the FIRST loop and
+ * can advance at that loop's end (~35s, not ~100s). This is VERTICAL only: it adds layers to
+ * the already-playing audio (skips nothing). HORIZONTAL advance + heat decay still happen
+ * only at the full loop wrap ({@link onLoopBoundary}) so a section always plays in full and
+ * an advance never skips unheard audio — no fast-forward.
+ */
+const EVAL_BARS = 4;
 
 /** Clamp a value to the unit range [0, 1]; a non-finite value maps to 0. */
 function clamp01(v: number): number {
@@ -652,7 +668,9 @@ export class InteractiveAudioEngine {
    * `round(heat * maxTier)`, bounded below by the min-audible floor and above by the
    * segment's ceiling. This is the single heat→tier mapping used by both the within-
    * segment reveal/shed ({@link evaluateTier}, capped to one step per boundary) and the
-   * segment-entry carry ({@link enterSegment}, exempt from the one-step cap). A
+   * segment-entry carry ({@link enterSegment}, exempt from the one-step cap). Within a
+ * segment the build JUMPS UP to this target responsively and sheds DOWN one step at a
+ * time (see evaluateTier). A
    * non-finite heat maps to the floor (clamp01 in onClear/decay keeps heat finite, this
    * is belt-and-braces).
    */
@@ -679,6 +697,23 @@ export class InteractiveAudioEngine {
       return barSeconds * meta.bars;
     }
     return meta.lengthSeconds > 0 ? meta.lengthSeconds : 1;
+  }
+
+  /**
+   * The intra-loop TIER-tick cadence for `seg`: every {@link EVAL_BARS} bars, capped by
+   * the segment's own loop window (a short section just rebuilds at its wrap). Decoupled
+   * from {@link barWindowSeconds} (the audio loop length) so a long section's layers build
+   * on a brisk musical sub-grid instead of one-per-full-loop. Bar-aligned. Governs the
+   * VERTICAL build only — advance + decay stay at the loop wrap, so this is responsiveness,
+   * not fast-forward.
+   */
+  private evalIntervalSeconds(seg: LoadedSegment): number {
+    const window = this.barWindowSeconds(seg);
+    const barSeconds = this.song?.barSeconds;
+    if (typeof barSeconds === "number" && barSeconds > 0) {
+      return Math.min(window, EVAL_BARS * barSeconds);
+    }
+    return window;
   }
 
   /**
@@ -1146,16 +1181,31 @@ export class InteractiveAudioEngine {
     this.clearScheduled();
     const seg = this.active();
     if (!seg) return;
-    // SELF-RESCHEDULING scheduleOnce (NOT scheduleRepeat — a large-interval repeat
-    // re-registered mid-transport silently never fires). A single scheduleOnce at the
-    // next absolute boundary re-arms the next one in its own callback.
-    const interval = this.barWindowSeconds(seg);
-    if (!(interval > 0)) return;
     const gen = ++this.loopTickGen;
-    this.armNextBoundary(interval, gen);
+    // The LOOP-WRAP boundary (decay + horizontal advance) fires at the segment's FULL
+    // audio loop length so a section always plays in full and an advance steps to the next
+    // section at its loop end — never mid-loop (that would SKIP unheard audio = the
+    // fast-forward Rai forbade; the players loop independently at this same window).
+    const loopInterval = this.barWindowSeconds(seg);
+    if (loopInterval > 0) this.armNextBoundary(loopInterval, gen);
+    // The TIER tick (VERTICAL build only) fires on a brisk sub-grid ({@link EVAL_BARS}
+    // bars) so layers build up responsively WITHIN the playing loop as heat rises — this
+    // is what makes a hot opening reach its top tier during the FIRST loop (so the advance
+    // can fire at that loop's end) instead of taking one whole loop per layer. Adding a
+    // layer to the already-playing audio skips nothing, so this is not fast-forward. Only
+    // armed when the sub-grid is strictly shorter than the loop (else the loop boundary's
+    // own tier eval already covers it).
+    const tierInterval = this.evalIntervalSeconds(seg);
+    if (tierInterval > 0 && tierInterval < loopInterval) {
+      this.armNextTierTick(tierInterval, gen);
+    }
   }
 
-  /** Schedule the single next loop boundary; its callback re-arms the following one. */
+  /**
+   * Schedule the single next LOOP-WRAP boundary; its callback re-arms the following one.
+   * SELF-RESCHEDULING scheduleOnce (NOT scheduleRepeat — a large-interval repeat
+   * re-registered mid-transport silently never fires). Decay + advance live here.
+   */
   private armNextBoundary(interval: number, gen: number): void {
     const at = this.nextWrapBoundary(interval);
     try {
@@ -1171,6 +1221,47 @@ export class InteractiveAudioEngine {
     } catch {
       // no transport — quantize disabled; engine still plays the bed silently
     }
+  }
+
+  /**
+   * Schedule the next intra-loop TIER tick (VERTICAL build only — no decay, no advance);
+   * its callback re-arms the following one on the same {@link EVAL_BARS}-bar sub-grid.
+   * Self-rescheduling + gen-guarded by {@link loopTickGen} so a {@link clearScheduled}
+   * (segment change / reset) invalidates it exactly like the loop boundary.
+   */
+  private armNextTierTick(interval: number, gen: number): void {
+    const at = this.nextWrapBoundary(interval);
+    try {
+      const id = ToneRT!.getTransport().scheduleOnce((time) => {
+        if (gen !== this.loopTickGen) return; // a reschedule superseded this tick
+        this.onTierTick(time);
+        if (gen !== this.loopTickGen) return;
+        const cur = this.active();
+        const next = cur ? this.evalIntervalSeconds(cur) : interval;
+        const loop = cur ? this.barWindowSeconds(cur) : interval;
+        // keep ticking only while the sub-grid is strictly inside the loop (the loop
+        // boundary itself handles the wrap-aligned tier eval).
+        if (next > 0 && next < loop) this.armNextTierTick(next, gen);
+      }, at);
+      this.scheduledEvents.push(id);
+    } catch {
+      // no transport — quantize disabled; the loop boundary still builds at the wrap
+    }
+  }
+
+  /**
+   * Intra-loop VERTICAL build: move the audible tier toward the heat target (jump up /
+   * shed down — see {@link evaluateTier}) and crossfade to it, WITHOUT decaying heat or
+   * advancing the segment (those are the loop-wrap boundary's job). Skipped mid-advance so
+   * a tier swap can't collide with the hand-off crossfade. This is what lets the song
+   * build up responsively as the player clears, within the section that is playing.
+   */
+  private onTierTick(time: number): void {
+    if (this.transitionInFlight) return; // don't fight the advance hand-off crossfade
+    const seg = this.active();
+    if (!seg) return;
+    this.evaluateTier(seg);
+    if (this.armedTier !== this.tier) this.swapTier(seg, this.armedTier, time);
   }
 
   /**
@@ -1204,10 +1295,10 @@ export class InteractiveAudioEngine {
    * segment advances. HEAT model (heat, built by clears, drives everything):
    *  0) DECAY: a clear-less pass sheds heat (design D2); a pass that saw a clear does
    *     not. Evaluated only here (loop-boundary cadence, never a wall clock).
-   *  1) VERTICAL: move the audible tier ONE step toward the heat-derived target
-   *     ({@link evaluateTier}: `round(heat * maxTier)`), UP or DOWN, and crossfade to it
-   *     on this boundary. Runs BEFORE the advance check so the top tier, once reached, is
-   *     heard a full loop before the segment moves on.
+   *  1) VERTICAL: move the audible tier toward the heat-derived target
+   *     ({@link evaluateTier}: `round(heat * maxTier)`) — jump UP responsively, shed DOWN
+   *     one step — and crossfade to it on this boundary. Runs BEFORE the advance check so
+   *     the top tier, once reached, is heard a full loop before the segment moves on.
    *  2) HORIZONTAL: if the advance gate is met ({@link shouldAdvance}: top tier audible
    *     AND held one loop AND no transition in flight), advance ONE segment forward now;
    *     the next segment carries the tier across from heat (design D5). Otherwise the
@@ -1256,26 +1347,37 @@ export class InteractiveAudioEngine {
     }
   }
 
-  // ── vertical: heat-driven tier move (one step per boundary, up and down) ─────
+  // ── vertical: heat-driven tier move (jump up, shed one step down) ────────────
 
   /**
    * Arm the cumulative tier for the upcoming boundary swap from the current `heat`
    * (design D3): the desired tier is `round(heat * maxTier)` ({@link heatTierFor},
    * floored at the min-audible ≥2-layer floor, ceilinged at the segment's top). The
-   * armed tier moves AT MOST ONE STEP toward the desired tier — UP when heat rose, DOWN
-   * when heat fell (the heat model sheds layers, unlike the old sticky-up-only reveal).
-   * One step per boundary keeps the build/shed musical (no multi-tier jumps mid-segment;
-   * the carry-across multi-step jump is at ENTRY only, exempt). Never arms a tier whose
-   * file failed to load (demoted to the nearest loaded tier at or below).
+   * armed tier JUMPS UP straight to the desired tier when heat rose (responsive build —
+   * a hot streak crossing two thresholds in one window reveals both layers now) and steps
+   * DOWN at most one tier when heat fell (gentle shed — the heat model thins the mix on a
+   * sustained drought, one layer per boundary, unlike the old sticky-up-only reveal). The
+   * carry-across multi-step jump at ENTRY ({@link enterSegment}) is likewise exempt from
+   * any down-cap. Never arms a tier whose file failed to load (demoted to the nearest
+   * loaded tier at or below).
    */
   private evaluateTier(seg: LoadedSegment): void {
     if (this.tierFading) return; // don't re-arm mid-fade
     const desired = this.heatTierFor(seg);
-    // one step toward the desired tier in EITHER direction (the floor is already baked
-    // into `desired`, so a down-step can never breach the min-audible floor).
+    // RESPONSIVE BUILD (Rai's model: "when heat gets past certain thresholds, we build
+    // up more of the song"): jump UP straight to the heat-derived tier in one boundary —
+    // a hot streak that crosses two thresholds in one window reveals both layers now, not
+    // one-per-loop. Shedding stays GENTLE: step DOWN at most one tier per boundary so a
+    // brief heat dip thins the mix smoothly instead of collapsing layers all at once
+    // (heat decay is slow — 0.08/empty pass — so a real drought still sheds, just one
+    // layer at a time). The floor is baked into `desired`, so a down-step can never breach
+    // the min-audible floor. No fast-forward: this is VERTICAL (layering) only; the
+    // horizontal advance gate ({@link shouldAdvance}) still requires the top tier built +
+    // held, so no unheard section is ever skipped.
     let want = this.tier;
-    if (desired > this.tier) want = this.tier + 1;
-    else if (desired < this.tier) want = this.tier - 1;
+    if (desired > this.tier)
+      want = desired; // build responsively: jump to the heat target
+    else if (desired < this.tier) want = this.tier - 1; // shed gently: one step down
     want = Math.max(0, Math.min(this.maxTier(seg), want));
     // demote to the highest LOADED tier at or below `want` (a missing file never silences).
     want = this.nearestAvailableAtOrBelow(seg, want);

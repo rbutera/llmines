@@ -7,8 +7,9 @@
  *
  *  1. heat gain scales by squares + combo, saturates at 1.0, ignores non-finite;
  *  2. heat DECAYS on a clear-less loop pass (and not on a pass with a clear);
- *  3. the audible tier follows heat UP AND DOWN, one step per boundary, never below
- *     the min-audible floor, bar-aligned (loop-boundary-only swaps);
+ *  3. the audible tier follows heat — jumps UP straight to the heat target, sheds DOWN
+ *     one step per boundary — never below the min-audible floor, bar-aligned
+ *     (loop-boundary-only swaps);
  *  4. CARRY-ACROSS: a segment entered with sustained high heat starts AT its top tier
  *     (no vocal cut); with dropped heat it enters thinner;
  *  5. a segment advances ONLY once its TOP tier is audible AND held a full loop — NO
@@ -337,11 +338,10 @@ function isInDefaultScale(freq: number): boolean {
 /**
  * Drive the engine to earn ONE segment advance under the HEAT model, then fire the
  * boundaries that commit it. Pins heat to 1.0 (a big burst), then steps boundaries:
- * the audible tier climbs ONE step per boundary up to the top, the top is held one
- * full loop, then the segment advances. So this steps boundaries until the index moves
- * (up to several — floor→top is multiple one-step boundaries plus the held loop),
- * committing exactly ONE advance. Each step re-tops heat so the segment cannot decay
- * back down mid-climb. Asserts nothing — callers do.
+ * the audible tier JUMPS UP to the top, the top is held one full loop, then the segment
+ * advances. So this steps boundaries until the index moves (the reveal boundary plus the
+ * held loop), committing exactly ONE advance. Each step re-tops heat so the segment cannot
+ * decay back down mid-climb. Asserts nothing — callers do.
  */
 async function earnAdvance(e: InteractiveAudioEngine): Promise<void> {
   const before = e.getAudioState().segmentIndex;
@@ -356,7 +356,7 @@ async function earnAdvance(e: InteractiveAudioEngine): Promise<void> {
 /**
  * Build heat to (near) full and bring the AUDIBLE tier to the segment's top, WITHOUT
  * advancing — stops as soon as `tier === top` (the boundary that just revealed the top
- * does not advance). Re-tops heat each pass so the one-step climb never decays. Returns
+ * does not advance). Re-tops heat each pass so the jump-up build never decays. Returns
  * once the top is audible (or after a bounded number of steps). Asserts nothing.
  */
 async function buildToTop(e: InteractiveAudioEngine): Promise<void> {
@@ -400,6 +400,26 @@ function loopBoundary(): void {
   if (times.length === 0) return;
   const tb = Math.min(...times);
   runDueUpTo(tb + SEC_PER_BAR - 1e-3);
+}
+
+/** A single-song manifest whose segments are `bars` bars long (for intra-loop tests). */
+function longSegManifest(bars: number, tierCount: number, segCount = 3) {
+  const types = ["LOOPER", "PROGRESSION", "TERMINAL"];
+  return {
+    version: "test-long",
+    songs: [
+      {
+        id: "song1",
+        title: `long (${bars}-bar)`,
+        tempo: 110,
+        barSeconds: SEC_PER_BAR,
+        segments: Array.from({ length: segCount }, (_, i) =>
+          seg(`s1-${i}`, types[i % types.length]!, bars, tierCount),
+        ),
+        sfx: { move: "sfx-move.opus" },
+      },
+    ],
+  };
 }
 
 async function settle() {
@@ -518,10 +538,13 @@ describe("heat engine: loop-in-place, heat-driven tier, gated advance", () => {
     expect(e.getAudioState().activeStems).toBeGreaterThanOrEqual(1);
   });
 
-  it("(b) clears RAISE the audible tier within a segment, ONE step per boundary, bar-aligned", async () => {
-    // 4-tier fixture (maxTier 3). Pin heat to 1.0 (desired tier = top 3). The audible
-    // tier must climb from the floor (1) by EXACTLY ONE step per boundary — to 2, then
-    // 3 — never jumping straight to the top within the segment (the one-step cap).
+  it("(b) clears RAISE the audible tier within a segment — jump UP to the heat target in one boundary, bar-aligned", async () => {
+    // 4-tier fixture (maxTier 3). RESPONSIVE BUILD (Rai's model: "when heat gets past
+    // certain thresholds, we build up more of the song"): pin heat to 1.0 (desired tier =
+    // top 3) and the audible tier JUMPS straight from the floor (1) to the heat target (3)
+    // on the FIRST boundary — it does NOT crawl 1→2→3 one step per loop. (Shedding is still
+    // gentle/one-step — see (b2).) The reveal boundary still does not advance off the
+    // segment (vocals are heard a loop first).
     const e = await freshEngineWith(nTierManifest("song1", 4));
     expect(e.getAudioState().tier).toBe(1); // entry floor
     e.__injectClears(12); // heat 1.0 → desired tier 3
@@ -531,22 +554,72 @@ describe("heat engine: loop-in-place, heat-driven tier, gated advance", () => {
     mockState.rampStarts.length = 0;
     loopBoundary();
     await settle();
-    // BOUNDARY 1: rose ONE step to tier2 (NOT straight to the top 3), still on segment 0.
+    // BOUNDARY 1: jumped STRAIGHT to the top (3) — a two-tier responsive build in one
+    // boundary, not a one-step crawl — and did NOT advance off the reveal boundary.
     expect(e.getAudioState().segmentIndex).toBe(0);
-    expect(e.getAudioState().tier).toBe(2);
+    expect(e.getAudioState().tier).toBe(3);
     // every swap ramp STARTS on a bar (loop) multiple — never mid-loop.
     expect(mockState.rampStarts.length).toBeGreaterThan(0);
     for (const t of mockState.rampStarts) {
       const bars = t / SEC_PER_BAR;
       expect(Math.abs(bars - Math.round(bars))).toBeLessThan(1e-6);
     }
-    // BOUNDARY 2: rises one more step to the top (3); the reveal boundary does NOT also
-    // advance off it (vocals are heard a loop first).
-    e.__injectClears(12); // keep heat pinned
+  });
+
+  it("(b1) a PARTIAL heat reveals a PARTIAL tier in one boundary (jump to the heat target, not past it)", async () => {
+    // The jump-up tracks the heat target exactly: a mid heat lands the audible tier at the
+    // mid tier in ONE boundary, never overshooting to the top.
+    const e = await freshEngineWith(nTierManifest("song1", 4)); // maxTier 3, floor 1
+    expect(e.getAudioState().tier).toBe(1);
+    e.__injectClears(6); // heat 0.66 → round(0.66*3) = 2
     loopBoundary();
     await settle();
-    expect(e.getAudioState().tier).toBe(3);
-    expect(e.getAudioState().segmentIndex).toBe(0); // not advanced on the reveal boundary
+    expect(e.getAudioState().tier).toBe(2); // jumped to the heat target (2), not the top
+    expect(e.getAudioState().segmentIndex).toBe(0); // below top → no advance
+  });
+
+  it("(b-intraloop) layers build DURING a long loop via tier ticks, but the segment advances ONLY at the loop wrap (no skip)", async () => {
+    // 8-bar sections (loop wrap at bar 8 = t≈4.0s on the mock grid), 4 tiers (maxTier 3).
+    // EVAL_BARS = 4 → an intra-loop TIER tick lands at bar 4 (t≈2.0s, mid-loop) and builds
+    // layers WITHIN the playing loop; the horizontal ADVANCE only fires at the bar-8 loop
+    // wrap, so the section always plays in full and the song never skips unheard audio.
+    const e = await freshEngineWith(longSegManifest(8, 4)); // maxTier 3, floor 1
+    expect(e.getAudioState().tierCount).toBe(4);
+    expect(e.getAudioState().tier).toBe(1); // entry floor
+    e.__injectClears(12); // heat 1.0 → desired top tier 3
+    await settle();
+
+    // BAR 4 (mid-loop tier tick at t≈2.0): drain past the tick but NOT the wrap (t≈4.0).
+    // Layers BUILT UP to the top WITHIN the playing loop, yet the segment did NOT advance —
+    // advance never happens mid-loop (no skipped audio).
+    runDueUpTo(3.0);
+    await settle();
+    expect(e.getAudioState().tier).toBe(3); // built to the top mid-loop, responsively
+    expect(e.getAudioState().segmentIndex).toBe(0); // NOT advanced (still inside the loop)
+
+    // BAR 8 (loop wrap at t≈4.0): the section has played in full and the top is held →
+    // advance ONE.
+    runDueUpTo(5.0);
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBe(1); // advanced exactly at the loop wrap
+  });
+
+  it("(b-intraloop-2) a section LOOPS IN PLACE (no advance) while heat stays below its top", async () => {
+    // The flip side of no-fast-forward: if heat never builds the top tier, the section just
+    // loops — tier ticks and loop wraps come and go, the audible tier sits at/below the mid
+    // tier (decaying without fresh clears), and the segment NEVER advances. ONE injection of
+    // mid heat, then ride it out (heat only falls from here — clear-less passes decay it).
+    const e = await freshEngineWith(longSegManifest(8, 4)); // maxTier 3, floor 1
+    e.__injectClears(5); // heat ~0.55 → desired tier round(0.55*3) = 2 (below the top 3)
+    let maxTierSeen = e.getAudioState().tier;
+    for (let k = 0; k < 12; k++) {
+      loopBoundary(); // fires the next event group (tier tick OR loop wrap) + its settles
+      await settle();
+      const s = e.getAudioState();
+      maxTierSeen = Math.max(maxTierSeen, s.tier);
+      expect(s.segmentIndex).toBe(0); // below top → never advanced
+    }
+    expect(maxTierSeen).toBeLessThanOrEqual(2); // the top (3 / vocals) was never reached
   });
 
   it("(b2) FALLING heat SHEDS the audible tier ONE step per boundary, never below the floor", async () => {
@@ -587,32 +660,41 @@ describe("heat engine: loop-in-place, heat-driven tier, gated advance", () => {
     expect(e.getAudioState().maxSegmentReached).toBe(before + 1);
   });
 
-  it("(d) spamming clears does NOT fast-forward multiple segments (in-flight lock + per-seg re-arm)", async () => {
+  it("(d) a single burst advances AT MOST one segment per boundary and DECAYS TO A STOP (no fast-forward, no runaway)", async () => {
     const e = await freshEngineWith(nTierManifest("song1", 4)); // maxTier 3
     const before = e.getAudioState().segmentIndex;
-    // a massive burst — pins heat to 1.0 — far more than enough to FF if it stacked.
+    // a massive ONE-OFF burst — pins heat to 1.0 — with NO further clears after. A burst
+    // earns a little momentum (heat sustains the top for a couple boundaries, so a couple
+    // segments advance, each one still gated by build + hold), then heat DECAYS and the
+    // progression STOPS — it can never teleport through the song.
     for (let i = 0; i < 40; i++) clear(e, 4, 4);
     e.fire({ type: "chain", size: 8 });
     e.fire({ type: "chain", size: 8 });
     await settle();
     expect(e.getAudioState().heat).toBe(1); // saturated, not "banked advances"
-    // Step boundaries one at a time: the tier climbs ONE step per boundary (1→2→3), the
-    // top is held one loop, then it advances EXACTLY ONE segment — never multiple.
     const indices: number[] = [];
     for (let k = 0; k < 8; k++) {
       loopBoundary();
       await settle();
       indices.push(e.getAudioState().segmentIndex);
     }
-    // at most ONE advance happened across all those boundaries (no fast-forward), and
-    // every step is at most +1.
+    // INVARIANT 1 (no multi-jump): monotonic, never more than +1 per boundary — a single
+    // boundary can never skip a segment, however much heat is banked.
     let prev = before;
     for (const idx of indices) {
       expect(idx - prev).toBeLessThanOrEqual(1);
       expect(idx).toBeGreaterThanOrEqual(prev);
       prev = idx;
     }
-    expect(indices[indices.length - 1]! - before).toBe(1); // advanced exactly one
+    // INVARIANT 2 (no runaway): the burst advanced a SMALL, bounded number of segments
+    // (heat sustain, not a teleport through all 8 boundaries).
+    const advanced = indices[indices.length - 1]! - before;
+    expect(advanced).toBeGreaterThanOrEqual(1);
+    expect(advanced).toBeLessThanOrEqual(3);
+    // INVARIANT 3 (decay halts it): with no further clears the heat decays below the top
+    // threshold and progression STOPS — the final boundaries show no further advance.
+    const tail = indices.slice(-3);
+    expect(new Set(tail).size).toBe(1);
   });
 
   it("(e) forward-only — the segment index NEVER decrements across a full play-through", async () => {
@@ -1051,8 +1133,8 @@ describe("N-tier generalization (4-tier and 5-tier segments)", () => {
     expect(e.getAudioState().tierCount).toBe(4);
     // pin heat to 1.0 so the desired tier is the top (3).
     e.__injectClears(12);
-    // step boundaries; record (tier, index) at each. The audible tier climbs ONE step per
-    // boundary (1→2→3); the segment must NOT advance until tier === 3 AND held a loop.
+    // step boundaries; record (tier, index) at each. The audible tier jumps up to 3; the
+    // segment must NOT advance until tier === 3 AND held a loop.
     const trace: { tier: number; index: number }[] = [];
     for (let k = 0; k < 8; k++) {
       e.__injectClears(12); // keep heat at 1.0
@@ -1086,9 +1168,9 @@ describe("N-tier generalization (4-tier and 5-tier segments)", () => {
     expect(e.getAudioState().heat).toBeGreaterThanOrEqual(0.85);
     expect(e.getAudioState().heat).toBeLessThan(0.875);
     // the desired audible tier in this band is 3 (vocals NOT in). Step boundaries; the
-    // audible tier climbs ONE step per boundary toward 3 and holds there — it NEVER
-    // reaches 4, so the segment NEVER advances (clear-less passes will then shed heat,
-    // moving the tier further from the top — still no advance).
+    // audible tier jumps up to 3 and holds there — it NEVER reaches 4, so the segment
+    // NEVER advances (clear-less passes will then shed heat, moving the tier further from
+    // the top — still no advance).
     for (let k = 0; k < 8; k++) {
       loopBoundary();
       await settle();
