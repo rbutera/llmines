@@ -85,13 +85,14 @@ Each segment is rendered at N cumulative tiers: `tier0` = the backing bed (drums
 
 The original layer model, in Rai's words (voice-transcribed during the first spec):
 
-> "In its simplest form there would be at least three layers: 1. The bass, percussion, kind of like
-> a background loop, which is always playing on repeat no matter what the gameplay is happening. 2.
-> The layer on top of that is kind of like instrumentation and stuff like that. 3. The layer on top
-> of that is vocals. ... In our version of Lumiere, the topmost layer is not played by the song or
-> the mix. It's just played by the player; that's the player's contribution to the song. The bottom
-> layer is always going to play on loop and the second and third layers, the instrumentation and the
-> vocals, will get played by clearing."
+> "In its simplest form there would be at least three layers:
+> 1. The bass, percussion, kind of like a background loop, which is always playing on repeat no matter what the gameplay is happening.
+> 2. The layer on top of that is kind of like instrumentation and stuff like that.
+> 3. The layer on top of that is vocals.
+>
+> I guess there's a fourth layer, actually, which is ad libs and other sound effects. If you're listening to the master mix of the song, all four of those play contiguously and the ad libs are playing at a set interval or at set times in the song.
+>
+> In Lumiere, in our version of Lumiere, the topmost layer is not played by the song or the mix. It's just played by the player; that's the player's contribution to the song. The bottom layer is always going to play on loop and the second and third layers, the instrumentation and the vocals, will get played by clearing. I'm thinking like one clear or a small number of clears and then you start getting the instrumentation..."
 
 Key vertical rules:
 
