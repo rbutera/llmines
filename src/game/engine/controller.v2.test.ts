@@ -101,7 +101,7 @@ describe("Beat-derived sweep timing (5.x)", () => {
     // at the baseline frame below. (The controller's default is the fallback
     // tempo; the host pushes the real track tempo in production.)
     c.testSetTempo(BPM);
-    // First beat-frame establishes the sweep baseline (sweepStartT) and does not
+    // First beat-frame establishes the sweep baseline and does not
     // advance; prime it so subsequent frames measure from a known origin.
     c.testBeatFrame(MS_PER_EIGHTH); // baseline frame (clock now > 0, no prior)
     return c;
@@ -287,7 +287,7 @@ describe("Production clock→dt path: suspended + re-suspend", () => {
     }
     expect(c.testState().distinctSquares).toBe(2); // two clearable squares
 
-    // 1) Baseline frame establishes sweepStartT (dt=0, no advance).
+    // 1) Baseline frame establishes the sweep baseline (dt=0, no advance).
     clock.value = 1;
     c.testProductionFrame();
     // 2) Advance ~4 columns: crosses square A (cols 0-1) but not square B.
