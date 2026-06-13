@@ -414,7 +414,13 @@ export function GameShell() {
 
   const handleRestart = useCallback(() => {
     if (!controller) return;
-    controller.restart();
+    // Restart resets to the BASE skin (no carry-over): pass the base tempo + skin
+    // index INTO restart() so they are latched before the new run's first emit
+    // (atomic restart-to-base, never a fallback-tempo flash).
+    controller.restart({
+      tempo: DEFAULT_SKIN.tempo,
+      skinIndex: 0,
+    });
     setScore(0);
     setPaused(false);
     gameOverSubmittedRef.current = false;
@@ -425,11 +431,8 @@ export function GameShell() {
     barRef.current = 1;
     setBar(1);
     setBeat(1);
-    // Restart resets to the BASE skin (no carry-over): reset the colour world +
-    // re-push the base tempo + skin index, and set the engine back to song1.
+    // Reset the colour world to the base skin + the engine back to song1.
     skinSwitch.resetToBaseSkin();
-    controller.setTempo(DEFAULT_SKIN.tempo);
-    controller.setSkinIndex(0);
     audioDeriverRef.current?.reset();
     audioEngineRef.current?.setInitialTrack(DEFAULT_SKIN.track);
     void audioEngineRef.current?.unlock();

@@ -270,7 +270,7 @@ export function advanceSweep(state: GameState, columns: number): GameState {
     // this step reached no new column (the wrap arrived in a later call).
     if (passComplete) flushOpenRun(grid, pass, specials, chainRecords);
 
-    // Pass complete: bank scoring with the faithful rule, advance combo/skin,
+    // Pass complete: bank scoring with the faithful rule, advance the combo,
     // apply board-state bonus, wrap, and start a fresh pass (grid already settled
     // by the per-group settles).
     if (sweepX >= COLS - 1e-9) {

@@ -352,7 +352,7 @@ export function PlayHud({
           style={{ display: "flex", alignItems: "center", gap: 8 }}
         >
           <span data-testid="bpm" className="readout" style={{ fontSize: 13 }}>
-            {bpm}
+            {Math.round(bpm)}
           </span>
           <span className="label" style={{ fontSize: 9 }}>
             BPM

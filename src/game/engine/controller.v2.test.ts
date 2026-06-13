@@ -411,6 +411,23 @@ describe("Tempo-driven sweep progression (9.x)", () => {
     expect(c.testState().sweepX).toBeCloseTo(xBefore, 6);
   });
 
+  it("9.7 a pushed tempo latches across a wrap-crossing frame (not just exact-boundary frames)", () => {
+    const c = primed();
+    // Advance partway into the pass, then push a new tempo mid-pass.
+    c.testBeatFrame(3 * MS_PER_EIGHTH);
+    c.testSetTempo(165);
+    // The latched tempo is still the old one until a boundary is crossed.
+    expect(c.getRenderState().bpm).toBe(FALLBACK);
+    // A single frame large enough to CROSS the wrap (the bar never lands exactly
+    // on sweepX === 0). After the crossing the new tempo must be latched.
+    c.testBeatFrame(20 * MS_PER_EIGHTH);
+    expect(c.getRenderState().bpm).toBe(165);
+    // And the bar now advances at the new tempo.
+    const before = c.testState().sweepX;
+    c.testBeatFrame(MS_PER_EIGHTH);
+    expect(c.testState().sweepX - before).toBeCloseTo(165 / FALLBACK, 6);
+  });
+
   it("9.6 clearing squares does NOT advance the skin index (only setSkinIndex does)", () => {
     const c = primed();
     expect(c.getRenderState().skinIndex).toBe(0);

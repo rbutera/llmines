@@ -59,6 +59,11 @@ export function useSkinSwitch(onSwitch?: (skin: Skin) => void): SkinSwitchState 
   const rafRef = useRef<number | null>(null);
   const onSwitchRef = useRef(onSwitch);
   onSwitchRef.current = onSwitch;
+  // Live ref to the committed `to` skin so `advanceSkin` can compute the next
+  // target + fire side effects OUTSIDE a state updater (updaters must be pure —
+  // React Strict Mode / concurrent rendering can run them twice).
+  const toRef = useRef<Skin>(DEFAULT_SKIN);
+  toRef.current = to;
 
   // Drive the crossfade with rAF whenever mix < 1.
   useEffect(() => {
@@ -80,13 +85,16 @@ export function useSkinSwitch(onSwitch?: (skin: Skin) => void): SkinSwitchState 
   }, [to]);
 
   const advanceSkin = useCallback(() => {
-    setTo((curTo) => {
-      const target = nextSkin(curTo.id);
-      setFrom(curTo);
-      setMix(0);
-      onSwitchRef.current?.(target);
-      return target;
-    });
+    // Compute the next target from the committed skin (via the ref), then drive
+    // the transition + fire the audio/controller switch ONCE, outside any state
+    // updater. setFrom/setTo/setMix are plain setters (idempotent under a double
+    // call), and onSwitch fires exactly once per advance.
+    const curTo = toRef.current;
+    const target = nextSkin(curTo.id);
+    setFrom(curTo);
+    setTo(target);
+    setMix(0);
+    onSwitchRef.current?.(target);
   }, []);
 
   const resetToBaseSkin = useCallback(() => {

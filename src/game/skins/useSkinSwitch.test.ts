@@ -80,7 +80,7 @@ describe("useSkinSwitch programmatic surface", () => {
   it("advanceSkin wraps last -> first", () => {
     mount();
     // advance through the whole list back to the base.
-    for (const _ of SKINS) act(() => latest.advanceSkin());
+    SKINS.forEach(() => act(() => latest.advanceSkin()));
     expect(latest.skin.id).toBe(SKINS[0]!.id);
   });
 

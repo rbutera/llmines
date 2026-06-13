@@ -405,21 +405,30 @@ export class GameController {
     return this.paused;
   }
 
-  /** Reset to a fresh game (optionally reseeded) and restart play. */
-  restart(seed?: number): void {
+  /**
+   * Reset to a fresh game (optionally reseeded) and restart play. `opts.tempo`
+   * and `opts.skinIndex` set the base skin's tempo + index BEFORE the auto-start
+   * emits, so the very first render state of the new run already reads the base
+   * tempo (not the fallback) — the host passes them so restart-to-base is atomic.
+   */
+  restart(opts: { seed?: number; tempo?: number; skinIndex?: number } = {}): void {
     this.stop();
     // A no-argument restart reseeds RANDOMLY (audit A4) — never back to seed 1,
     // which dealt an identical run every time. An explicit seed still pins one.
-    this.state = createGame(seed ?? randomSeed());
+    this.state = createGame(opts.seed ?? randomSeed());
     this.gravityAccumMs = 0;
     this.lastClockNow = 0;
     this.sweepStartT = 0;
     this.sweepColumnsConsumed = 0;
     this.activeBpm = 0;
-    // Restart resets to the base skin + fallback tempo; the host re-pushes the
-    // base skin's tempo + index via setTempo/setSkinIndex in handleRestart.
-    this.pendingTempoBpm = FALLBACK_BPM;
-    this.skinIndex = 0;
+    // Restart resets to the base skin: adopt the host-supplied base tempo + index
+    // if given (atomic, before the start() emit below), else fall back so the bar
+    // still moves. The host (handleRestart) supplies the base skin's values.
+    this.pendingTempoBpm =
+      opts.tempo && Number.isFinite(opts.tempo) && opts.tempo > 0
+        ? opts.tempo
+        : FALLBACK_BPM;
+    this.skinIndex = opts.skinIndex != null ? Math.max(0, Math.floor(opts.skinIndex)) : 0;
     this.paused = false;
     this.softDropSustained = false;
     // Fresh run -> fresh replay log (re-anchored by start() below).
@@ -509,8 +518,22 @@ export class GameController {
     const bpm = this.currentSweepBpm();
     const delta = dtSeconds * (bpm / 60) * COLS_PER_BEAT;
     if (delta > 0) {
+      const consumedBefore = this.sweepColumnsConsumed;
       this.sweepColumnsConsumed += delta;
       this.advanceSweepColumns(delta);
+      // Latch the pending tempo when this frame CROSSED at least one pass
+      // boundary. The wrap happens inside advanceSweep, so a frame rarely starts
+      // exactly at sweepX === 0; detecting the boundary crossing from the ABSOLUTE
+      // consumed-columns counter (a multiple of COLS was passed) reliably latches
+      // even when a frame's net sweepX ends HIGHER than it started (a frame longer
+      // than one pass) — `sweepX < beforeX` would miss that case. The CURRENT
+      // frame kept the old tempo through the wrap, so there is no mid-pass jump.
+      if (
+        Math.floor(this.sweepColumnsConsumed / COLS) >
+        Math.floor(consumedBefore / COLS)
+      ) {
+        this.activeBpm = this.pendingTempoBpm;
+      }
     }
 
     // --- Gravity: independent dt accumulator (not music-synced) ---
@@ -521,11 +544,14 @@ export class GameController {
   }
 
   /**
-   * The BPM the sweep should advance at this frame. The host-pushed tempo
-   * ({@link pendingTempoBpm}, the active track's manifest BPM) is latched at each
-   * bar/pass boundary (when `sweepX` is at 0) rather than read live, so a tempo
-   * change mid-pass does not discontinuously move the bar — the new tempo applies
-   * from the next bar. Latches on the first read too.
+   * The BPM the sweep should advance at this frame — the LATCHED tempo. The
+   * host-pushed tempo ({@link pendingTempoBpm}) is adopted into `activeBpm` only
+   * at a pass boundary, never mid-pass, so a tempo change does not discontinuously
+   * move the bar. The latch fires from TWO places: here on the first read
+   * (`activeBpm === 0`) or a frame that happens to start exactly at a boundary
+   * (`sweepX === 0`), AND in {@link runFrame} when a frame CROSSES the wrap
+   * (the common case, since frames rarely start exactly on the boundary). Both
+   * adopt the same `pendingTempoBpm`, so the result is idempotent.
    */
   private currentSweepBpm(): number {
     if (this.activeBpm === 0 || this.state.sweepX === 0) {
