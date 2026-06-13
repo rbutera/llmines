@@ -1615,6 +1615,11 @@ export class InteractiveAudioEngine {
     this.transitionInFlight = false;
     this.clearScheduled();
 
+    // Snapshot the old per-segment SFX pools BEFORE the try so the catch can re-attach
+    // them if a partial swap threw (otherwise the old, still-playing bank's SFX pools
+    // would be orphaned + leak — the fresh empty map installed mid-swap has none).
+    const oldSfx = this.sfxPoolsBySegment;
+
     try {
       const song = this.resolveSong(manifest, track);
       if (!song || song.segments.length === 0) {
@@ -1622,9 +1627,6 @@ export class InteractiveAudioEngine {
         return;
       }
       const oldSegments = this.segments;
-      // Snapshot the old per-segment SFX pools, then hand the engine a fresh map so the
-      // new song's pools never collide with the outgoing song's by segment index.
-      const oldSfx = this.sfxPoolsBySegment;
       const from = oldSegments[this.segmentIndex];
 
       // Build + load the new song's intro before crossfading.
@@ -1642,9 +1644,15 @@ export class InteractiveAudioEngine {
       await this.loadSegment(0);
       // Superseded during the intro load (a reset/dispose/another switch bumped loadGen,
       // or a later switch changed the track) → don't enter/schedule into this now-stale
-      // bank. Dispose the nodes this switch built and bail.
+      // bank. Dispose the nodes this switch built and bail. RESTORE the old SFX map onto
+      // the engine first: the old bank keeps playing, so its SFX pools must stay
+      // reachable for a later resetForNewGame/dispose (otherwise they'd leak — the fresh
+      // empty map we installed at the top of the swap has none of them). The bail path
+      // never reached enterSegment/prefetch, so no NEW segment SFX pools were built.
       if (gen !== this.loadGen || this.currentTrack.id !== track.id) {
         for (const seg of newSegments) this.disposeLoaded(seg);
+        this.disposeAllSfx(); // dispose any (partial) new pools, then re-install the old
+        this.sfxPoolsBySegment = oldSfx;
         this.switching = false;
         return;
       }
@@ -1669,7 +1677,13 @@ export class InteractiveAudioEngine {
         oldSfx.clear();
       });
     } catch {
-      // keep the old track running
+      // keep the old track running. If we'd already detached the old SFX map (the throw
+      // landed after the top-of-swap install) but never scheduled its disposal, the old
+      // pools would be orphaned + leak — re-attach them so a later teardown reaches them.
+      if (this.sfxPoolsBySegment !== oldSfx) {
+        this.disposeAllSfx(); // drop any partial new pools
+        this.sfxPoolsBySegment = oldSfx;
+      }
     } finally {
       this.switching = false;
     }

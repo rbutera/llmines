@@ -850,6 +850,35 @@ describe("switchTrack (skin swap) on the manifest model", () => {
     expect(e.getAudioState().trackId).toBe("pipeline");
     expect(e.getAudioState().bpm).toBeCloseTo(126, 1);
   });
+
+  it("a SUPERSEDED switchTrack does NOT orphan the old SFX voices (re-attach + later teardown disposes them)", async () => {
+    // Regression (Codex review): switchTrack installs a fresh empty SFX map at the top
+    // of the swap. If the new intro load is SUPERSEDED (loadGen bump) and the switch
+    // bails, the old still-playing bank's SFX voices must remain reachable so a later
+    // dispose frees them — they must NOT leak behind the orphaned old map.
+    const e = await freshEngine();
+    // build the active (song1) segment's SFX pool by firing a clear (loads sfx-stage).
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    const oldSfx = mockState.players.filter((p) => p.url.includes("sfx-stage"));
+    expect(oldSfx.length).toBeGreaterThan(0);
+    expect(oldSfx.every((p) => !p.disposed)).toBe(true);
+
+    // start a switch whose intro load is DEFERRED (parked, unresolved)...
+    mockState.deferLoads = true;
+    const switching = e.switchTrack({ id: "song2", base: "/audio/song2" });
+    // ...then SUPERSEDE it with a reset (bumps loadGen) before the intro resolves.
+    e.resetForNewGame();
+    await releaseDeferredLoads(); // the superseded switch's intro load now resolves → bail
+    await switching;
+    await settle();
+
+    // dispose the engine entirely: the OLD song1 SFX voices must be reachable + freed,
+    // not orphaned behind the empty map the aborted switch installed.
+    e.dispose();
+    await settle();
+    expect(oldSfx.every((p) => p.disposed)).toBe(true); // no leak
+  });
 });
 
 // ── N-tier generalization (the whole point of the N-tier work) ───────────────────
