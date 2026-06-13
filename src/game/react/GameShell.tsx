@@ -20,6 +20,7 @@ import { DEFAULT_SKIN, SKINS } from "../skins/skins";
 import { useSkinSwitch } from "../skins/useSkinSwitch";
 import { hudHueForSkin } from "../theme/tokens";
 import { GameCanvas } from "./GameCanvas";
+import { VideoBackdrop } from "./VideoBackdrop";
 import { ScoreFx } from "./ScoreFx";
 import { GameOverView, PauseOverlay, ControlsOverlay } from "./hud/overlays";
 import { PlayHud, StartView } from "./hud/screens";
@@ -521,6 +522,12 @@ export function GameShell() {
         } as React.CSSProperties
       }
     >
+      {/* VIDEO BACKDROP — per-skin looping clip behind the board, with x-axis
+          parallax driven by the active piece and a transition clip on skin switch. */}
+      <div className="layer" style={{ zIndex: 0 }}>
+        <VideoBackdrop controller={controller} skinId={skinSwitch.skin.id} />
+      </div>
+
       {/* BOARD LAYER — the Three.js scene fills the entire viewport. */}
       <div className="layer" style={{ zIndex: 1 }}>
         <div className="ambient" />

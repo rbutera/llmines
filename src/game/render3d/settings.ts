@@ -162,7 +162,10 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   burstEnabled: true,
   burstPerCell: 6,
   burstCap: 60,
-  bgEnabled: true,
+  // OFF by default: the video backdrop (VideoBackdrop) is now the background and
+  // the canvas is transparent so it shows through. The old shader field is opaque
+  // and would cover the video; kept behind the setting for opt-in experimentation.
+  bgEnabled: false,
   bgIntensity: 0.35,
   heatEnabled: true,
   heatIntensity: 1.6,

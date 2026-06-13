@@ -497,10 +497,17 @@ export function Scene3D({
         />
       )}
 
-      {/* Well backplate */}
+      {/* Well backplate — TRANSLUCENT so the video backdrop shows through the play
+          area (Lumines Arise), while still darkening it enough that blocks read. */}
       <mesh position={[0, 0, -(CELL + 0.1)]}>
         <planeGeometry args={[half.w + 0.4, half.h + 0.4]} />
-        <meshStandardMaterial color="#0d1018" roughness={1} metalness={0} />
+        <meshStandardMaterial
+          color="#0d1018"
+          roughness={1}
+          metalness={0}
+          transparent
+          opacity={0.45}
+        />
       </mesh>
 
       <CellGrid opacity={settings.gridOpacity} />

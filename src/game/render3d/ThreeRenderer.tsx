@@ -177,11 +177,20 @@ export function ThreeRenderer({
 
       <Canvas
         dpr={[1, 2]}
-        gl={{ antialias: true }}
+        // alpha: true → the canvas is TRANSPARENT so the video backdrop shows
+        // through behind the floating board (Lumines Arise style). The opaque
+        // scene `<color attach="background">` is intentionally removed.
+        gl={{ antialias: true, alpha: true, premultipliedAlpha: false }}
+        onCreated={({ gl }) => {
+          // Transparent clear so the bloom EffectComposer composites OVER the
+          // video backdrop instead of an opaque black (the canvas sits above the
+          // video layer; without this the well is solid black).
+          gl.setClearColor(0x000000, 0);
+          gl.setClearAlpha(0);
+        }}
         style={{ width: "100%", height: "100%", display: "block" }}
         aria-hidden="true"
       >
-        <color attach="background" args={[palette.background]} />
 
         {/* Flat orthographic camera, straight-on. The side-face reveal comes
             entirely from the per-column shear, not the camera. Shifted left to
@@ -204,14 +213,16 @@ export function ThreeRenderer({
           palette={palette}
         />
 
-        <EffectComposer>
-          <Bloom
-            intensity={settings.bloomIntensity}
-            luminanceThreshold={settings.luminanceThreshold}
-            luminanceSmoothing={0.025}
-            mipmapBlur
-          />
-        </EffectComposer>
+        {settings.bloomIntensity > 0 && (
+          <EffectComposer>
+            <Bloom
+              intensity={settings.bloomIntensity}
+              luminanceThreshold={settings.luminanceThreshold}
+              luminanceSmoothing={0.025}
+              mipmapBlur
+            />
+          </EffectComposer>
+        )}
       </Canvas>
     </div>
   );
