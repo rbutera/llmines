@@ -464,9 +464,9 @@ describe("clear-gated engine: loop-in-place, sticky reveal, gated advance", () =
     // "full reveal forces advance" test).
     const e = await freshEngineWith(nTierManifest("song1", 4));
     expect(e.getAudioState().tier).toBe(1); // entry floor
-    // bank enough clear-progress to reveal tier2 (TIER_REVEAL_STEP=6 → tier2 at ≥12),
-    // but NOT enough to advance (ADVANCE_THRESHOLD=30).
-    for (let i = 0; i < 4; i++) clear(e, 2, 1); // weight 4 each → segmentScore 16
+    // bank enough clear-progress to reveal tier2 (TIER_REVEAL_STEP=3 → tier2 at ≥6),
+    // but NOT enough to advance (ADVANCE_THRESHOLD=12).
+    for (let i = 0; i < 2; i++) clear(e, 2, 1); // weight 4 each → segmentScore 8
     await settle();
     // mid-loop the audible tier has NOT changed (swaps are boundary-only).
     expect(e.getAudioState().tier).toBe(1);
@@ -1246,8 +1246,8 @@ describe("mandatory advance on full reveal (vocals in → must move on)", () => 
 
   it("a section that has NOT reached the top tier does NOT mandatorily advance", async () => {
     const e = await freshEngineWith(nTierManifest("song5", 5));
-    // reveal tier3 (score >=18) but not the top tier4 (needs >=24); stay below advance.
-    for (let i = 0; i < 6; i++) clear(e, 2, 0); // score 18 → tier3 < top, < 30
+    // reveal tier3 (score >=9) but not the top tier4 (needs >=12); stay below advance.
+    for (let i = 0; i < 3; i++) clear(e, 2, 0); // score 9 → tier3 < top, < 12
     loopBoundary();
     await settle();
     expect(e.getAudioState().tier).toBe(3);

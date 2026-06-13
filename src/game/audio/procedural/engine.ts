@@ -156,7 +156,7 @@ export function dropVelocityForCause(
  * no-streak clear = 1+2+0 = 3, a 4-square single-sweep harvest = 1+4+0 = 5 (rewarded,
  * still ≪ 30 = no fast-forward), a 4-square pass on a ×3 streak = 1+4+2 = 7.
  */
-const ADVANCE_THRESHOLD = 30;
+const ADVANCE_THRESHOLD = 12;
 /**
  * Per-tier reveal step: every `TIER_REVEAL_STEP` of monotonic `segmentScore` reveals
  * the next cumulative tier within the current segment (sticky — never sheds). So
@@ -164,7 +164,7 @@ const ADVANCE_THRESHOLD = 30;
  * (clamped to the segment's tier ceiling). A section fills out over its first several
  * bars of clearing and is FULLY revealed before the advance at 30 is earned.
  */
-const TIER_REVEAL_STEP = 6;
+const TIER_REVEAL_STEP = 3;
 /**
  * MINIMUM AUDIBLE LAYERS — the never-drop-below floor, in CUMULATIVE LAYERS (not a
  * tier index). The tiers are cumulative: tier0 = 1 layer (drums+perc), tier1 = 2
@@ -176,6 +176,17 @@ const TIER_REVEAL_STEP = 6;
  * tiers than that (so a 1-tier segment still works).
  */
 const MIN_AUDIBLE_LAYERS = 2;
+/**
+ * How often (in whole bars) the engine evaluates a tier reveal / segment advance.
+ * DECOUPLED from the segment's full audio loop window: a section can loop for many
+ * bars (song1's intro = 16 bars ≈ 35s), but waiting that whole window to check for
+ * an advance made progression glacial — the song barely moved and never reached the
+ * next track. The audio still LOOPS seamlessly over its full bar window (the player's
+ * own loop); this only controls how frequently reveals/advances are MUSICALLY allowed
+ * to land (every BOUNDARY_BARS bars, bar-aligned so transitions stay on the beat).
+ * Capped by the segment's own window for short sections.
+ */
+const BOUNDARY_BARS = 2;
 /**
  * The sticky-unlock entry FLOOR as a TIER INDEX (= MIN_AUDIBLE_LAYERS - 1): the
  * minimum tier a freshly-entered segment starts at, so the opening bars are never
@@ -562,6 +573,23 @@ export class InteractiveAudioEngine {
       return barSeconds * meta.bars;
     }
     return meta.lengthSeconds > 0 ? meta.lengthSeconds : 1;
+  }
+
+  /**
+   * How often a reveal/advance is evaluated for `seg`: every {@link BOUNDARY_BARS}
+   * bars, capped by the segment's own loop window (a short section keeps its window).
+   * DECOUPLED from {@link barWindowSeconds} (the audio loop length) so a long section
+   * still advances on a musical sub-boundary instead of stalling the whole song for
+   * its full loop. Bar-aligned (a multiple of barSeconds) so transitions land on the
+   * beat. Falls back to the full window when barSeconds is unknown.
+   */
+  private boundaryIntervalSeconds(seg: LoadedSegment): number {
+    const window = this.barWindowSeconds(seg);
+    const barSeconds = this.song?.barSeconds;
+    if (typeof barSeconds === "number" && barSeconds > 0) {
+      return Math.min(window, BOUNDARY_BARS * barSeconds);
+    }
+    return window;
   }
 
   /**
@@ -1018,7 +1046,7 @@ export class InteractiveAudioEngine {
     // SELF-RESCHEDULING scheduleOnce (NOT scheduleRepeat — a large-interval repeat
     // re-registered mid-transport silently never fires). A single scheduleOnce at the
     // next absolute boundary re-arms the next one in its own callback.
-    const interval = this.barWindowSeconds(seg);
+    const interval = this.boundaryIntervalSeconds(seg);
     if (!(interval > 0)) return;
     const gen = ++this.loopTickGen;
     this.armNextBoundary(interval, gen);
@@ -1033,7 +1061,7 @@ export class InteractiveAudioEngine {
         this.onLoopBoundary(time);
         if (gen !== this.loopTickGen) return; // advance/swap may have rescheduled
         const cur = this.active();
-        const nextInterval = cur ? this.barWindowSeconds(cur) : interval;
+        const nextInterval = cur ? this.boundaryIntervalSeconds(cur) : interval;
         this.armNextBoundary(nextInterval, gen);
       }, at);
       this.scheduledEvents.push(id);
