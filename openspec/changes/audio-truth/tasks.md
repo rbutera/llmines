@@ -23,9 +23,9 @@
 
 ## 4. Per-segment SFX palettes — schema + engine pool hot-swap (code, song-level fallback)
 
-- [ ] 4.1 Extend the manifest types in `engine.ts`: add optional `ManifestSegment.sfx?: ManifestSfx`; add `segmentSfxUrlFor(name, seg, song, base)` resolving segment → song-level → undefined.
-- [ ] 4.2 Make the SFX pool segment-scoped: prefetch the entering segment's pool in `enterSegment`/`prefetch` (using `segmentSfxUrlFor`, falling back to song-level), dispose a left-behind segment's SFX voices in the advance-settle disposal path, and have `playSfx`/`ensureSfx` read the ACTIVE segment's pool.
-- [ ] 4.3 Verify an old manifest (no `segments[].sfx`) resolves every action to the song-level set with no behaviour change; add a test for the mixed-manifest fallback + the per-segment override + the prefetch/dispose lifecycle. (covers `action-sfx` per-segment + hot-swap requirements)
+- [x] 4.1 Extend the manifest types in `engine.ts`: add optional `ManifestSegment.sfx?: ManifestSfx`; add `segmentSfxUrlFor(name, seg, song, base)` resolving segment → song-level → undefined.
+- [x] 4.2 Make the SFX pool segment-scoped: prefetch the entering segment's pool in `enterSegment`/`prefetch` (using `segmentSfxUrlFor`, falling back to song-level), dispose a left-behind segment's SFX voices in the advance-settle disposal path, and have `playSfx`/`ensureSfx` read the ACTIVE segment's pool.
+- [x] 4.3 Verify an old manifest (no `segments[].sfx`) resolves every action to the song-level set with no behaviour change; add a test for the mixed-manifest fallback + the per-segment override + the prefetch/dispose lifecycle. (covers `action-sfx` per-segment + hot-swap requirements)
 
 ## 5. Gates for the code waves
 

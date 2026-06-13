@@ -49,6 +49,8 @@ const mockState = vi.hoisted(() => ({
     starts: number[];
     /** volume PARAM: value = gainToDb(velocity); read for SFX velocity scaling. */
     volume: { value: number };
+    /** set true by dispose() — read for the per-segment SFX lifecycle assertions. */
+    disposed: boolean;
   }[],
   nextId: 1,
   /**
@@ -1381,5 +1383,121 @@ describe("clear-gated progression (audio-truth D3) — the 6 contract cases", ()
     expect(e.getAudioState().segmentScore).toBe(3 + 5 + 7);
     // none of these single clears alone crosses ADVANCE_THRESHOLD (30) → no fast-forward.
     expect(e.getAudioState().segmentScore).toBeLessThan(30);
+  });
+});
+
+// ── audio-truth task 4.3: per-segment SFX palettes + hot-swap lifecycle (D5) ───────
+describe("per-segment SFX palettes (audio-truth D5)", () => {
+  /**
+   * A manifest where segment 0 carries its OWN per-segment `stage` sample but
+   * segment 1 does NOT — to prove the per-segment override AND the song-level
+   * fallback in one fixture (mixed manifest).
+   */
+  const MIXED_SFX = {
+    version: "test-segsfx",
+    songs: [
+      {
+        id: "song1",
+        title: "Song 1",
+        tempo: 110,
+        barSeconds: SEC_PER_BAR,
+        segments: [
+          {
+            ...seg("s0", "PROGRESSION", 1, 4),
+            sfx: { stage: "song1/s0-stage.opus", drop: "song1/s0-drop.opus" },
+          },
+          seg("s1", "PROGRESSION", 1, 4), // NO per-segment sfx → song-level fallback
+          seg("s2", "TERMINAL", 1, 4),
+        ],
+        sfx: {
+          move: "sfx-move.opus",
+          rotate: "sfx-rotate.opus",
+          softdrop: "sfx-softdrop.opus",
+          drop: "song-drop.opus",
+          stage: "song-stage.opus",
+        },
+      },
+    ],
+  };
+
+  it("a segment with its own palette plays ITS sample, not the song-level one", async () => {
+    const e = await freshEngineWith(MIXED_SFX);
+    expect(e.getAudioState().segmentIndex).toBe(0);
+    // a clear on segment 0 must load + fire the SEGMENT's own stage sample.
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    const segStage = mockState.players.filter((p) =>
+      p.url.includes("s0-stage"),
+    );
+    const songStage = mockState.players.filter((p) =>
+      p.url.includes("song-stage"),
+    );
+    expect(segStage.length).toBeGreaterThan(0); // the per-segment sample loaded
+    expect(segStage.flatMap((p) => p.starts).length).toBeGreaterThan(0); // and fired
+    // the song-level stage sample may be PREFETCHED for OTHER segments' pools, but on
+    // segment 0 it is never STARTED — the per-segment override is what sounds.
+    expect(songStage.flatMap((p) => p.starts).length).toBe(0);
+  });
+
+  it("a segment WITHOUT a palette falls back to the song-level sample", async () => {
+    const e = await freshEngineWith(MIXED_SFX);
+    // advance to segment 1 (no per-segment sfx).
+    await earnAdvance(e);
+    expect(e.getAudioState().segmentIndex).toBe(1);
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    // segment 1's stage resolves to the SONG-LEVEL sample (no s1-stage exists).
+    const songStage = mockState.players.filter((p) =>
+      p.url.includes("song-stage"),
+    );
+    expect(songStage.length).toBeGreaterThan(0);
+    expect(songStage.flatMap((p) => p.starts).length).toBeGreaterThan(0);
+  });
+
+  it("an OLD manifest (no per-segment sfx anywhere) resolves all actions to the song-level set", async () => {
+    // the default fixture has only song-level sfx — byte-identical to before.
+    const e = await freshEngine();
+    e.fire({ type: "rotate" });
+    await settle();
+    e.fire({ type: "rotate" });
+    await settle();
+    const rotateVoices = mockState.players.filter((p) =>
+      p.url.includes("sfx-rotate"),
+    );
+    expect(rotateVoices.length).toBeGreaterThan(0); // song-level rotate resolved + played
+    expect(rotateVoices.flatMap((p) => p.starts).length).toBeGreaterThan(0);
+  });
+
+  it("leaving a segment DISPOSES its SFX voices (per-segment lifecycle)", async () => {
+    const e = await freshEngineWith(MIXED_SFX);
+    // fire on segment 0 so its per-segment stage pool is constructed.
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    const s0Stage = mockState.players.filter((p) => p.url.includes("s0-stage"));
+    expect(s0Stage.length).toBeGreaterThan(0);
+    expect(s0Stage.every((p) => !p.disposed)).toBe(true);
+    // advance OFF segment 0 → after the settle, its SFX voices are disposed.
+    await earnAdvance(e);
+    expect(e.getAudioState().segmentIndex).toBeGreaterThan(0);
+    await settle();
+    const s0StageAfter = mockState.players.filter((p) =>
+      p.url.includes("s0-stage"),
+    );
+    expect(s0StageAfter.length).toBeGreaterThan(0); // they were constructed
+    expect(s0StageAfter.every((p) => p.disposed)).toBe(true); // ...and now disposed
+  });
+
+  it("a one-shot requested during a swap never throws into the game (silent drop)", async () => {
+    const e = await freshEngineWith(MIXED_SFX);
+    // fire on segment 1 BEFORE its pool has a chance to exist — must not throw.
+    await earnAdvance(e);
+    expect(() => {
+      e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    }).not.toThrow();
+    await settle();
   });
 });

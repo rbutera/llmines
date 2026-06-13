@@ -249,6 +249,15 @@ interface ManifestSegment {
   barWindowSeconds?: number;
   character?: string;
   tiers: ManifestTiers;
+  /**
+   * OPTIONAL per-segment SFX palette (audio-truth D5), same shape as the song-level
+   * `sfx`. When present, the engine plays THESE samples while this segment is active
+   * (action sounds belong to what's currently playing — an intro's ad-libs differ
+   * from a beat-drop's). Resolution falls back to the song-level `sfx`, then silence
+   * (see {@link segmentSfxUrlFor}). Absent on every current manifest → the song-level
+   * set is used unchanged (no behaviour change without new assets).
+   */
+  sfx?: ManifestSfx;
 }
 interface ManifestSfx {
   move?: string;
@@ -315,6 +324,23 @@ function sfxUrlFor(
   if (!sfx) return undefined;
   const rel = sfx[name];
   return rel ? `${base}/${rel}` : undefined;
+}
+
+/**
+ * Resolve one action SFX url for a SEGMENT (audio-truth D5): the segment's own
+ * `sfx` entry if present, else the song-level `sfx`, else undefined (silence). An
+ * old manifest (no `segments[].sfx`) resolves every action to the song-level set
+ * exactly as before — byte-identical behaviour without new assets.
+ */
+function segmentSfxUrlFor(
+  name: SfxName,
+  seg: ManifestSegment | undefined,
+  song: ManifestSong | undefined,
+  base: string,
+): string | undefined {
+  return (
+    sfxUrlFor(name, seg?.sfx, base) ?? sfxUrlFor(name, song?.sfx, base)
+  );
 }
 
 /** A round-robin pool of identical one-shot voices for one SFX name. */
@@ -833,9 +859,10 @@ export class InteractiveAudioEngine {
     }
   }
 
-  /** Prefetch (lazy-load) a segment ahead of reaching it. Best-effort. */
+  /** Prefetch (lazy-load) a segment's tiers + SFX ahead of reaching it. Best-effort. */
   private async prefetch(index: number): Promise<void> {
     if (index < 0 || index >= this.segments.length) return;
+    this.prefetchSegmentSfx(index); // its action sounds are ready before entry
     await this.loadSegment(index);
   }
 
@@ -897,6 +924,11 @@ export class InteractiveAudioEngine {
       const target = t === startTier ? 1 : 0;
       this.rampGain(seg.tierGains[t], target, fresh ? SNAP_S : XFADE_S, at);
     }
+
+    // Hot-swap the SFX palette (D5): prefetch THIS segment's per-segment SFX pools so
+    // the action sounds belong to what is now playing. Falls back to the song-level
+    // set per name; a no-op if already loaded (idempotent).
+    this.prefetchSegmentSfx(index);
   }
 
   /**
@@ -1350,14 +1382,40 @@ export class InteractiveAudioEngine {
     this.onLoopBoundary(this.nextBar());
   }
 
-  // ── Layer-4 SFX (lazy voice POOL per name, loaded per active song) ──────────
+  // ── Layer-4 SFX — PER-SEGMENT voice pools, hot-swapped on segment entry (D5) ──
+  //
+  // SFX are SEGMENT-scoped: each segment has its own per-name pool, resolved from
+  // its `segments[].sfx` (falling back to the song-level set). Prefetched on segment
+  // entry, disposed with the left-behind segment, and `playSfx` reads the ACTIVE
+  // segment's pool — so action sounds always belong to what is currently playing. An
+  // old manifest (no per-segment sfx) resolves every segment to the song-level urls,
+  // so this is byte-identical to the song-scoped behaviour without new assets.
 
-  private sfxPools: Partial<Record<SfxName, SfxVoicePool>> = {};
+  /** Per-segment SFX pools, keyed by segment index → {name → voice pool}. */
+  private sfxPoolsBySegment = new Map<number, Partial<Record<SfxName, SfxVoicePool>>>();
+
+  /** The active segment's pool set (created lazily). */
+  private activeSfxPools(): Partial<Record<SfxName, SfxVoicePool>> {
+    return this.sfxPoolsForSegment(this.segmentIndex);
+  }
+
+  /** The pool set for `index`, created (empty) on first access. */
+  private sfxPoolsForSegment(
+    index: number,
+  ): Partial<Record<SfxName, SfxVoicePool>> {
+    let pools = this.sfxPoolsBySegment.get(index);
+    if (!pools) {
+      pools = {};
+      this.sfxPoolsBySegment.set(index, pools);
+    }
+    return pools;
+  }
 
   private playSfx(name: SfxName, time: number, velocity = 1): void {
-    const pool = this.sfxPools[name];
+    const pools = this.activeSfxPools();
+    const pool = pools[name];
     if (!pool || pool.voices.length === 0) {
-      void this.ensureSfx(name);
+      void this.ensureSfx(this.segmentIndex, name);
       return;
     }
     try {
@@ -1374,18 +1432,28 @@ export class InteractiveAudioEngine {
     }
   }
 
-  private async ensureSfx(name: SfxName): Promise<void> {
+  /**
+   * Lazily load one SFX name's voice pool FOR a specific segment, resolving the url
+   * segment → song-level → silence ({@link segmentSfxUrlFor}). Idempotent per
+   * (segment, name); load-gen guarded so a teardown can't leave orphan voices.
+   */
+  private async ensureSfx(index: number, name: SfxName): Promise<void> {
     const master = this.master;
     const song = this.song;
-    if (!master || !song || this.sfxPools[name]) return;
-    const url = sfxUrlFor(name, song.sfx, ASSET_BASE);
+    if (!master || !song) return;
+    const pools = this.sfxPoolsForSegment(index);
+    if (pools[name]) return;
+    const url = segmentSfxUrlFor(name, this.segments[index]?.meta, song, ASSET_BASE);
     if (!url) return;
+    const gen = this.loadGen;
     const pool: SfxVoicePool = { voices: [], next: 0, lastStart: -Infinity };
-    this.sfxPools[name] = pool;
+    pools[name] = pool;
     const loaded = await Promise.all(
       Array.from({ length: SFX_VOICES }, () => this.loadPlayer(url)),
     );
-    if (this.sfxPools[name] !== pool) {
+    // a teardown/switch (loadGen bump) or a fresh pool replaced this one mid-load →
+    // dispose what we built rather than leaking orphan voices into a dead bank.
+    if (gen !== this.loadGen || this.sfxPoolsBySegment.get(index)?.[name] !== pool) {
       for (const p of loaded) p?.dispose();
       return;
     }
@@ -1395,7 +1463,35 @@ export class InteractiveAudioEngine {
         pool.voices.push(p);
       }
     }
-    if (pool.voices.length === 0) delete this.sfxPools[name];
+    if (pool.voices.length === 0) delete pools[name];
+  }
+
+  /**
+   * Prefetch the ENTERING segment's SFX pools (D5) alongside its tier prefetch, so
+   * its action sounds are ready the moment it becomes audible. Best-effort: each name
+   * resolves segment → song-level → silence; a name with no url is simply skipped.
+   */
+  private prefetchSegmentSfx(index: number): void {
+    const song = this.song;
+    if (!song || index < 0 || index >= this.segments.length) return;
+    const names: SfxName[] = ["move", "rotate", "softdrop", "drop", "stage"];
+    for (const name of names) {
+      const url = segmentSfxUrlFor(
+        name,
+        this.segments[index]?.meta,
+        song,
+        ASSET_BASE,
+      );
+      if (url) void this.ensureSfx(index, name);
+    }
+  }
+
+  /** Dispose + drop a segment's entire SFX pool set (best-effort). */
+  private disposeSegmentSfx(index: number): void {
+    const pools = this.sfxPoolsBySegment.get(index);
+    if (!pools) return;
+    for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
+    this.sfxPoolsBySegment.delete(index);
   }
 
   // ── timing + gain helpers ────────────────────────────────────────────────────
@@ -1526,7 +1622,9 @@ export class InteractiveAudioEngine {
         return;
       }
       const oldSegments = this.segments;
-      const oldSfx = this.sfxPools;
+      // Snapshot the old per-segment SFX pools, then hand the engine a fresh map so the
+      // new song's pools never collide with the outgoing song's by segment index.
+      const oldSfx = this.sfxPoolsBySegment;
       const from = oldSegments[this.segmentIndex];
 
       // Build + load the new song's intro before crossfading.
@@ -1534,7 +1632,7 @@ export class InteractiveAudioEngine {
       this.segments = newSegments;
       this.song = song;
       this.currentTrack = track;
-      this.sfxPools = {};
+      this.sfxPoolsBySegment = new Map();
       this.songCompleted = false;
       this.segmentIndex = 0;
       this.maxSegmentReached = 0;
@@ -1565,9 +1663,10 @@ export class InteractiveAudioEngine {
       const disposeAt = at + seconds + 0.1;
       this.afterSettle(disposeAt, () => {
         for (const seg of oldSegments) this.disposeLoaded(seg);
-        for (const pool of Object.values(oldSfx)) {
-          this.disposeSfxPool(pool);
+        for (const pools of oldSfx.values()) {
+          for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
         }
+        oldSfx.clear();
       });
     } catch {
       // keep the old track running
@@ -1687,10 +1786,21 @@ export class InteractiveAudioEngine {
 
   private disposeSegment(index: number): void {
     this.disposeLoaded(this.segments[index]);
+    // The left-behind segment's SFX voices go with its tier players (D5 lifecycle).
+    this.disposeSegmentSfx(index);
   }
 
   private disposeAll(): void {
     for (const seg of this.segments) this.disposeLoaded(seg);
+    this.disposeAllSfx();
+  }
+
+  /** Dispose + clear EVERY segment's SFX pool set (teardown / switch / reset). */
+  private disposeAllSfx(): void {
+    for (const pools of this.sfxPoolsBySegment.values()) {
+      for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
+    }
+    this.sfxPoolsBySegment.clear();
   }
 
   // ── volume / mute ─────────────────────────────────────────────────────────────
@@ -1733,17 +1843,14 @@ export class InteractiveAudioEngine {
     } catch {
       // ignore
     }
-    this.disposeAll();
-    for (const pool of Object.values(this.sfxPools)) {
-      this.disposeSfxPool(pool);
-    }
+    this.disposeAll(); // disposes tier players AND every segment's SFX pools
     try {
       this.master?.dispose();
     } catch {
       // ignore
     }
     this.segments = [];
-    this.sfxPools = {};
+    this.sfxPoolsBySegment.clear();
     this.song = undefined;
     this.manifest = undefined;
     this.master = undefined;
