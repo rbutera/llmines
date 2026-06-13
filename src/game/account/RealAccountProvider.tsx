@@ -20,6 +20,21 @@ import type { AuthApi, Identity, ScoresApi, UsernameCheck } from "./types";
 
 // Constructed at most once; null when no deployment is configured (e.g. an
 // offline build). Lazy so TEST_MODE / no-env paths never touch a live backend.
+//
+// Google sign-in (skins-ux-auth): the SERVER-SIDE OAuthSignin defect is fixed by
+// the wrangler.jsonc compatibility_date bump (2025-09-23) so NextAuth v4's
+// openid-client can run Google discovery over the Worker's node http client. Two
+// steps remain EXTERNAL (not code, flagged for Rai) before a real sign-in
+// completes end to end:
+//   1. Google console: register `https://llmines.e8n.dev/api/auth/callback/google`
+//      as an authorized redirect URI on the OAuth client (else `redirect_uri_
+//      mismatch`).
+//   2. Convex: set `CONVEX_AUTH_ISSUER_DOMAIN` on the deployment to the deployed
+//      origin (`npx convex env set ...`) so `ctx.auth.getUserIdentity()` is
+//      populated and `submitScore` is authenticated — otherwise Convex trusts
+//      the `https://example.com` default and rejects the JWT (defect 3, to verify
+//      AFTER sign-in works). No `trustHost`/`NEXTAUTH_URL` is needed: origin
+//      derivation already works (the providers endpoint returns correct URLs).
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 const convexClient = convexUrl ? new ConvexReactClient(convexUrl) : null;
 

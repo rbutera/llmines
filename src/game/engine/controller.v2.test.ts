@@ -410,6 +410,20 @@ describe("Tempo-driven sweep progression (9.x)", () => {
     // It must not perturb timing.
     expect(c.testState().sweepX).toBeCloseTo(xBefore, 6);
   });
+
+  it("9.6 clearing squares does NOT advance the skin index (only setSkinIndex does)", () => {
+    const c = primed();
+    expect(c.getRenderState().skinIndex).toBe(0);
+    // A 3x11 mono block on the floor = 20 squares; sweep it (a real clear).
+    for (let r = ROWS - 3; r < ROWS; r++) {
+      for (let col = 0; col < 11; col++) c.testSetCell(r, col, 0);
+    }
+    c.testSweepNow();
+    expect(c.testState().score).toBeGreaterThan(0); // a clear really happened
+    // The skin index is host-driven (song completion / restart) only — a clear
+    // must NOT touch it. (The old core auto-advanced it every 20 squares.)
+    expect(c.getRenderState().skinIndex).toBe(0);
+  });
 });
 
 describe("Specials via the test seam (5.5)", () => {

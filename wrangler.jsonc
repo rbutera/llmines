@@ -2,7 +2,15 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "main": ".open-next/worker.js",
   "name": "llmines",
-  "compatibility_date": "2025-05-05",
+  // Bumped 2025-05-05 -> 2025-09-23 to fix Google sign-in (skins-ux-auth):
+  // NextAuth v4 (openid-client) does Google issuer discovery + token exchange
+  // over Node's http/https client. Cloudflare shipped outbound node:http CLIENT
+  // support to nodejs_compat for compat dates >= ~2025-08-15; under the old
+  // 2025-05-05 date that fetch failed at runtime, so getAuthorizationUrl threw
+  // and POST /api/auth/signin/google returned ?error=OAuthSignin (diagnosed live
+  // against llmines.e8n.dev — see openspec/changes/skins-ux-auth/notes-auth-
+  // diagnostic.md). nodejs_compat + global_fetch_strictly_public are unchanged.
+  "compatibility_date": "2025-09-23",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": {
     "directory": ".open-next/assets",
