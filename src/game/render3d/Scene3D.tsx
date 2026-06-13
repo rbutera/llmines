@@ -510,7 +510,7 @@ export function Scene3D({
         />
       </mesh>
 
-      <CellGrid opacity={settings.gridOpacity} />
+      <CellGrid opacity={settings.gridOpacity} color={palette?.darkEdge} />
 
       {/* Settled stack. Calm/inert by default; cells the sweep is about to clear
           (c.marked) get the bright pulse so the to-clear read is unmistakable. */}

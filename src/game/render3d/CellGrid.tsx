@@ -11,7 +11,14 @@ import { BOARD_H, BOARD_W, CELL, GAP } from "./layout";
  * boundaries. Dim cool blue, low opacity — a depth cue, not a feature.
  * Ported from the sandbox.
  */
-export function CellGrid({ opacity }: { opacity: number }) {
+export function CellGrid({
+  opacity,
+  color = "#3a2a5e",
+}: {
+  opacity: number;
+  /** Grid-line colour — driven by the active skin so it recolours on skin switch. */
+  color?: string;
+}) {
   const geom = useMemo(() => {
     const pts: number[] = [];
     const z = -(CELL - GAP) - 0.04; // just behind the deepest cube body
@@ -34,7 +41,7 @@ export function CellGrid({ opacity }: { opacity: number }) {
 
   return (
     <lineSegments geometry={geom}>
-      <lineBasicMaterial color="#3a2a5e" transparent opacity={opacity} />
+      <lineBasicMaterial color={color} transparent opacity={opacity} />
     </lineSegments>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { COLS } from "../core";
 import type { GameController, RenderState } from "../engine/controller";
+import { SKINS } from "../skins/skins";
 
 /**
  * Full-viewport VIDEO BACKDROP (Lumines Arise style): a per-skin looping clip
@@ -23,6 +24,9 @@ const SKIN_VIDEO: Record<string, string> = {
   pipeline: "/video/skin2-background.mp4",
 };
 const TRANSITION_VIDEO = "/video/transition.mp4";
+/** Reversed transition — played when the cycle WRAPS BACK (last skin → first). */
+const TRANSITION_REVERSE_VIDEO = "/video/transition-reverse.mp4";
+const skinOrder = (id: string) => SKINS.findIndex((s) => s.id === id);
 
 /** Max horizontal parallax shift (% of the clip) at the board's edge columns. */
 const MAX_SHIFT_PCT = 3.5;
@@ -63,11 +67,17 @@ export function VideoBackdrop({
   // TRANSITION: on a skin change, play the transition clip once on top, then fade
   // it out to reveal the (already-swapped) new skin loop underneath.
   useEffect(() => {
-    if (prevSkinRef.current === skinId) return;
+    const prev = prevSkinRef.current;
+    if (prev === skinId) return;
+    // Direction: wrapping BACK (last skin → first, e.g. pipeline → neon) plays the
+    // transition REVERSED so the cycle reads as returning to song 1; forward
+    // advances play it normally. Infinite loop: songs cycle endlessly either way.
+    const wrappingBack = skinOrder(skinId) < skinOrder(prev);
     prevSkinRef.current = skinId;
     const v = transitionRef.current;
     if (!v) return;
     try {
+      v.src = wrappingBack ? TRANSITION_REVERSE_VIDEO : TRANSITION_VIDEO;
       v.currentTime = 0;
       v.style.opacity = "1";
       void v.play();
@@ -124,10 +134,10 @@ export function VideoBackdrop({
         ))}
       </div>
 
-      {/* Transition clip — overlaid on top, played once per skin switch. */}
+      {/* Transition clip — overlaid on top, played once per skin switch. Its `src`
+          is set imperatively (forward vs reversed) on each switch, so no JSX src. */}
       <video
         ref={transitionRef}
-        src={TRANSITION_VIDEO}
         muted
         playsInline
         preload="auto"
