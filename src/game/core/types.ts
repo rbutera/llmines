@@ -178,10 +178,6 @@ export interface GameState {
    * next; drawn in the canonical RNG order so a seeded run is reproducible.
    */
   queue: GeneratedPiece[];
-  /** Index into the ordered skin list (progression). */
-  skinIndex: number;
-  /** Squares cleared within the current skin (drives skin advancement). */
-  clearsInSkin: number;
   /**
    * RECORD-ONLY (render-only), additive: the most recent chain-flood clear,
    * carrying the ordered component (origin + each cleared cell's BFS distance)

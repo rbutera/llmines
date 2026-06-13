@@ -106,9 +106,3 @@ export const SPECIAL_RATE = 1 / 14;
 
 /** Preview depth: the UI shows the next 3 pieces. */
 export const PREVIEW_DEPTH = 3;
-
-/**
- * Squares-cleared threshold to advance to the next skin. Deterministic so a
- * seeded run advances skins reproducibly.
- */
-export const SKIN_ADVANCE_THRESHOLD = 20;

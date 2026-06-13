@@ -44,7 +44,7 @@ declare global {
       pressHardDrop(): void;
       clockAdvance(dtMs: number): void;
       setSpecial(row: number, col: number): void;
-      setSkin(index: number): void;
+      setTempo(bpm: number): void;
     };
   }
 }

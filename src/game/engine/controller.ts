@@ -22,7 +22,6 @@ import {
   runFullSweep,
   seedState,
   setForceGem,
-  skinBpm,
   softDrop,
   spawnFromQueue,
   spawnPiece,
@@ -43,6 +42,15 @@ export type InputAction =
   | "rotate"
   | "softDrop"
   | "hardDrop";
+
+/**
+ * The sweep tempo (BPM) the bar advances at before the host pushes a real track
+ * tempo via {@link GameController.setTempo}. Matches song1's manifest tempo band
+ * (≈ 110) so the first pass — which runs before the async audio load reports a
+ * tempo — moves at roughly the right speed and never pops when the real value
+ * lands. Kept local so the controller stays free of host/audio imports.
+ */
+export const FALLBACK_BPM = 110;
 
 /**
  * A full deterministic replay of a run (audit A8): the seed plus the ordered
@@ -80,9 +88,20 @@ export interface RenderState {
   hold: HoldState;
   /** Additive (render-only): the next pieces for the preview panel. */
   queue: GameState["queue"];
-  /** Additive (render-only): current skin index for palette/theme swap. */
+  /**
+   * Additive (render-only): the active HOST skin index (0-based, in `SKINS`
+   * order), pushed in via {@link GameController.setSkinIndex} by the host layer
+   * (GameShell) which owns the single skin system. Drives the renderer's
+   * per-skin visual variety (background mood + cascade palette). The controller
+   * stays host-agnostic — it stores a plain number and never imports the skins.
+   */
   skinIndex: number;
-  /** Additive (render-only): active BPM (drives the sweep, shown in the HUD). */
+  /**
+   * Additive (render-only): the active sweep tempo (BPM) the bar is currently
+   * advancing at — the latched value from {@link GameController.setTempo},
+   * sourced by the host from the active track's manifest tempo. Shown in the HUD
+   * and drives the sweep speed.
+   */
   bpm: number;
   /**
    * Additive (render-only): coordinates (`row * COLS + col`) of SETTLED cells
@@ -280,12 +299,26 @@ export class GameController {
   private replayInputs: { t: number; action: InputAction }[] = [];
   private replayStartT = 0;
   /**
-   * The BPM the sweep is currently advancing at. Sourced from the active skin,
-   * but only re-read at a bar/pass boundary (when `sweepX` wraps) so a mid-pass
-   * skin change does NOT discontinuously move the bar — the new tempo takes
-   * effect from the next bar. 0 = not yet set (read on the first advance).
+   * The BPM the sweep is currently advancing at — the LATCHED tempo. Re-read
+   * from {@link pendingTempoBpm} only at a bar/pass boundary (when `sweepX` is at
+   * 0) so a mid-pass tempo change does NOT discontinuously move the bar; the new
+   * tempo takes effect from the next bar. 0 = not yet latched (latched on the
+   * first advance).
    */
   private activeBpm = 0;
+  /**
+   * The tempo the HOST has pushed via {@link setTempo} (the active track's
+   * manifest BPM). The latch in {@link currentSweepBpm} adopts it at the next
+   * pass boundary. Defaults to {@link FALLBACK_BPM} so the bar moves on the first
+   * pass even before the host pushes a tempo (audio loads async).
+   */
+  private pendingTempoBpm = FALLBACK_BPM;
+  /**
+   * The active HOST skin index (render-only), pushed via {@link setSkinIndex}.
+   * Projected straight into `RenderState.skinIndex`; the controller never reads
+   * it for timing/gameplay. The host (GameShell) owns the single skin system.
+   */
+  private skinIndex = 0;
 
   constructor(opts: ControllerOptions = {}) {
     this.testMode = opts.testMode ?? false;
@@ -383,6 +416,10 @@ export class GameController {
     this.sweepStartT = 0;
     this.sweepColumnsConsumed = 0;
     this.activeBpm = 0;
+    // Restart resets to the base skin + fallback tempo; the host re-pushes the
+    // base skin's tempo + index via setTempo/setSkinIndex in handleRestart.
+    this.pendingTempoBpm = FALLBACK_BPM;
+    this.skinIndex = 0;
     this.paused = false;
     this.softDropSustained = false;
     // Fresh run -> fresh replay log (re-anchored by start() below).
@@ -484,16 +521,37 @@ export class GameController {
   }
 
   /**
-   * The BPM the sweep should advance at this frame. The active skin's BPM is
-   * latched at each bar/pass boundary (when `sweepX` is at 0) rather than read
-   * live, so a skin change mid-pass does not discontinuously move the bar — the
-   * new tempo applies from the next bar. Latches on the first read too.
+   * The BPM the sweep should advance at this frame. The host-pushed tempo
+   * ({@link pendingTempoBpm}, the active track's manifest BPM) is latched at each
+   * bar/pass boundary (when `sweepX` is at 0) rather than read live, so a tempo
+   * change mid-pass does not discontinuously move the bar — the new tempo applies
+   * from the next bar. Latches on the first read too.
    */
   private currentSweepBpm(): number {
     if (this.activeBpm === 0 || this.state.sweepX === 0) {
-      this.activeBpm = skinBpm(this.state.skinIndex);
+      this.activeBpm = this.pendingTempoBpm;
     }
     return this.activeBpm;
+  }
+
+  /**
+   * Host seam (audio-agnostic): push the sweep tempo (the active track's manifest
+   * BPM). Stored as a pending value the latch adopts at the next pass boundary —
+   * never applied mid-pass, preserving the no-discontinuity guarantee. The
+   * controller takes a plain number and never imports the audio engine or skins.
+   */
+  setTempo(bpm: number): void {
+    if (Number.isFinite(bpm) && bpm > 0) this.pendingTempoBpm = bpm;
+  }
+
+  /**
+   * Host seam (render-only): set the active HOST skin index, projected straight
+   * into `RenderState.skinIndex` for the renderer's per-skin visual variety. A
+   * plain number; never read for timing/gameplay.
+   */
+  setSkinIndex(index: number): void {
+    this.skinIndex = Math.max(0, Math.floor(index));
+    this.emit();
   }
 
   /** Advance the sweep by an absolute-time-derived column delta. */
@@ -780,8 +838,11 @@ export class GameController {
       marked: computeMarked(this.state.grid).marked,
       hold: this.state.hold,
       queue: this.state.queue,
-      skinIndex: this.state.skinIndex,
-      bpm: skinBpm(this.state.skinIndex),
+      // Render-only: the host-owned skin index + the current sweep tempo. The
+      // displayed BPM is the LATCHED active tempo (or the pending one before the
+      // first latch) — a pure read, no latch side effect here.
+      skinIndex: this.skinIndex,
+      bpm: this.activeBpm || this.pendingTempoBpm,
       // Additive render-only projections (no logic change): settled special
       // coords copied straight from the core set, and the soft-drop heat flag.
       specials: Array.from(this.state.specials),
@@ -898,19 +959,19 @@ export class GameController {
   }
 
   /**
-   * Test-only: set the current skin index directly (additive). The active BPM in
-   * `state()` follows it. Lets a test assert BPM-driven sweep speed without
-   * clearing enough squares to advance naturally.
+   * Test-only: push a sweep tempo (BPM) through the host seam. Stored as the
+   * pending tempo the latch adopts at the next pass boundary (sweepX === 0), so a
+   * test can assert tempo-driven sweep speed + the no-mid-pass-jump latch. Read
+   * the resulting active tempo via `getRenderState().bpm`.
    */
-  testSetSkin(index: number): void {
-    this.state = { ...this.state, skinIndex: index };
+  testSetTempo(bpm: number): void {
+    this.setTempo(bpm);
     this.emit();
   }
 
   /**
-   * Test-only: the raw GameState (additive). Exposes internal counters the
-   * public projection omits (e.g. `clearsInSkin`) so progression tests can
-   * assert the per-skin counter reset deterministically.
+   * Test-only: the raw GameState (additive). Exposes internal fields the public
+   * projection omits so deterministic tests can assert core state directly.
    */
   testRawState(): GameState {
     return this.state;

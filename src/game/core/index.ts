@@ -1,6 +1,5 @@
 import { computeMarked } from "./detect";
 import { viewGrid } from "./grid";
-import { skinBpm } from "./skins";
 import type {
   GameState,
   GeneratedPiece,
@@ -18,7 +17,6 @@ export * from "./detect";
 export * from "./sweep";
 export * from "./scoring";
 export * from "./chain";
-export * from "./skins";
 
 /** Public, serialisable projection of state for the test interface. */
 export interface PublicState {
@@ -56,10 +54,6 @@ export interface PublicState {
    * surface an upcoming special.
    */
   queue: GeneratedPiece[];
-  /** Additive: current skin index (progression). */
-  skinIndex: number;
-  /** Additive: active BPM, derived from the current skin. Drives sweep speed. */
-  bpm: number;
   /**
    * Additive (record-only, Phase 3): the most recent chain-flood clear — origin
    * chain cell, the ordered cleared component (each cell + its BFS distance from
@@ -106,8 +100,6 @@ export function publicState(state: GameState): PublicState {
       cells: gp.cells,
       ...(gp.special ? { special: { ...gp.special } } : {}),
     })),
-    skinIndex: state.skinIndex,
-    bpm: skinBpm(state.skinIndex),
     // Record-only chain-clear event passthrough (Phase 3). Copied (not aliased)
     // so the public projection never shares the internal cells array reference.
     ...(state.lastChainClear

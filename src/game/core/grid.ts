@@ -32,8 +32,6 @@ export function createGame(seed = 1): GameState {
     combo: 0,
     specials: new Set<number>(),
     queue: [],
-    skinIndex: 0,
-    clearsInSkin: 0,
     softDropBonus: 0,
   };
 }

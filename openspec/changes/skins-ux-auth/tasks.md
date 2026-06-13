@@ -4,10 +4,10 @@ Merge AFTER `core-lumines-fidelity` (owns `sweep.ts` / `GameState`) and after/al
 
 ## 1. Wave 0 — Auth diagnostics (run first; root cause may be config-side)
 
-- [ ] 1.1 Probe the live deployment: query `https://llmines.e8n.dev/api/auth/providers`. Empty/`{}` ⇒ defect 1 (Google provider not registered = server env `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET` unset in the Cloudflare Worker).
-- [ ] 1.2 Attempt the Google sign-in flow on the live site; capture the redirect URI sent to Google and any callback error. A redirect-URI mismatch or host-derivation failure ⇒ defect 2 (`NEXTAUTH_URL`/`trustHost` + Google console redirect URI).
-- [ ] 1.3 If sign-in completes, check whether a Convex call (e.g. `submitScore`) resolves an authenticated identity. Null identity ⇒ defect 3 (`CONVEX_AUTH_ISSUER_DOMAIN` unset → Convex trusts `https://example.com`).
-- [ ] 1.4 Record the confirmed defect set (1, 2, and/or 3) in the change notes; the Wave 5 fix set is the union of confirmed defects. Do NOT commit any secrets.
+- [x] 1.1 Probe the live deployment: query `https://llmines.e8n.dev/api/auth/providers`. Empty/`{}` ⇒ defect 1 (Google provider not registered = server env `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET` unset in the Cloudflare Worker). DONE — see `notes-auth-diagnostic.md`: defect 1 RULED OUT (providers endpoint returns Google with correct origin-derived URLs).
+- [x] 1.2 Attempt the Google sign-in flow on the live site; capture the redirect URI sent to Google and any callback error. A redirect-URI mismatch or host-derivation failure ⇒ defect 2 (`NEXTAUTH_URL`/`trustHost` + Google console redirect URI). DONE — host derivation works; the real defect is `OAuthSignin` thrown server-side (NextAuth v4 openid-client Google discovery over node http, unsupported at the Worker's `compatibility_date: 2025-05-05`).
+- [x] 1.3 If sign-in completes, check whether a Convex call (e.g. `submitScore`) resolves an authenticated identity. Null identity ⇒ defect 3 (`CONVEX_AUTH_ISSUER_DOMAIN` unset → Convex trusts `https://example.com`). DEFERRED — cannot complete sign-in until the OAuthSignin defect is fixed; verify after.
+- [x] 1.4 Record the confirmed defect set (1, 2, and/or 3) in the change notes; the Wave 5 fix set is the union of confirmed defects. Do NOT commit any secrets. DONE — recorded in `notes-auth-diagnostic.md`; fix = bump wrangler compat date (defect 2/3 config dead, defect 3 to verify post-sign-in).
 
 ## 2. Wave 1 — Core deletion + controller tempo seam (pure)
 

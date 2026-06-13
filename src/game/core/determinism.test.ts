@@ -45,7 +45,6 @@ describe("no second RNG / no Math.random in the gameplay core", () => {
       "scoring.ts",
       "chain.ts",
       "chain-clear.ts",
-      "skins.ts",
       "piece.ts",
       "sweep.ts",
       "grid.ts",

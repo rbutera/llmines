@@ -1,9 +1,8 @@
 import { chainFlood, type ChainClearRecord } from "./chain-clear";
-import { COLS, ROWS, SKIN_ADVANCE_THRESHOLD } from "./constants";
+import { COLS, ROWS } from "./constants";
 import { isSquareAt } from "./detect";
 import { cloneGrid, settleColumnWithMarks } from "./grid";
 import { boardStateBonus, nextCombo, passPackage, passScore } from "./scoring";
-import { SKINS } from "./skins";
 import type { GameState, Grid, SweepPass } from "./types";
 
 /** A fresh ROWS x COLS boolean grid of `false`. */
@@ -214,28 +213,6 @@ function flushOpenRun(
 }
 
 /**
- * Deterministic skin advancement: while the per-skin squares-cleared count meets
- * the threshold, advance to the next skin (clamped at the last) and reset the
- * counter. A loop handles one big pass crossing several thresholds; once at the
- * last skin the counter is capped so it does not grow unbounded.
- */
-function advanceSkin(
-  skinIndex: number,
-  clearsInSkin: number,
-): { skinIndex: number; clearsInSkin: number } {
-  let idx = skinIndex;
-  let count = clearsInSkin;
-  while (count >= SKIN_ADVANCE_THRESHOLD && idx < SKINS.length - 1) {
-    count -= SKIN_ADVANCE_THRESHOLD;
-    idx += 1;
-  }
-  if (idx >= SKINS.length - 1 && count >= SKIN_ADVANCE_THRESHOLD) {
-    count = SKIN_ADVANCE_THRESHOLD;
-  }
-  return { skinIndex: idx, clearsInSkin: count };
-}
-
-/**
  * Advance the sweep deterministically by a (possibly fractional) number of
  * columns. As the bar's leading edge crosses each column it MARKS squares now
  * complete at/behind it (design D1), accumulating contiguous marked columns into
@@ -243,7 +220,7 @@ function advanceSkin(
  * once (design D2). Chain floods fire at group-erase time. Scoring is banked when
  * the pass completes at the right edge using the accumulated `distinctSquares`
  * (faithful rule: package(squares) x streak-multiplier) plus board-state bonuses;
- * combo and per-skin clear counters advance at the boundary. Wraps and starts a
+ * the combo counter advances at the boundary. Wraps and starts a
  * fresh pass for the next traversal — new squares formed by settle behind the bar
  * are picked up by that next pass; squares formed under unpassed columns are
  * marked when the edge reaches them this pass. Pure: returns a new GameState.
@@ -256,8 +233,6 @@ export function advanceSweep(state: GameState, columns: number): GameState {
   let score = state.score;
   let sweepX = state.sweepX;
   let combo = state.combo;
-  let skinIndex = state.skinIndex;
-  let clearsInSkin = state.clearsInSkin;
   // RECORD-ONLY sink for chain-flood clears this call (render wavefront). Does
   // not influence deletion/scoring/timing.
   const chainRecords: ChainClearRecord[] = [];
@@ -318,8 +293,6 @@ export function advanceSweep(state: GameState, columns: number): GameState {
         // this pass (a clear reduced the field) — not awarded passively every
         // pass a single-colour/empty board sits there.
         score += boardStateBonus(grid);
-        clearsInSkin += squares;
-        ({ skinIndex, clearsInSkin } = advanceSkin(skinIndex, clearsInSkin));
       }
       sweepX = 0;
       pass = startPass();
@@ -333,8 +306,6 @@ export function advanceSweep(state: GameState, columns: number): GameState {
     score,
     sweepX,
     combo,
-    skinIndex,
-    clearsInSkin,
     sweepPass: pass,
     lastChainClear: nextChainClear(state.lastChainClear, chainRecords),
     lastPassComplete,
@@ -367,7 +338,7 @@ function nextChainClear(
  * Run one full timeline sweep immediately from the current grid using the same
  * group-batch model as {@link advanceSweep}: mark every column, erase contiguous
  * groups at gaps / the right edge (settling once per group), then bank faithful
- * scoring + board-state bonus, advance combo + skin. Resets sweepX to 0. Matches
+ * scoring + board-state bonus, advance combo. Resets sweepX to 0. Matches
  * the incremental result on a static board.
  */
 export function runFullSweep(state: GameState): GameState {
@@ -392,13 +363,9 @@ export function runFullSweep(state: GameState): GameState {
     groupErases: pass.groupErases,
   };
   const combo = nextCombo(state.combo, squares);
-  let skinIndex = state.skinIndex;
-  let clearsInSkin = state.clearsInSkin;
   if (squares > 0) {
     // Bonuses only when a clear happened this sweep (see advanceSweep).
     score += boardStateBonus(grid);
-    clearsInSkin += squares;
-    ({ skinIndex, clearsInSkin } = advanceSkin(skinIndex, clearsInSkin));
   }
   return {
     ...state,
@@ -406,8 +373,6 @@ export function runFullSweep(state: GameState): GameState {
     specials,
     score,
     combo,
-    skinIndex,
-    clearsInSkin,
     sweepX: 0,
     sweepPass: null,
     lastChainClear: nextChainClear(state.lastChainClear, chainRecords),

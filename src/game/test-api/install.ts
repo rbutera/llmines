@@ -50,8 +50,8 @@ export interface LuminesTestApi {
   clockAdvance(dtMs: number): void;
   /** Additive: mark a settled cell as a chain special (coord = row*COLS+col). */
   setSpecial(row: number, col: number): void;
-  /** Additive: set the current skin index (active BPM follows it). */
-  setSkin(index: number): void;
+  /** Additive: push the sweep tempo (BPM); latched at the next pass boundary. */
+  setTempo(bpm: number): void;
   /**
    * Dev/test-only: force every subsequently spawned piece to carry a chain
    * special (a gem), so the clear cascade can be triggered on demand. Pass
@@ -135,7 +135,7 @@ export function installTestApi(controller: GameController): () => void {
     endGame: (score) => controller.testEndGame(score),
     clockAdvance: (dtMs) => controller.testClockAdvance(dtMs),
     setSpecial: (row, col) => controller.testSetSpecial(row, col),
-    setSkin: (index) => controller.testSetSkin(index),
+    setTempo: (bpm) => controller.testSetTempo(bpm),
     forceGem: (on = true) => controller.setForceGem(on),
     getReplay: () => controller.getReplay(),
     downloadReplay: () => downloadReplay(controller.getReplay()),
