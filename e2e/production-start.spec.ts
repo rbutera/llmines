@@ -99,6 +99,49 @@ test("clicking Start spawns a piece and advances the sweep, with no console erro
   expect(pageErrors, `page errors during Start: ${pageErrors.join(" | ")}`).toEqual([]);
 });
 
+test("chrome: no skin toggle / N key / bottom bar / title button; the score is visible", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(err.message));
+
+  await page.goto("/");
+
+  // START SCREEN: the preserved contracts are present...
+  await expect(page.getByTestId("start-button")).toBeVisible();
+  await expect(page.getByTestId("controls-cheatsheet")).toBeVisible();
+  // ...and the skin-cycle toggle is GONE (no "SKIN ▸" control anywhere).
+  await expect(page.getByText(/SKIN ▸/i)).toHaveCount(0);
+  await expect(page.getByText(/cycle skin/i)).toHaveCount(0);
+  // The cheatsheet must not advertise the removed "n skin" key.
+  await expect(page.getByTestId("controls-cheatsheet")).not.toContainText(
+    "n skin",
+  );
+
+  // The N key is inert (it used to cycle the skin). Pressing it must not throw
+  // or change the page; just assert no page error results.
+  await page.keyboard.press("n");
+
+  // Enter the game.
+  await page.getByTestId("start-button").click();
+  await expect
+    .poll(() => page.evaluate(() => window.__luminesProbe?.hasActive ?? false), {
+      timeout: 3000,
+    })
+    .toBe(true);
+
+  // IN-PLAY: the score readout is present AND visible (legibility fix).
+  const score = page.getByTestId("score");
+  await expect(score).toBeVisible();
+  // The dead bottom pause-hint ("esc · ❚❚ pause") is removed.
+  await expect(page.getByText("esc · ❚❚ pause")).toHaveCount(0);
+
+  expect(
+    pageErrors,
+    `page errors during the chrome check: ${pageErrors.join(" | ")}`,
+  ).toEqual([]);
+});
+
 test("Escape pauses the running game (the sweep stops advancing)", async ({
   page,
 }) => {

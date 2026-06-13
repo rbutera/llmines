@@ -5,14 +5,14 @@
  * so future skins can swap the look without touching the wavefront engine.
  *
  * This skin ("electric / plasma", cyan #22d3ee + magenta #e879f9 + bloom) is the
- * default. Adding a skin = add an entry keyed by the skin id (see core/skins.ts)
- * with its own surge palette; the renderer looks the style up by the live skin
- * index and the engine renders it generically.
+ * default. Adding a skin = add an entry keyed by the host skin id (see
+ * skins/skins.ts) with its own surge palette; the renderer looks the style up by
+ * the live host skin index and the engine renders it generically.
  *
  * Pure data + a lookup. No Three/React imports so it stays trivially importable.
  */
 
-import { SKINS } from "../core";
+import { SKINS } from "../skins/skins";
 
 /** RGB triple in 0..1 linear space (ready for THREE.Color.setRGB). */
 export type Rgb = readonly [number, number, number];
@@ -58,12 +58,12 @@ export const ELECTRIC_PLASMA: SurgeStyle = {
  * skins never silently repaints a cascade.
  */
 const STYLES_BY_SKIN_ID: Record<string, SurgeStyle> = {
-  "neon-dawn": ELECTRIC_PLASMA,
+  neon: ELECTRIC_PLASMA,
   // Future skins can register their own surge palette here. Until they do they
   // inherit the electric/plasma look via the fallback below.
 };
 
-/** The surge style for a skin index (clamped); falls back to electric/plasma. */
+/** The surge style for a host skin index (clamped); falls back to electric/plasma. */
 export function surgeStyleForSkin(skinIndex: number): SurgeStyle {
   const clamped = Math.max(0, Math.min(skinIndex, SKINS.length - 1));
   const id = SKINS[clamped]?.id ?? "";

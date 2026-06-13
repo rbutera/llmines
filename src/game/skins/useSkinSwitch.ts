@@ -7,15 +7,10 @@ import {
   type Skin,
   DEFAULT_SKIN,
   nextSkin,
-  skinById,
-  SKINS,
 } from "./skins";
 import { lerpBoard, lerpChrome } from "./crossfade";
 
-/** localStorage key for the chosen skin id (persisted, like the audio mix). */
-export const SKIN_STORAGE_KEY = "llmines.skin";
-
-/** Crossfade duration (ms) for the colour transition on a skin switch. */
+/** Crossfade duration (ms) for the colour transition on a skin advance. */
 export const SKIN_CROSSFADE_MS = 1000;
 
 export interface SkinSwitchState {
@@ -27,21 +22,34 @@ export interface SkinSwitchState {
   chrome: ChromePalette;
   /** True while a colour crossfade is animating. */
   transitioning: boolean;
-  /** Advance to the next skin in cycle order (button / key trigger). */
-  cycleSkin: () => void;
-  /** Jump to a specific skin by id (no-op if already there). */
-  setSkin: (id: string) => void;
+  /**
+   * Advance to the next skin in progression order (wraps last → first), with the
+   * colour + audio crossfade. The ONLY progression trigger: called by the audio
+   * engine's `onSongComplete`. There is no skin toggle / hotkey / picker.
+   */
+  advanceSkin: () => void;
+  /**
+   * Jump instantly (no crossfade) to the base skin `SKINS[0]`. Used on restart /
+   * new game so a run always starts on the base skin — the chosen skin never
+   * carries across runs (no persistence).
+   */
+  resetToBaseSkin: () => void;
 }
 
 /**
- * Owns the active skin + the colour crossfade animation. On a switch it ramps an
- * internal `mix` 0->1 over {@link SKIN_CROSSFADE_MS} via rAF, exposing the
+ * Owns the active skin + the colour crossfade animation. On an advance it ramps
+ * an internal `mix` 0->1 over {@link SKIN_CROSSFADE_MS} via rAF, exposing the
  * interpolated board + chrome palettes each frame so the board recolours and the
  * chrome CSS vars fade smoothly. The actual AUDIO crossfade is the caller's
  * concern — it passes an `onSwitch(skin)` so the engine swaps the song in lock
- * step. The chosen skin id is persisted.
+ * step.
  *
- * Pure-React + rAF; SSR-safe (initial state = default skin, hydrated on mount).
+ * Programmatic-only surface (the skin toggle + N hotkey + pause picker +
+ * localStorage persistence are all removed): the skin advances ONLY on song
+ * completion (`advanceSkin`), and resets to the base skin on restart
+ * (`resetToBaseSkin`). Always starts a fresh load on the base skin.
+ *
+ * Pure-React + rAF; SSR-safe (initial state = the base skin).
  */
 export function useSkinSwitch(onSwitch?: (skin: Skin) => void): SkinSwitchState {
   // `from` -> `to` is the active transition; when settled, from === to.
@@ -51,31 +59,11 @@ export function useSkinSwitch(onSwitch?: (skin: Skin) => void): SkinSwitchState 
   const rafRef = useRef<number | null>(null);
   const onSwitchRef = useRef(onSwitch);
   onSwitchRef.current = onSwitch;
-
-  // Hydrate the persisted skin on mount (no crossfade — set instantly).
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = skinById(window.localStorage.getItem(SKIN_STORAGE_KEY));
-    if (stored.id !== DEFAULT_SKIN.id) {
-      setFrom(stored);
-      setTo(stored);
-      setMix(1);
-    }
-  }, []);
-
-  const startTransition = useCallback((target: Skin) => {
-    setTo((curTo) => {
-      if (curTo.id === target.id) return curTo;
-      // Start the fade FROM whatever is currently fully shown.
-      setFrom(curTo);
-      setMix(0);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(SKIN_STORAGE_KEY, target.id);
-      }
-      onSwitchRef.current?.(target);
-      return target;
-    });
-  }, []);
+  // Live ref to the committed `to` skin so `advanceSkin` can compute the next
+  // target + fire side effects OUTSIDE a state updater (updaters must be pure —
+  // React Strict Mode / concurrent rendering can run them twice).
+  const toRef = useRef<Skin>(DEFAULT_SKIN);
+  toRef.current = to;
 
   // Drive the crossfade with rAF whenever mix < 1.
   useEffect(() => {
@@ -96,26 +84,27 @@ export function useSkinSwitch(onSwitch?: (skin: Skin) => void): SkinSwitchState 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [to]);
 
-  const cycleSkin = useCallback(() => {
-    setTo((curTo) => {
-      const target = nextSkin(curTo.id);
-      setFrom(curTo);
-      setMix(0);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(SKIN_STORAGE_KEY, target.id);
-      }
-      onSwitchRef.current?.(target);
-      return target;
-    });
+  const advanceSkin = useCallback(() => {
+    // Compute the next target from the committed skin (via the ref), then drive
+    // the transition + fire the audio/controller switch ONCE, outside any state
+    // updater. setFrom/setTo/setMix are plain setters (idempotent under a double
+    // call), and onSwitch fires exactly once per advance.
+    const curTo = toRef.current;
+    const target = nextSkin(curTo.id);
+    setFrom(curTo);
+    setTo(target);
+    setMix(0);
+    onSwitchRef.current?.(target);
   }, []);
 
-  const setSkin = useCallback(
-    (id: string) => {
-      const target = SKINS.find((s) => s.id === id);
-      if (target) startTransition(target);
-    },
-    [startTransition],
-  );
+  const resetToBaseSkin = useCallback(() => {
+    // Cancel any in-flight crossfade and jump instantly to the base skin.
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    setFrom(DEFAULT_SKIN);
+    setTo(DEFAULT_SKIN);
+    setMix(1);
+    onSwitchRef.current?.(DEFAULT_SKIN);
+  }, []);
 
   const board = mix >= 1 ? to.board : lerpBoard(from.board, to.board, mix);
   const chrome = mix >= 1 ? to.chrome : lerpChrome(from.chrome, to.chrome, mix);
@@ -125,7 +114,7 @@ export function useSkinSwitch(onSwitch?: (skin: Skin) => void): SkinSwitchState 
     board,
     chrome,
     transitioning: mix < 1,
-    cycleSkin,
-    setSkin,
+    advanceSkin,
+    resetToBaseSkin,
   };
 }

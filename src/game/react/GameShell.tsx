@@ -16,7 +16,7 @@ import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
 import { installTestApi } from "../test-api/install";
 import { loadSettings, saveSettings } from "../render3d/settings";
-import { SKINS } from "../skins/skins";
+import { DEFAULT_SKIN, SKINS } from "../skins/skins";
 import { useSkinSwitch } from "../skins/useSkinSwitch";
 import { hudHueForSkin } from "../theme/tokens";
 import { GameCanvas } from "./GameCanvas";
@@ -86,19 +86,27 @@ export function GameShell() {
   const barRef = useRef(1);
   const shakeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Skin switch (v2.5): a skin is a cohesive bundle of COLOUR (board + chrome)
-  // AND a soundtrack. The hook crossfades the colours; the onSwitch callback
-  // crossfades the audio engine to the skin's track in lock step. Fire-and-forget
-  // + self-guarded in the engine so a failed audio switch can never break the
-  // colour switch or the game. (Audio-wiring line — kept identical to v2.5 to
-  // minimise the v2.8 fusion conflict with the audio branch.)
+  // The single skin system: a skin bundles COLOUR (board + chrome), a SOUNDTRACK,
+  // and the track TEMPO that drives the sweep speed. The hook crossfades the
+  // colours; the onSwitch callback crossfades the audio engine to the skin's
+  // track AND pushes the new track tempo + skin index to the controller in lock
+  // step (the controller latches the tempo at the next pass boundary, and reads
+  // the skin index for per-skin visual variety). Fire-and-forget + self-guarded
+  // so a failed audio switch can never break the colour switch or the game.
+  const controllerRef = useRef<GameController | null>(null);
   const skinSwitch = useSkinSwitch((skin) => {
     void audioEngineRef.current?.switchTrack(skin.track);
+    const c = controllerRef.current;
+    if (c) {
+      c.setTempo(skin.tempo);
+      c.setSkinIndex(SKINS.findIndex((s) => s.id === skin.id));
+    }
   });
-  // Keep a live ref to the skin-cycle so the engine's onSongComplete (set once at
-  // mount) always advances the CURRENT skin, not a stale closure.
-  const cycleSkinRef = useRef(skinSwitch.cycleSkin);
-  cycleSkinRef.current = skinSwitch.cycleSkin;
+  // Keep a live ref to the skin-advance so the engine's onSongComplete (set once
+  // at mount) always advances the CURRENT skin, not a stale closure. Song
+  // completion is the ONLY progression trigger (no toggle, no hotkey).
+  const advanceSkinRef = useRef(skinSwitch.advanceSkin);
+  advanceSkinRef.current = skinSwitch.advanceSkin;
 
   // Account seam: submit the final score on game over (signed-in only). Held in
   // refs so the mount-once subscription always sees the current values.
@@ -114,6 +122,11 @@ export function GameShell() {
   useEffect(() => {
     const c = new GameController({ testMode: TEST_MODE, seed: 1 });
     setController(c);
+    controllerRef.current = c;
+    // Seed the controller's sweep tempo + skin index from the base skin so the
+    // bar runs in time from the very first pass (before the async audio load).
+    c.setTempo(skinSwitch.skin.tempo);
+    c.setSkinIndex(SKINS.findIndex((s) => s.id === skinSwitch.skin.id));
     // Build the interactive-audio engine + the RenderState->event deriver.
     // Silent until unlock() runs on the Start gesture; skipped entirely in
     // TEST_MODE so the deterministic suite stays observationally identical.
@@ -122,9 +135,10 @@ export function GameShell() {
       audioEngineRef.current = engine;
       audioDeriverRef.current = new AudioEventDeriver();
       // When a song rides out to its TERMINAL segment, advance the skin (which
-      // crossfades to the next song's bed via switchTrack). Cycling the skin keeps
-      // the colour world + soundtrack in lock step.
-      engine.onSongComplete = () => cycleSkinRef.current();
+      // crossfades to the next song's bed via switchTrack). Advancing the skin
+      // keeps the colour world + soundtrack + sweep tempo in lock step. Song
+      // completion is the ONLY skin-progression trigger.
+      engine.onSongComplete = () => advanceSkinRef.current();
       // Opt-in dev hook (URL `?audiodev=1` only): expose a handle to drive audio
       // events directly. Absent in normal use so production stays clean.
       if (window.location.search.includes("audiodev=1")) {
@@ -222,6 +236,7 @@ export function GameShell() {
       unsubscribe();
       uninstall?.();
       c.stop();
+      controllerRef.current = null;
       audioEngineRef.current?.dispose();
       audioEngineRef.current = null;
       audioDeriverRef.current = null;
@@ -236,26 +251,6 @@ export function GameShell() {
     if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current);
     shakeTimerRef.current = setTimeout(() => setShaking(false), 430);
   }, []);
-
-  // Skin switch hotkey ("n" / "N") — active in every phase. Ignored in a field.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "n" && e.key !== "N") return;
-      const el = e.target as HTMLElement | null;
-      if (
-        el &&
-        (el.tagName === "INPUT" ||
-          el.tagName === "SELECT" ||
-          el.tagName === "TEXTAREA")
-      ) {
-        return;
-      }
-      e.preventDefault();
-      skinSwitch.cycleSkin();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [skinSwitch]);
 
   // Pause helpers. Pausing halts the controller (sweep + gravity freeze) AND
   // raises the overlay; resuming reverses both. The controller is the source of
@@ -391,7 +386,13 @@ export function GameShell() {
     // created/resumed off the gesture (the intermittent cold-load silence), so the
     // resume MUST be the first thing the handler does. unlock() is self-guarded.
     audioDeriverRef.current?.reset();
-    audioEngineRef.current?.setInitialTrack(skinSwitch.skin.track);
+    // Start on the base skin: reset the skin world to SKINS[0] (a prior game may
+    // have advanced it), set its track + push its tempo + skin index to the
+    // controller (latched at the first pass boundary) BEFORE controller.start().
+    skinSwitch.resetToBaseSkin();
+    audioEngineRef.current?.setInitialTrack(DEFAULT_SKIN.track);
+    controller.setTempo(DEFAULT_SKIN.tempo);
+    controller.setSkinIndex(0);
     void audioEngineRef.current?.unlock().then(() => {
       audioEngineRef.current?.setVolume(musicVolume);
       audioEngineRef.current?.setMuted(muted);
@@ -409,11 +410,17 @@ export function GameShell() {
     setBeat(1);
     controller.start();
     setPhase("playing");
-  }, [controller, musicVolume, muted, skinSwitch.skin]);
+  }, [controller, musicVolume, muted, skinSwitch]);
 
   const handleRestart = useCallback(() => {
     if (!controller) return;
-    controller.restart();
+    // Restart resets to the BASE skin (no carry-over): pass the base tempo + skin
+    // index INTO restart() so they are latched before the new run's first emit
+    // (atomic restart-to-base, never a fallback-tempo flash).
+    controller.restart({
+      tempo: DEFAULT_SKIN.tempo,
+      skinIndex: 0,
+    });
     setScore(0);
     setPaused(false);
     gameOverSubmittedRef.current = false;
@@ -424,11 +431,13 @@ export function GameShell() {
     barRef.current = 1;
     setBar(1);
     setBeat(1);
-    // (Audio-wiring — identical v2.5.)
+    // Reset the colour world to the base skin + the engine back to song1.
+    skinSwitch.resetToBaseSkin();
     audioDeriverRef.current?.reset();
+    audioEngineRef.current?.setInitialTrack(DEFAULT_SKIN.track);
     void audioEngineRef.current?.unlock();
     setPhase("playing");
-  }, [controller]);
+  }, [controller, skinSwitch]);
 
   const handleEndRun = useCallback(() => {
     if (controller?.isPaused()) controller.togglePause();
@@ -444,12 +453,6 @@ export function GameShell() {
     }
   }, [controller, score]);
 
-  const goToTitle = useCallback(() => {
-    setPhase("start");
-    setPaused(false);
-    setControlsOpen(false);
-  }, []);
-
   // The single-hue cockpit tint, fed by the active skin. Set on the `.screen`
   // root so the OKLCH token block in hud.css recomputes per skin.
   const { hue, chroma } = hudHueForSkin(skinSwitch.skin.id);
@@ -457,9 +460,6 @@ export function GameShell() {
     leaderboard.length > 0
       ? { name: leaderboard[0]!.name, best: leaderboard[0]!.best }
       : null;
-  const skinLabel =
-    SKINS.find((s) => s.id === skinSwitch.skin.id)?.label ??
-    skinSwitch.skin.label;
 
   return (
     <main
@@ -521,13 +521,11 @@ export function GameShell() {
               onStart={handleStart}
               onControls={() => setControlsOpen(true)}
               onSign={user ? signOut : signIn}
-              onCycleSkin={() => skinSwitch.cycleSkin()}
               onLeaderboard={() => setLeaderboardOpen(true)}
               signedIn={!!user}
               signedInName={user?.username ?? null}
               personalBest={personalBest}
               globalTop={globalTop}
-              skinLabel={skinLabel}
             />
           </div>
         </>
@@ -559,8 +557,6 @@ export function GameShell() {
           onVolumeChange={handleVolumeChange}
           muted={muted}
           onToggleMute={() => setMuted((m) => !m)}
-          skinId={skinSwitch.skin.id}
-          onSelectSkin={(id) => skinSwitch.setSkin(id)}
         />
       )}
 
@@ -576,7 +572,6 @@ export function GameShell() {
           best={personalBest}
           signedIn={!!user}
           onAgain={handleRestart}
-          onTitle={goToTitle}
           onLeaderboard={() => setLeaderboardOpen(true)}
         />
       )}
@@ -628,7 +623,7 @@ function ControlsContract() {
         fontSize: 9,
       }}
     >
-      ← → move · ↑ rotate · ↓ drop · space slam · esc pause · n skin
+      ← → move · ↑ rotate · ↓ drop · space slam · esc pause
     </div>
   );
 }

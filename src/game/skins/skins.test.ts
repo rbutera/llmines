@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SKIN,
@@ -42,6 +44,40 @@ describe("skinById", () => {
   it("defaults unknown / null to neon", () => {
     expect(skinById("nope")).toBe(SKIN_NEON);
     expect(skinById(null)).toBe(SKIN_NEON);
+  });
+});
+
+describe("tempo is the single source (matches the audio manifest)", () => {
+  // Read the live manifest from disk so a re-cut that changes a song's tempo
+  // forces the matching Skin.tempo to be updated in lock step (or this fails).
+  const manifestPath = fileURLToPath(
+    new URL("../../../public/audio/manifest.json", import.meta.url),
+  );
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+    songs: { id: string; tempo: number }[];
+  };
+  const tempoForSong = (id: string): number => {
+    const song = manifest.songs.find((s) => s.id === id);
+    if (!song) throw new Error(`manifest has no song ${id}`);
+    return song.tempo;
+  };
+  // The skin -> manifest-song mapping (by the track's asset base): neon plays
+  // song1 flat under /audio, pipeline plays song2 under /audio/song2.
+  const SONG_FOR_SKIN: Record<string, string> = {
+    neon: "song1",
+    pipeline: "song2",
+  };
+
+  it("each skin's tempo equals its track's manifest tempo", () => {
+    for (const s of SKINS) {
+      const songId = SONG_FOR_SKIN[s.id];
+      expect(songId, `no manifest mapping for skin ${s.id}`).toBeTruthy();
+      expect(s.tempo).toBeCloseTo(tempoForSong(songId!), 3);
+    }
+  });
+
+  it("the two skins have distinct tempos (a real sweep-speed difference)", () => {
+    expect(SKIN_NEON.tempo).not.toBeCloseTo(SKIN_PIPELINE.tempo, 1);
   });
 });
 

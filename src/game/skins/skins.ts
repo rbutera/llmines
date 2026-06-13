@@ -62,10 +62,19 @@ export interface ChromePalette {
 export interface Skin {
   /** Stable id (also the on-screen skin label key + data-skin attribute). */
   id: string;
-  /** Human-readable label shown in the HUD + the switch control. */
+  /** Human-readable label shown in the HUD. */
   label: string;
   /** The recorded soundtrack for this skin (segment set + SFX asset dir). */
   track: TrackBundle;
+  /**
+   * The track's tempo in BPM, taken from the audio manifest (`songs[].tempo`).
+   * This is the SINGLE source the sweep speed is driven from: the host pushes it
+   * to the controller via `setTempo` so the timeline bar runs in time with the
+   * playing song (one pass = 16 eighth-notes = two bars of the actual track). A
+   * guard test (`skins.test.ts`) asserts each skin's `tempo` equals the manifest
+   * tempo for its `track.id` so a re-cut that changes tempo can't silently desync.
+   */
+  tempo: number;
   board: BoardPalette;
   chrome: ChromePalette;
 }
@@ -75,6 +84,8 @@ export const SKIN_NEON: Skin = {
   id: "neon",
   label: "Neon",
   track: TRACK_SONG1,
+  // song1 "Especifico Primero" manifest tempo (public/audio/manifest.json).
+  tempo: 109.957,
   board: {
     background: "#0a0a12",
     darkFace: "#1a0e33",
@@ -103,6 +114,8 @@ export const SKIN_PIPELINE: Skin = {
   id: "pipeline",
   label: "Pipeline",
   track: makeTrack("pipeline", "/audio/song2"),
+  // song2 "Verde el Pipeline" manifest tempo (public/audio/manifest.json).
+  tempo: 126.05,
   board: {
     background: "#06120c",
     darkFace: "#0c2a1a",

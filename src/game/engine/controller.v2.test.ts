@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { BPM, COLS, ROWS, type Piece, type PublicState } from "../core";
+import {
+  BPM,
+  COLS,
+  ROWS,
+  SWEEP_WRAP_EPSILON,
+  type Piece,
+  type PublicState,
+} from "../core";
 import { __resetAudioClockForTests } from "../audio/clock";
 import { type Clock, FakeClock } from "../time/clock";
 import { forwardDelta, GameController } from "./controller";
@@ -89,6 +96,11 @@ describe("Beat-derived sweep timing (5.x)", () => {
   /** Fresh test-mode controller with a FakeClock, primed past the baseline frame. */
   function primed(): GameController {
     const c = new GameController({ testMode: true, seed: 1 });
+    // Push the canonical grid tempo (BPM) so the time->column conversion these
+    // tests assert against (one eighth-note at BPM = one column) holds, latched
+    // at the baseline frame below. (The controller's default is the fallback
+    // tempo; the host pushes the real track tempo in production.)
+    c.testSetTempo(BPM);
     // First beat-frame establishes the sweep baseline (sweepStartT) and does not
     // advance; prime it so subsequent frames measure from a known origin.
     c.testBeatFrame(MS_PER_EIGHTH); // baseline frame (clock now > 0, no prior)
@@ -262,6 +274,9 @@ describe("Production clock→dt path: suspended + re-suspend", () => {
 
     const clock = new ScriptedClock();
     const c = new GameController({ testMode: false, seed: 1, clock });
+    // Run the sweep at the canonical grid tempo (BPM) so the SEC_PER_EIGHTH
+    // column math above lines up; latched at the baseline frame (sweepX === 0).
+    c.setTempo(BPM);
     // Lay both 2x2 squares directly on the floor (cols 0-1 and 6-7) so gravity
     // has nothing to drop and never auto-spawns mid-sweep.
     for (const c0 of [0, 6]) {
@@ -312,10 +327,44 @@ describe("Production clock→dt path: suspended + re-suspend", () => {
 
     c.stop();
   });
+
+  it("a pending tempo latches across the FIRST wrap after a re-suspend mid-pass", () => {
+    const SEC_PER_EIGHTH = 60 / BPM / 2;
+    const clock = new ScriptedClock();
+    const c = new GameController({ testMode: false, seed: 1, clock });
+    c.setTempo(BPM); // run at the grid tempo so the column math lines up
+    // Baseline + advance ~15 columns so the bar parks near the wrap.
+    clock.value = 1;
+    c.testProductionFrame();
+    clock.value = 1 + 15 * SEC_PER_EIGHTH;
+    c.testProductionFrame();
+    expect(c.getRenderState().sweepX).toBeGreaterThan(14);
+    expect(c.getRenderState().bpm).toBe(BPM);
+
+    // Push a faster tempo while parked mid-pass near the wrap.
+    c.setTempo(165);
+    // Re-suspend (now() -> 0): re-anchors the baseline + zeroes the consumed
+    // counter, but the bar stays parked near the wrap.
+    clock.value = 0;
+    c.testProductionFrame();
+    // Resume: a baseline frame (dt=0), then a small advance that CROSSES the wrap.
+    clock.value = 2;
+    c.testProductionFrame();
+    clock.value = 2 + 2 * SEC_PER_EIGHTH; // ~2 columns: crosses the wrap from ~15
+    c.testProductionFrame();
+    // The new tempo must have latched on that wrap-crossing frame, even though the
+    // consumed counter was re-zeroed by the re-suspend.
+    expect(c.getRenderState().bpm).toBe(165);
+
+    c.stop();
+  });
 });
 
-describe("Skin / BPM-driven sweep progression (9.x)", () => {
-  const SEC_PER_EIGHTH = 60 / BPM / 2;
+describe("Tempo-driven sweep progression (9.x)", () => {
+  // The controller's FALLBACK tempo (its default before the host pushes a real
+  // track tempo) is 110 BPM; one eighth-note at the fallback = one column.
+  const FALLBACK = 110;
+  const SEC_PER_EIGHTH = 60 / FALLBACK / 2;
   const MS_PER_EIGHTH = SEC_PER_EIGHTH * 1000;
 
   function primed(): GameController {
@@ -324,77 +373,123 @@ describe("Skin / BPM-driven sweep progression (9.x)", () => {
     return c;
   }
 
-  it("9.1 a higher-BPM skin advances more columns per second of clock time", () => {
-    // Skin 0 = 120 BPM. Advance one eighth-note -> exactly one column.
+  it("9.1 the sweep advances at the controller's fallback tempo before any push", () => {
+    const c = primed();
+    // At the fallback tempo, one eighth-note's worth of clock time advances ~one
+    // column, and the HUD bpm reads the fallback.
+    expect(c.getRenderState().bpm).toBe(FALLBACK);
+    const before = c.testState().sweepX;
+    c.testBeatFrame(MS_PER_EIGHTH);
+    expect(c.testState().sweepX - before).toBeCloseTo(1, 6);
+  });
+
+  it("9.2 a higher pushed tempo advances more columns per second of clock time, latched at the pass boundary", () => {
     const slow = primed();
     const slowBefore = slow.testState().sweepX;
     slow.testBeatFrame(MS_PER_EIGHTH);
     const slowDelta = slow.testState().sweepX - slowBefore;
     expect(slowDelta).toBeCloseTo(1, 6);
 
-    // Switch to skin 1 (144 BPM) at a bar boundary (sweepX wrapped to 0 first).
+    // Push a faster tempo, then run a full pass so the latch adopts it at the
+    // next bar boundary (sweepX wraps to 0).
     const fast = primed();
-    // Run a full pass so sweepX returns to ~0, then set the faster skin so it
-    // latches at the next bar.
+    fast.testSetTempo(165);
+    // Run a full pass so sweepX returns to ~0 and the new tempo latches.
     fast.testBeatFrame(16 * MS_PER_EIGHTH);
-    fast.testSetSkin(1);
-    const bpm1 = fast.testState().bpm;
-    expect(bpm1).toBe(144);
+    expect(fast.getRenderState().bpm).toBe(165);
     const fastBefore = fast.testState().sweepX;
     fast.testBeatFrame(MS_PER_EIGHTH);
     const fastDelta = fast.testState().sweepX - fastBefore;
-    // Same clock dt, higher BPM -> more columns advanced.
+    // Same clock dt, higher tempo -> more columns advanced (proportional to BPM).
     expect(fastDelta).toBeGreaterThan(slowDelta);
-    expect(fastDelta).toBeCloseTo(144 / 120, 6);
+    expect(fastDelta).toBeCloseTo(165 / FALLBACK, 6);
   });
 
-  it("9.2 crossing the squares-cleared threshold advances skinIndex and resets the counter", () => {
-    const c = new GameController({ testMode: true, seed: 1 });
-    // Build a 3x11 mono block on the floor = 20 squares (the threshold).
+  it("9.3 a clear does NOT change the sweep tempo (no core skin progression)", () => {
+    const c = primed();
+    const bpmBefore = c.getRenderState().bpm;
+    // Build a 3x11 mono block on the floor = 20 squares and sweep it.
     for (let r = ROWS - 3; r < ROWS; r++) {
       for (let col = 0; col < 11; col++) c.testSetCell(r, col, 0);
     }
-    expect(c.testState().skinIndex).toBe(0);
     c.testSweepNow();
-    expect(c.testState().skinIndex).toBe(1);
-    expect(c.testRawState().clearsInSkin).toBe(0);
+    // Tempo is host-driven only; clearing squares must not advance it.
+    expect(c.getRenderState().bpm).toBe(bpmBefore);
   });
 
-  it("9.4 a mid-pass skin (BPM) change does not discontinuously jump the bar", () => {
+  it("9.4 a mid-pass tempo change does not discontinuously jump the bar", () => {
     const c = primed();
     // Advance a few columns into the pass (well short of the wrap).
     c.testBeatFrame(3 * MS_PER_EIGHTH);
     const xBefore = c.testState().sweepX;
     expect(xBefore).toBeGreaterThan(0);
     expect(xBefore).toBeLessThan(COLS - 1);
-    // Change the skin (and BPM) mid-pass.
-    c.testSetSkin(2); // 168 BPM
+    // Push a new tempo mid-pass.
+    c.testSetTempo(165);
     // The next frame with dt=0 must NOT move the bar at all (no jump from the
     // tempo change itself); the new tempo only takes effect from the next bar.
     c.testBeatFrame(0);
     expect(c.testState().sweepX).toBeCloseTo(xBefore, 6);
     // And a tiny further advance is continuous (no discontinuous leap): the bar
     // moves by roughly one column for one eighth-note even mid-pass, because the
-    // active BPM is still the latched (pre-change) tempo until the next bar.
+    // active tempo is still the latched (pre-change) value until the next bar.
     c.testBeatFrame(MS_PER_EIGHTH);
     const moved = c.testState().sweepX - xBefore;
     expect(moved).toBeGreaterThan(0);
     expect(moved).toBeLessThan(2); // continuous, not a jump
   });
 
-  it("9.3 same inputs advance skins reproducibly (deterministic)", () => {
-    function run(): { skin: number; clears: number } {
-      const c = new GameController({ testMode: true, seed: 1 });
-      for (let r = ROWS - 3; r < ROWS; r++) {
-        for (let col = 0; col < 11; col++) c.testSetCell(r, col, 0);
-      }
-      c.testSweepNow();
-      return {
-        skin: c.testState().skinIndex,
-        clears: c.testRawState().clearsInSkin,
-      };
+  it("9.5 setSkinIndex projects straight into the render state (render-only, no timing effect)", () => {
+    const c = primed();
+    expect(c.getRenderState().skinIndex).toBe(0);
+    const xBefore = c.testState().sweepX;
+    c.setSkinIndex(1);
+    expect(c.getRenderState().skinIndex).toBe(1);
+    // It must not perturb timing.
+    expect(c.testState().sweepX).toBeCloseTo(xBefore, 6);
+  });
+
+  it("9.7 a pushed tempo latches across a wrap-crossing frame (not just exact-boundary frames)", () => {
+    const c = primed();
+    // Advance partway into the pass, then push a new tempo mid-pass.
+    c.testBeatFrame(3 * MS_PER_EIGHTH);
+    c.testSetTempo(165);
+    // The latched tempo is still the old one until a boundary is crossed.
+    expect(c.getRenderState().bpm).toBe(FALLBACK);
+    // A single frame large enough to CROSS the wrap (the bar never lands exactly
+    // on sweepX === 0). After the crossing the new tempo must be latched.
+    c.testBeatFrame(20 * MS_PER_EIGHTH);
+    expect(c.getRenderState().bpm).toBe(165);
+    // And the bar now advances at the new tempo.
+    const before = c.testState().sweepX;
+    c.testBeatFrame(MS_PER_EIGHTH);
+    expect(c.testState().sweepX - before).toBeCloseTo(165 / FALLBACK, 6);
+  });
+
+  it("9.8 the controller tempo latch and the core wrap share one boundary tolerance (no drift)", () => {
+    // The core wraps at `sweepX >= COLS - SWEEP_WRAP_EPSILON` (sweep.ts) and the
+    // controller's tempo latch uses the SAME predicate
+    // (`phaseBefore + delta >= COLS - SWEEP_WRAP_EPSILON`), both reading this one
+    // exported constant. If they ever drifted, a frame landing within the epsilon
+    // of COLS would wrap in the core but not latch (delaying the new tempo a whole
+    // pass). Guarding the shared constant makes that drift impossible to ship.
+    // (The behavioural wrap-latch — across a normal wrap and across the first wrap
+    // after a re-suspend — is covered by 9.7 and the re-suspend test above.)
+    expect(SWEEP_WRAP_EPSILON).toBe(1e-9);
+  });
+
+  it("9.6 clearing squares does NOT advance the skin index (only setSkinIndex does)", () => {
+    const c = primed();
+    expect(c.getRenderState().skinIndex).toBe(0);
+    // A 3x11 mono block on the floor = 20 squares; sweep it (a real clear).
+    for (let r = ROWS - 3; r < ROWS; r++) {
+      for (let col = 0; col < 11; col++) c.testSetCell(r, col, 0);
     }
-    expect(run()).toEqual(run());
+    c.testSweepNow();
+    expect(c.testState().score).toBeGreaterThan(0); // a clear really happened
+    // The skin index is host-driven (song completion / restart) only — a clear
+    // must NOT touch it. (The old core auto-advanced it every 20 squares.)
+    expect(c.getRenderState().skinIndex).toBe(0);
   });
 });
 

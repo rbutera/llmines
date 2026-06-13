@@ -1,27 +1,20 @@
 /**
- * Shared cockpit settings block — master volume, audio mute, and skin swatches.
- * Used inside the pause overlay. Wires straight to the existing GameShell state
- * (musicVolume / muted / skin), so changing anything here drives the live engine +
- * the whole-scene re-tint exactly as the always-on controls did.
+ * Shared cockpit settings block — master volume + audio mute. Used inside the
+ * pause overlay. Wires straight to the existing GameShell state (musicVolume /
+ * muted) so changing anything here drives the live engine. There is NO skin
+ * picker — skins advance only on song completion.
  */
-
-import { SKINS } from "../../skins/skins";
-import { hudHueForSkin } from "../../theme/tokens";
 
 export function SettingsBlock({
   musicVolume,
   onVolumeChange,
   muted,
   onToggleMute,
-  skinId,
-  onSelectSkin,
 }: {
   musicVolume: number;
   onVolumeChange: (v: number) => void;
   muted: boolean;
   onToggleMute: () => void;
-  skinId: string;
-  onSelectSkin: (id: string) => void;
 }) {
   return (
     <div style={{ display: "grid", gap: 16 }}>
@@ -73,41 +66,6 @@ export function SettingsBlock({
           >
             {muted ? "🔇" : "🔊"}
           </button>
-        </div>
-      </div>
-
-      {/* Skin swatches */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
-        }}
-      >
-        <span className="label">SKIN</span>
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          {SKINS.map((s) => {
-            const { hue, chroma } = hudHueForSkin(s.id);
-            return (
-              <button
-                key={s.id}
-                type="button"
-                aria-pressed={skinId === s.id}
-                aria-label={`Skin ${s.label}`}
-                className={`swatch ${skinId === s.id ? "on" : ""}`}
-                style={{ background: `oklch(0.74 ${chroma} ${hue})` }}
-                title={s.label}
-                onClick={() => onSelectSkin(s.id)}
-              />
-            );
-          })}
-          <span
-            className="cap-tight glow-text"
-            style={{ fontSize: 11, width: 80 }}
-          >
-            {SKINS.find((s) => s.id === skinId)?.label ?? skinId}
-          </span>
         </div>
       </div>
     </div>

@@ -143,7 +143,6 @@ export function Cheatsheet() {
     { keys: ["↓"], label: "soft drop (hold)" },
     { keys: ["space"], label: "hard drop" },
     { keys: ["esc"], label: "pause" },
-    { keys: ["n"], label: "cycle skin" },
   ];
   return (
     <div style={{ display: "grid", gap: 9 }}>
