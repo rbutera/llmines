@@ -129,5 +129,5 @@
   `#### Scenario` maps to an assertion.
 - [x] 7.3 Final full gates: `pnpm test` · `pnpm typecheck` · `pnpm lint` · `pnpm build` all green.
   Verify: clean run, no regressions.
-- [ ] 7.4 Smoke the production-start audio probe is unbroken (telemetry is additive): `pnpm
+- [x] 7.4 Smoke the production-start audio probe is unbroken (telemetry is additive): `pnpm
   test:e2e:production-start`. Verify: passes (this change does not touch audio, only emits fields).
