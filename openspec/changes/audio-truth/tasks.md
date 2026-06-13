@@ -41,11 +41,11 @@
 
 ## 7. Asset pipeline — top-tier master fidelity (REQUIRES LOCAL PIPELINE + source stems, run after code)
 
-- [ ] 7.1 Extend `render-tiers.py`: render each segment's TOP tier by cutting the full-mix master (`audio-src/song1/0 Especifico Primero.wav`, `audio-src/song2/0 pipeline male phonk.wav`) at the same bar boundaries as the stem cut, instead of summing stems; keep lower tiers as cumulative stem sums; preserve a constant-sum crossfade and the bed level-match. Preserve originals (new output paths).
-- [ ] 7.2 Add `scripts/audio/validate-master-tier.py` (in `check-loops.py` style): per segment, compare the rendered top tier's integrated LUFS/RMS against the master slice for that time range; fail if the delta exceeds tolerance (≈±1.0 LU). (covers `tier-mix-fidelity`)
+- [x] 7.1 Extend `render-tiers.py`: render each segment's TOP tier by cutting the full-mix master (`audio-src/song1/0 Especifico Primero.wav`, `audio-src/song2/0 pipeline male phonk.wav`) at the same bar boundaries as the stem cut, instead of summing stems; keep lower tiers as cumulative stem sums; preserve a constant-sum crossfade and the bed level-match. Preserve originals (new output paths).
+- [x] 7.2 Add `scripts/audio/validate-master-tier.py` (in `check-loops.py` style): per segment, compare the rendered top tier's integrated LUFS/RMS against the master slice for that time range; fail if the delta exceeds tolerance (≈±1.0 LU). (covers `tier-mix-fidelity`)
 
 ## 8. Asset pipeline — per-segment SFX cut + manifest emit (REQUIRES LOCAL PIPELINE, run after 7)
 
-- [ ] 8.1 Extend `render-sfx.py`: cut per-segment action one-shots from each segment's own stems within its bar window, biased by the segment's `character`; keep the song-level set as the fallback for any segment with no clean slice. Preserve originals.
-- [ ] 8.2 Extend `transcode-and-manifest.py`: emit `segments[].sfx` alongside `tiers` and keep emitting the song-level `sfx` fallback; bump the manifest `version`.
+- [x] 8.1 Extend `render-sfx.py`: cut per-segment action one-shots from each segment's own stems within its bar window, biased by the segment's `character`; keep the song-level set as the fallback for any segment with no clean slice. Preserve originals.
+- [x] 8.2 Extend `transcode-and-manifest.py`: emit `segments[].sfx` alongside `tiers` and keep emitting the song-level `sfx` fallback; bump the manifest `version`.
 - [ ] 8.3 Regenerate assets, run `check-loops.py` + `validate-master-tier.py`, ear-check on the FINE-cut soundboard, then swap `public/audio/`; re-run all gates from §5 against the new manifest.

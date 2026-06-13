@@ -10,7 +10,15 @@ Opus transcode + manifest emit for the LLMines audio redesign (Wave 1 final step
 3. Verifies each Opus file decodes (ffprobe) and records its size.
 4. Emits public/audio/manifest.json: per song { id, title, tempo, barSeconds,
    segments:[{id,type,bars,lengthSeconds,barWindowSeconds,character,
-   tiers:{tier0,tier1,tier2},sfx?}], sfx:{action->path} }.
+   tiers:{tier0,tier1,...},sfx?}], sfx:{action->path} }.
+
+   PER-SEGMENT SFX (task 8.2): when a segment has a per-segment palette under
+   build/wav/sfx/<song>/<segid>/, those one-shots are transcoded into
+   public/audio/<song>/<segid>/ and emitted as `segments[].sfx` (same shape as the
+   song-level `sfx`). The song-level `sfx` is ALWAYS still emitted as the fallback,
+   so a segment with no per-segment cut (or only a partial one) resolves to the
+   song level in the engine. The manifest `version` is bumped so a stale cache is
+   invalidated.
 
    barWindowSeconds = the SPILL-FREE whole-bar loop length (barSeconds * bars),
    sourced from render-report.json's barWindowSec. lengthSeconds is the full file
@@ -99,11 +107,62 @@ def wav_seconds(path):
     return round(info.frames / info.samplerate, 4)
 
 
+def discover_tier_keys(song, seg_id):
+    """The ordered tier keys (`tier0`, `tier1`, ...) rendered for a segment, by
+    scanning build/wav/<song>/ for `<seg>-tierN.wav`. EXCLUDES the `-stemsum` revert
+    copies render-tiers.py preserves for the master-top swap. Falls back to the legacy
+    fixed 3-tier set if the dir is unreadable (keeps the script runnable in either
+    pipeline)."""
+    d = os.path.join(BUILD_WAV, song)
+    import re
+    pat = re.compile(rf"^{re.escape(seg_id)}-tier(\d+)\.wav$")
+    found = []
+    try:
+        for f in os.listdir(d):
+            m = pat.match(f)  # `<seg>-tierN.wav` only (stemsum has a -stemsum suffix)
+            if m:
+                found.append(int(m.group(1)))
+    except OSError:
+        pass
+    if not found:
+        return ["tier0", "tier1", "tier2"]  # legacy fallback
+    return [f"tier{i}" for i in sorted(found)]
+
+
+def transcode_sfx_dir(song, sfxdir, rel_prefix, report, decode_fail):
+    """Transcode every sfx-<name>.wav in a dir to <rel_prefix>/sfx-<name>.opus and
+    return ({name -> rel}, totalBytes). Used for both the song-level set and the
+    per-segment palettes. Subdirectories (per-segment folders inside the song-level
+    dir) are skipped — only `sfx-*.wav` files are transcoded."""
+    out_map = {}
+    if not os.path.isdir(sfxdir):
+        return out_map, 0
+    total = 0
+    for f in sorted(os.listdir(sfxdir)):
+        if not f.endswith(".wav") or not f.startswith("sfx-"):
+            continue
+        name = f[len("sfx-"):-len(".wav")]
+        rel = f"{rel_prefix}/sfx-{name}.opus"
+        out = os.path.join(PUB, rel)
+        transcode(os.path.join(sfxdir, f), out)
+        ok, dur = probe_ok(out)
+        size = os.path.getsize(out)
+        total += size
+        if not ok:
+            decode_fail.append(rel)
+        report["files"].append({"file": rel, "bytes": size, "opusDur": round(dur, 3),
+                                "decodeOk": ok})
+        out_map[name] = rel
+    return out_map, total
+
+
 def main():
     print("Archiving v2.7 assets...")
     archive_v27()
 
-    manifest = {"version": "wave1-native-4layer", "songs": []}
+    # version bumped for the audio-truth top-tier-master + per-segment-sfx assets so
+    # a stale `force-cache` manifest/tier set is invalidated on deploy.
+    manifest = {"version": "audio-truth-master-top-segsfx", "songs": []}
     total_bytes = 0
     decode_fail = []
     report = {"files": [], "totalBytes": 0}
@@ -120,13 +179,15 @@ def main():
             "segments": [],
             "sfx": {},
         }
-        # segment tiers
+        # segment tiers (N-tier, master-top + stem-sum revert copies excluded)
         for seg in sp["segments"]:
             bars = seg["endBar"] - seg["startBar"] + 1
             tiers = {}
             length_s = None
-            for tier in ("tier0", "tier1", "tier2"):
+            for tier in discover_tier_keys(song, seg["id"]):
                 wav = os.path.join(BUILD_WAV, song, f"{seg['id']}-{tier}.wav")
+                if not os.path.exists(wav):
+                    continue
                 rel = f"{song}/{seg['id']}-{tier}.opus"
                 out = os.path.join(PUB, rel)
                 transcode(wav, out)
@@ -145,7 +206,7 @@ def main():
             bar_window = bar_windows.get((song, seg["id"]))
             if bar_window is None:
                 bar_window = round(sp["secPerBar"] * bars, 4)
-            song_entry["segments"].append({
+            seg_entry = {
                 "id": seg["id"],
                 "type": seg["type"],
                 "bars": bars,
@@ -153,25 +214,24 @@ def main():
                 "barWindowSeconds": bar_window,
                 "character": seg["character"],
                 "tiers": tiers,
-            })
-        # sfx
-        sfxdir = os.path.join(BUILD_WAV, "sfx", song)
-        if os.path.isdir(sfxdir):
-            for f in sorted(os.listdir(sfxdir)):
-                if not f.endswith(".wav"):
-                    continue
-                name = f[len("sfx-"):-len(".wav")]
-                rel = f"{song}/sfx-{name}.opus"
-                out = os.path.join(PUB, rel)
-                transcode(os.path.join(sfxdir, f), out)
-                ok, dur = probe_ok(out)
-                size = os.path.getsize(out)
-                total_bytes += size
-                if not ok:
-                    decode_fail.append(rel)
-                report["files"].append({"file": rel, "bytes": size, "opusDur": round(dur, 3),
-                                        "decodeOk": ok})
-                song_entry["sfx"][name] = rel
+            }
+            # PER-SEGMENT SFX (task 8.2): transcode this segment's own palette (if any)
+            # and emit `segments[].sfx`. Omitted when there is no per-segment cut, so
+            # the engine resolves those actions to the song-level fallback.
+            seg_sfx_dir = os.path.join(BUILD_WAV, "sfx", song, seg["id"])
+            seg_sfx, seg_bytes = transcode_sfx_dir(
+                song, seg_sfx_dir, f"{song}/{seg['id']}", report, decode_fail
+            )
+            total_bytes += seg_bytes
+            if seg_sfx:
+                seg_entry["sfx"] = seg_sfx
+            song_entry["segments"].append(seg_entry)
+        # song-level sfx (ALWAYS emitted — the per-segment fallback)
+        song_sfx, song_sfx_bytes = transcode_sfx_dir(
+            song, os.path.join(BUILD_WAV, "sfx", song), song, report, decode_fail
+        )
+        total_bytes += song_sfx_bytes
+        song_entry["sfx"] = song_sfx
         manifest["songs"].append(song_entry)
 
     os.makedirs(PUB, exist_ok=True)

@@ -63,3 +63,7 @@ yarn-error.log*
 .cvx/
 .env.local
 /.next-shot/
+
+# Python bytecode (pipeline scripts)
+__pycache__/
+*.pyc
