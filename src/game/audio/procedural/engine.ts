@@ -429,6 +429,20 @@ export class InteractiveAudioEngine {
   private switching = false;
   private bedReady = false;
 
+  /**
+   * Banks RETIRED by a successful switchTrack but whose disposal is still scheduled in
+   * an `afterSettle` (they keep playing through the crossfade). The cleanup closure is
+   * cancellable (clearSettleEvents), so the OUTGOING bank is also tracked here — a
+   * superseding resetForNewGame/dispose that cancels the settle callbacks drains this
+   * list to dispose those banks rather than orphan them (their players/SFX are detached
+   * from `this.segments`/`this.sfxPoolsBySegment` by the swap). Each entry is removed by
+   * whichever path disposes it first (idempotent — no double-dispose).
+   */
+  private pendingRetire: Array<{
+    segments: LoadedSegment[];
+    sfx: Map<number, Partial<Record<SfxName, SfxVoicePool>>>;
+  }> = [];
+
   /** All segments of the active song; only `loaded` ones have live players. */
   private segments: LoadedSegment[] = [];
   private segmentIndex = 0;
@@ -1691,12 +1705,15 @@ export class InteractiveAudioEngine {
       this.scheduleLoopTick();
       void this.prefetch(1);
 
-      // dispose the old bank after the crossfade settles.
+      // Dispose the old bank after the crossfade settles. The OUTGOING bank is also
+      // tracked in `pendingRetire` so a superseding reset/dispose that CANCELS this
+      // settle callback (clearSettleEvents) still frees it (the closure's locals are
+      // detached from this.segments/this.sfxPoolsBySegment by the swap). The retire entry
+      // is removed by whichever path disposes it first (idempotent — no double-dispose).
+      const retire = { segments: oldSegments, sfx: oldSfx };
+      this.pendingRetire.push(retire);
       const disposeAt = at + seconds + 0.1;
-      this.afterSettle(disposeAt, () => {
-        for (const seg of oldSegments) this.disposeLoaded(seg);
-        disposeOldSfx();
-      });
+      this.afterSettle(disposeAt, () => this.disposeRetiredBank(retire));
     } catch {
       // keep the old track running. If we'd already detached the old SFX map (the throw
       // landed after the top-of-swap install), the old pools were never scheduled for
@@ -1749,6 +1766,9 @@ export class InteractiveAudioEngine {
       this.songCompleted = false;
       this.clearScheduled();
       this.clearSettleEvents();
+      // clearSettleEvents just cancelled any in-flight switch's old-bank disposal — drain
+      // the pending retires NOW so those detached banks are freed, not orphaned.
+      this.drainPendingRetire();
 
       // Silence + tear down the old segment bank (no lingering audio from the last game).
       this.disposeAll();
@@ -1843,6 +1863,31 @@ export class InteractiveAudioEngine {
     this.disposeAllSfx();
   }
 
+  /**
+   * Dispose one retired (outgoing-switch) bank — its tier players + SFX voices — and
+   * remove it from {@link pendingRetire}. Idempotent: if it was already drained (the
+   * settle callback fired, or a prior reset/dispose drained it) it is a no-op, so the
+   * normal settle path and the reset/dispose path can't double-dispose the same bank.
+   */
+  private disposeRetiredBank(retire: {
+    segments: LoadedSegment[];
+    sfx: Map<number, Partial<Record<SfxName, SfxVoicePool>>>;
+  }): void {
+    const i = this.pendingRetire.indexOf(retire);
+    if (i < 0) return; // already disposed
+    this.pendingRetire.splice(i, 1);
+    for (const seg of retire.segments) this.disposeLoaded(seg);
+    for (const pools of retire.sfx.values()) {
+      for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
+    }
+    retire.sfx.clear();
+  }
+
+  /** Drain every still-pending retired bank (a teardown that cancels its settle). */
+  private drainPendingRetire(): void {
+    for (const retire of this.pendingRetire.slice()) this.disposeRetiredBank(retire);
+  }
+
   /** Dispose + clear EVERY segment's SFX pool set (teardown / switch / reset). */
   private disposeAllSfx(): void {
     for (const pools of this.sfxPoolsBySegment.values()) {
@@ -1882,6 +1927,8 @@ export class InteractiveAudioEngine {
     this.transitionInFlight = false;
     this.clearScheduled();
     this.clearSettleEvents();
+    // free any retired-but-not-yet-disposed switch bank whose settle we just cancelled.
+    this.drainPendingRetire();
     this.removeResumePrimer?.();
     this.removeResumePrimer = undefined;
     try {
@@ -1914,6 +1961,7 @@ export class InteractiveAudioEngine {
     this.segmentScore = 0;
     this.settleEvents = [];
     this.settleTimeouts = [];
+    this.pendingRetire = [];
     this.songCompleted = false;
     this.started = false;
   }

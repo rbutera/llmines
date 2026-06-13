@@ -901,6 +901,34 @@ describe("switchTrack (skin swap) on the manifest model", () => {
     await settle();
     expect(oldSfx.every((p) => p.disposed)).toBe(true); // still freed, no resurrection
   });
+
+  it("a reset/dispose that CANCELS a successful switch's old-bank settle still frees it (no leak)", async () => {
+    // Regression (Codex): on a SUCCESSFUL switch the outgoing bank's disposal is scheduled
+    // in an afterSettle that fires AFTER the crossfade. resetForNewGame/dispose cancel
+    // settle callbacks, so without the pending-retire drain the outgoing (song1) bank —
+    // detached from this.segments / the SFX map by the swap — would be orphaned + leak.
+    const e = await freshEngine();
+    e.fire({ type: "lineClear", squares: 2, combo: 0 }); // build song1's stage pool
+    await settle();
+    const song1Tiers = mockState.players.filter(
+      (p) => p.url.includes("s1-") && p.url.includes("tier"),
+    );
+    const song1Sfx = mockState.players.filter((p) => p.url.includes("sfx-stage"));
+    expect(song1Tiers.length).toBeGreaterThan(0);
+
+    // a SUCCESSFUL switch to song2 — the song1 bank's disposal is now scheduled in a
+    // FUTURE afterSettle (not yet fired: the crossfade hasn't elapsed on the mock clock).
+    await e.switchTrack({ id: "song2", base: "/audio/song2" });
+    expect(e.getAudioState().trackId).toBe("song2");
+    expect(song1Tiers.every((p) => !p.disposed)).toBe(true); // still pending retirement
+
+    // reset BEFORE the settle fires — this cancels the scheduled disposal. The
+    // pending-retire drain must free the outgoing song1 bank anyway.
+    e.resetForNewGame();
+    await settle();
+    expect(song1Tiers.every((p) => p.disposed)).toBe(true); // tier players freed — no leak
+    expect(song1Sfx.every((p) => p.disposed)).toBe(true); // SFX voices freed — no leak
+  });
 });
 
 // ── N-tier generalization (the whole point of the N-tier work) ───────────────────
