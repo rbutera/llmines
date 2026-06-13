@@ -231,12 +231,6 @@ export class GameController {
   /** Previous `clock.now()` reading (seconds); 0 = no prior frame yet. */
   private lastClockNow = 0;
   /**
-   * Absolute clock time (seconds) the sweep is measured from — set on the first
-   * valid (post-resume) frame so `sweepX` is a PURE function of `clock.now()`:
-   * columns = (now - sweepStartT) * (BPM/60) * COLS_PER_BEAT. 0 = not yet set.
-   */
-  private sweepStartT = 0;
-  /**
    * Absolute columns the sweep has been advanced to so far (monotonic, spanning
    * many passes). Each frame we recompute the absolute target from the clock and
    * feed only the forward DELTA to the pure core, so dropped frames/GC pauses
@@ -419,7 +413,6 @@ export class GameController {
     this.state = createGame(opts.seed ?? randomSeed());
     this.gravityAccumMs = 0;
     this.lastClockNow = 0;
-    this.sweepStartT = 0;
     this.sweepColumnsConsumed = 0;
     this.activeBpm = 0;
     // Restart resets to the base skin: adopt the host-supplied base tempo + index
@@ -459,7 +452,6 @@ export class GameController {
 
   private startLoop(): void {
     this.lastClockNow = 0;
-    this.sweepStartT = 0;
     this.sweepColumnsConsumed = 0;
     this.activeBpm = 0;
     const frame = (): void => {
@@ -495,12 +487,10 @@ export class GameController {
     //   - lastClockNow <= 0   → first valid reading, no usable prior baseline
     //   - now < lastClockNow  → clock went backwards (defensive)
     if (now <= 0 || this.lastClockNow <= 0 || now < this.lastClockNow) {
-      // Re-anchor the sweep so the next valid frame measures from `now`, keeping
-      // sweepX a pure function of (now - sweepStartT) with no rewind/jump. Reset
-      // the consumed-columns counter too: it is relative to sweepStartT, so the
+      // Re-anchor the sweep baseline so the next valid frame measures forward
+      // from `now` with no rewind/jump: reset the consumed-columns counter so the
       // next frame's delta is computed from this fresh baseline (not the stale
       // pre-suspend total, which would otherwise swallow the first frame).
-      this.sweepStartT = now > 0 ? now : 0;
       this.sweepColumnsConsumed = 0;
       this.lastClockNow = now;
       // dt = 0: do not advance sweep or gravity this frame.
