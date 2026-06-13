@@ -44,6 +44,21 @@ export type InputAction =
   | "softDrop"
   | "hardDrop";
 
+/**
+ * A full deterministic replay of a run (audit A8): the seed plus the ordered
+ * input log. Because the core is a pure function of (seed, inputs), seed + this
+ * ordered log reproduces the run exactly. Recording is controller-owned (the
+ * controller is the only layer that sees wall-clock time + the input stream);
+ * playback (re-driving the core) is out of scope here — recording + export is the
+ * deliverable.
+ */
+export interface ReplayRecord {
+  schemaVersion: 1;
+  seed: number;
+  /** Each player input with `t` = ms since game start, in order. */
+  inputs: { t: number; action: InputAction }[];
+}
+
 /** Rich per-frame snapshot for the renderer + React HUD. */
 export interface RenderState {
   /** Settled stack only (active piece drawn separately for smooth descent). */
@@ -256,6 +271,15 @@ export class GameController {
     | undefined = undefined;
   private hardDropSeq = 0;
   /**
+   * Replay recording (audit A8): every player input tagged with `t` = ms since
+   * game start, in order. `replayStartT` is the absolute clock time (seconds) the
+   * run started, set on `start()` so each input's `t` is `clock.now()*1000 -
+   * replayStartT*1000`. Reset on `restart()`. Controller-owned: timestamps are
+   * wall-clock and the core is time-free, but seed + this log reproduces the run.
+   */
+  private replayInputs: { t: number; action: InputAction }[] = [];
+  private replayStartT = 0;
+  /**
    * The BPM the sweep is currently advancing at. Sourced from the active skin,
    * but only re-read at a bar/pass boundary (when `sweepX` wraps) so a mid-pass
    * skin change does NOT discontinuously move the bar — the new tempo takes
@@ -284,6 +308,9 @@ export class GameController {
   start(): void {
     if (this.started) return;
     this.started = true;
+    // Anchor the replay clock to the run start so each recorded input's `t` is ms
+    // since the game began (audit A8).
+    this.replayStartT = this.clock.now();
     if (!this.testMode) {
       // The Start click IS the user gesture: resume the AudioContext here so
       // musical time starts immediately, rather than waiting for the first
@@ -358,6 +385,9 @@ export class GameController {
     this.activeBpm = 0;
     this.paused = false;
     this.softDropSustained = false;
+    // Fresh run -> fresh replay log (re-anchored by start() below).
+    this.replayInputs = [];
+    this.replayStartT = 0;
     // Re-arm the gesture-resume so start() resumes the context again. The
     // AudioContext itself is already running, so resume() is a cheap no-op, but
     // the flag must not short-circuit the start() path.
@@ -541,9 +571,20 @@ export class GameController {
 
   // ---- player input (active only while playing) ----------------------------
 
+  /**
+   * Record a player input into the replay log with `t` = ms since game start
+   * (audit A8). `t` is non-decreasing as long as the clock is monotonic. Called by
+   * the player-input entry points so seed + this log reproduces the run.
+   */
+  private recordInput(action: InputAction): void {
+    const t = Math.max(0, this.clock.now() * 1000 - this.replayStartT * 1000);
+    this.replayInputs.push({ t, action });
+  }
+
   input(action: InputAction): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
     this.resumeClockOnFirstGesture();
+    this.recordInput(action);
     switch (action) {
       case "left":
         // Move/rotate are always allowed — including during the spawn-hold.
@@ -579,6 +620,7 @@ export class GameController {
    */
   pressSoftDrop(): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
+    this.recordInput("softDrop");
     if (!this.testMode) this.softDropSustained = true;
     this.state = releaseHold(this.state);
     this.softDropStep();
@@ -596,6 +638,7 @@ export class GameController {
   /** A FRESH, deliberate hard-drop press: ends any hold and drops immediately. */
   pressHardDrop(): void {
     if (!this.started || this.state.gameOver || !this.state.active) return;
+    this.recordInput("hardDrop");
     this.state = releaseHold(this.state);
     this.hardDropStep();
     this.emit();
@@ -760,6 +803,20 @@ export class GameController {
 
   getRenderState(): RenderState {
     return this.renderState();
+  }
+
+  /**
+   * The replay record for the current run (audit A8): `{ schemaVersion, seed,
+   * inputs }`. Seed + ordered inputs reproduce the run because the core is a pure
+   * function of (seed, inputs). Exposed on game over for download/inspection.
+   * Returns a copy of the input log so callers cannot mutate the controller state.
+   */
+  getReplay(): ReplayRecord {
+    return {
+      schemaVersion: 1,
+      seed: this.state.seed,
+      inputs: this.replayInputs.map((i) => ({ t: i.t, action: i.action })),
+    };
   }
 
   /** Test-only: the injected time source, for asserting mode-appropriate defaults. */

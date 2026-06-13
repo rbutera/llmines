@@ -106,18 +106,18 @@
 
 ## 6. Wave 6 — Replay record + export seam
 
-- [ ] 6.1 `src/game/engine/controller.ts`: define `ReplayRecord { schemaVersion: 1; seed: number;
+- [x] 6.1 `src/game/engine/controller.ts`: define `ReplayRecord { schemaVersion: 1; seed: number;
   inputs: { t: number; action: InputAction }[] }`; add private `replayInputs` + `replayStartT` (set on
   `start()`). Verify: structure compiles.
-- [ ] 6.2 Append `{ t: clock.now()*1000 - replayStartT, action }` on every `input()` /
+- [x] 6.2 Append `{ t: clock.now()*1000 - replayStartT, action }` on every `input()` /
   `pressSoftDrop()` / `pressHardDrop()`. Verify: inputs recorded in order with non-decreasing `t`
   (run-identity-replay scenario).
-- [ ] 6.3 `controller.getReplay(): ReplayRecord` exposing `{ schemaVersion, seed, inputs }`. Verify:
+- [x] 6.3 `controller.getReplay(): ReplayRecord` exposing `{ schemaVersion, seed, inputs }`. Verify:
   `getReplay().seed === state.seed`; inputs match the driven sequence.
-- [ ] 6.4 Export seam: `window.__lumines.downloadReplay()` (dev seam, same pattern as existing
+- [x] 6.4 Export seam: `window.__lumines.downloadReplay()` (dev seam, same pattern as existing
   `window.__lumines` hooks) serialises `getReplay()` to a Blob and triggers a download; browser-only,
   no-op under SSR/test. Optionally a game-over screen affordance. Verify: seam present and guarded.
-- [ ] 6.5 Run gates. Add `src/game/engine/replay.test.ts`: record shape, append order, monotonic
+- [x] 6.5 Run gates. Add `src/game/engine/replay.test.ts`: record shape, append order, monotonic
   timestamps, seed captured. Verify: all gates green.
 
 ## 7. Wave 7 — Full-suite sweep + final gates

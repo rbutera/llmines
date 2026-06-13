@@ -76,4 +76,16 @@ describe("window.__lumines account seam (TEST_MODE hooks)", () => {
     expect(c.testState().gameOver).toBe(true);
     expect(c.testState().score).toBe(777);
   });
+
+  it("getReplay seam exposes the run record; downloadReplay is guarded (no throw)", () => {
+    const c = new GameController({ testMode: true, seed: 4242 });
+    installTestApi(c);
+    const replay = window.__lumines!.getReplay();
+    expect(replay.schemaVersion).toBe(1);
+    expect(replay.seed).toBe(4242);
+    expect(Array.isArray(replay.inputs)).toBe(true);
+    // The download seam must not throw even where URL.createObjectURL is absent
+    // (jsdom): it guards and no-ops rather than blowing up the game-over screen.
+    expect(() => window.__lumines!.downloadReplay()).not.toThrow();
+  });
 });
