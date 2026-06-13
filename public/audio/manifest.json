@@ -1,5 +1,5 @@
 {
-  "version": "fine5-native-cumulative",
+  "version": "fine6-master-perseg-sfx",
   "songs": [
     {
       "id": "song1",
@@ -19,6 +19,12 @@
             "tier1": "song1/s1-intro-tier1.opus",
             "tier2": "song1/s1-intro-tier2.opus",
             "tier3": "song1/s1-intro-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-intro/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-intro/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-intro/sfx-drop.opus",
+            "stage": "sfx/song1/s1-intro/sfx-stage.opus"
           }
         },
         {
@@ -33,6 +39,12 @@
             "tier1": "song1/s1-verse1-tier1.opus",
             "tier2": "song1/s1-verse1-tier2.opus",
             "tier3": "song1/s1-verse1-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-verse1/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-verse1/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-verse1/sfx-drop.opus",
+            "stage": "sfx/song1/s1-verse1/sfx-stage.opus"
           }
         },
         {
@@ -47,6 +59,12 @@
             "tier1": "song1/s1-build-tier1.opus",
             "tier2": "song1/s1-build-tier2.opus",
             "tier3": "song1/s1-build-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-build/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-build/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-build/sfx-drop.opus",
+            "stage": "sfx/song1/s1-build/sfx-stage.opus"
           }
         },
         {
@@ -61,6 +79,12 @@
             "tier1": "song1/s1-chorus-tier1.opus",
             "tier2": "song1/s1-chorus-tier2.opus",
             "tier3": "song1/s1-chorus-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-chorus/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-chorus/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-chorus/sfx-drop.opus",
+            "stage": "sfx/song1/s1-chorus/sfx-stage.opus"
           }
         },
         {
@@ -75,6 +99,12 @@
             "tier1": "song1/s1-break-tier1.opus",
             "tier2": "song1/s1-break-tier2.opus",
             "tier3": "song1/s1-break-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-break/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-break/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-break/sfx-drop.opus",
+            "stage": "sfx/song1/s1-break/sfx-stage.opus"
           }
         },
         {
@@ -89,6 +119,12 @@
             "tier1": "song1/s1-verse2-tier1.opus",
             "tier2": "song1/s1-verse2-tier2.opus",
             "tier3": "song1/s1-verse2-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-verse2/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-verse2/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-verse2/sfx-drop.opus",
+            "stage": "sfx/song1/s1-verse2/sfx-stage.opus"
           }
         },
         {
@@ -103,6 +139,12 @@
             "tier1": "song1/s1-build2-tier1.opus",
             "tier2": "song1/s1-build2-tier2.opus",
             "tier3": "song1/s1-build2-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-build2/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-build2/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-build2/sfx-drop.opus",
+            "stage": "sfx/song1/s1-build2/sfx-stage.opus"
           }
         },
         {
@@ -117,6 +159,12 @@
             "tier1": "song1/s1-chorus2-tier1.opus",
             "tier2": "song1/s1-chorus2-tier2.opus",
             "tier3": "song1/s1-chorus2-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-chorus2/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-chorus2/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-chorus2/sfx-drop.opus",
+            "stage": "sfx/song1/s1-chorus2/sfx-stage.opus"
           }
         },
         {
@@ -131,6 +179,12 @@
             "tier1": "song1/s1-bridge-tier1.opus",
             "tier2": "song1/s1-bridge-tier2.opus",
             "tier3": "song1/s1-bridge-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-bridge/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-bridge/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-bridge/sfx-drop.opus",
+            "stage": "sfx/song1/s1-bridge/sfx-stage.opus"
           }
         },
         {
@@ -145,6 +199,12 @@
             "tier1": "song1/s1-beatdrop-tier1.opus",
             "tier2": "song1/s1-beatdrop-tier2.opus",
             "tier3": "song1/s1-beatdrop-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-beatdrop/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-beatdrop/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-beatdrop/sfx-drop.opus",
+            "stage": "sfx/song1/s1-beatdrop/sfx-stage.opus"
           }
         },
         {
@@ -159,6 +219,12 @@
             "tier1": "song1/s1-chorus3-tier1.opus",
             "tier2": "song1/s1-chorus3-tier2.opus",
             "tier3": "song1/s1-chorus3-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-chorus3/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-chorus3/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-chorus3/sfx-drop.opus",
+            "stage": "sfx/song1/s1-chorus3/sfx-stage.opus"
           }
         },
         {
@@ -173,15 +239,21 @@
             "tier1": "song1/s1-outro-tier1.opus",
             "tier2": "song1/s1-outro-tier2.opus",
             "tier3": "song1/s1-outro-tier3.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song1/s1-outro/sfx-rotate.opus",
+            "softdrop": "sfx/song1/s1-outro/sfx-softdrop.opus",
+            "drop": "sfx/song1/s1-outro/sfx-drop.opus",
+            "stage": "sfx/song1/s1-outro/sfx-stage.opus"
           }
         }
       ],
       "sfx": {
-        "drop": "song1/sfx-drop.opus",
-        "move": "song1/sfx-move.opus",
-        "rotate": "song1/sfx-rotate.opus",
-        "softdrop": "song1/sfx-softdrop.opus",
-        "stage": "song1/sfx-stage.opus"
+        "rotate": "sfx/song1/songlevel/sfx-rotate.opus",
+        "softdrop": "sfx/song1/songlevel/sfx-softdrop.opus",
+        "drop": "sfx/song1/songlevel/sfx-drop.opus",
+        "stage": "sfx/song1/songlevel/sfx-stage.opus",
+        "move": "sfx/song1/songlevel/sfx-move.opus"
       }
     },
     {
@@ -203,6 +275,12 @@
             "tier2": "song2/s2-intro-tier2.opus",
             "tier3": "song2/s2-intro-tier3.opus",
             "tier4": "song2/s2-intro-tier4.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song2/s2-intro/sfx-rotate.opus",
+            "softdrop": "sfx/song2/s2-intro/sfx-softdrop.opus",
+            "drop": "sfx/song2/s2-intro/sfx-drop.opus",
+            "stage": "sfx/song2/s2-intro/sfx-stage.opus"
           }
         },
         {
@@ -218,6 +296,12 @@
             "tier2": "song2/s2-verse1-tier2.opus",
             "tier3": "song2/s2-verse1-tier3.opus",
             "tier4": "song2/s2-verse1-tier4.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song2/s2-verse1/sfx-rotate.opus",
+            "softdrop": "sfx/song2/s2-verse1/sfx-softdrop.opus",
+            "drop": "sfx/song2/s2-verse1/sfx-drop.opus",
+            "stage": "sfx/song2/s2-verse1/sfx-stage.opus"
           }
         },
         {
@@ -233,6 +317,12 @@
             "tier2": "song2/s2-build-tier2.opus",
             "tier3": "song2/s2-build-tier3.opus",
             "tier4": "song2/s2-build-tier4.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song2/s2-build/sfx-rotate.opus",
+            "softdrop": "sfx/song2/s2-build/sfx-softdrop.opus",
+            "drop": "sfx/song2/s2-build/sfx-drop.opus",
+            "stage": "sfx/song2/s2-build/sfx-stage.opus"
           }
         },
         {
@@ -248,6 +338,12 @@
             "tier2": "song2/s2-bridge1-tier2.opus",
             "tier3": "song2/s2-bridge1-tier3.opus",
             "tier4": "song2/s2-bridge1-tier4.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song2/s2-bridge1/sfx-rotate.opus",
+            "softdrop": "sfx/song2/s2-bridge1/sfx-softdrop.opus",
+            "drop": "sfx/song2/s2-bridge1/sfx-drop.opus",
+            "stage": "sfx/song2/s2-bridge1/sfx-stage.opus"
           }
         },
         {
@@ -263,6 +359,12 @@
             "tier2": "song2/s2-verse2-tier2.opus",
             "tier3": "song2/s2-verse2-tier3.opus",
             "tier4": "song2/s2-verse2-tier4.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song2/s2-verse2/sfx-rotate.opus",
+            "softdrop": "sfx/song2/s2-verse2/sfx-softdrop.opus",
+            "drop": "sfx/song2/s2-verse2/sfx-drop.opus",
+            "stage": "sfx/song2/s2-verse2/sfx-stage.opus"
           }
         },
         {
@@ -278,6 +380,12 @@
             "tier2": "song2/s2-build2-tier2.opus",
             "tier3": "song2/s2-build2-tier3.opus",
             "tier4": "song2/s2-build2-tier4.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song2/s2-build2/sfx-rotate.opus",
+            "softdrop": "sfx/song2/s2-build2/sfx-softdrop.opus",
+            "drop": "sfx/song2/s2-build2/sfx-drop.opus",
+            "stage": "sfx/song2/s2-build2/sfx-stage.opus"
           }
         },
         {
@@ -293,6 +401,12 @@
             "tier2": "song2/s2-break-tier2.opus",
             "tier3": "song2/s2-break-tier3.opus",
             "tier4": "song2/s2-break-tier4.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song2/s2-break/sfx-rotate.opus",
+            "softdrop": "sfx/song2/s2-break/sfx-softdrop.opus",
+            "drop": "sfx/song2/s2-break/sfx-drop.opus",
+            "stage": "sfx/song2/s2-break/sfx-stage.opus"
           }
         },
         {
@@ -308,6 +422,12 @@
             "tier2": "song2/s2-chorus3-tier2.opus",
             "tier3": "song2/s2-chorus3-tier3.opus",
             "tier4": "song2/s2-chorus3-tier4.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song2/s2-chorus3/sfx-rotate.opus",
+            "softdrop": "sfx/song2/s2-chorus3/sfx-softdrop.opus",
+            "drop": "sfx/song2/s2-chorus3/sfx-drop.opus",
+            "stage": "sfx/song2/s2-chorus3/sfx-stage.opus"
           }
         },
         {
@@ -323,6 +443,12 @@
             "tier2": "song2/s2-outro1-tier2.opus",
             "tier3": "song2/s2-outro1-tier3.opus",
             "tier4": "song2/s2-outro1-tier4.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song2/s2-outro1/sfx-rotate.opus",
+            "softdrop": "sfx/song2/s2-outro1/sfx-softdrop.opus",
+            "drop": "sfx/song2/s2-outro1/sfx-drop.opus",
+            "stage": "sfx/song2/s2-outro1/sfx-stage.opus"
           }
         },
         {
@@ -338,15 +464,21 @@
             "tier2": "song2/s2-outro-tier2.opus",
             "tier3": "song2/s2-outro-tier3.opus",
             "tier4": "song2/s2-outro-tier4.opus"
+          },
+          "sfx": {
+            "rotate": "sfx/song2/s2-outro/sfx-rotate.opus",
+            "softdrop": "sfx/song2/s2-outro/sfx-softdrop.opus",
+            "drop": "sfx/song2/s2-outro/sfx-drop.opus",
+            "stage": "sfx/song2/s2-outro/sfx-stage.opus"
           }
         }
       ],
       "sfx": {
-        "drop": "song2/sfx-drop.opus",
-        "move": "song2/sfx-move.opus",
-        "rotate": "song2/sfx-rotate.opus",
-        "softdrop": "song2/sfx-softdrop.opus",
-        "stage": "song2/sfx-stage.opus"
+        "rotate": "sfx/song2/songlevel/sfx-rotate.opus",
+        "softdrop": "sfx/song2/songlevel/sfx-softdrop.opus",
+        "drop": "sfx/song2/songlevel/sfx-drop.opus",
+        "stage": "sfx/song2/songlevel/sfx-stage.opus",
+        "move": "sfx/song2/songlevel/sfx-move.opus"
       }
     }
   ]
