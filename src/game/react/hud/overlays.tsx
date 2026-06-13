@@ -19,8 +19,6 @@ export function PauseOverlay({
   onVolumeChange,
   muted,
   onToggleMute,
-  skinId,
-  onSelectSkin,
 }: {
   onResume: () => void;
   onEnd: () => void;
@@ -28,8 +26,6 @@ export function PauseOverlay({
   onVolumeChange: (v: number) => void;
   muted: boolean;
   onToggleMute: () => void;
-  skinId: string;
-  onSelectSkin: (id: string) => void;
 }) {
   return (
     <div
@@ -57,8 +53,6 @@ export function PauseOverlay({
           onVolumeChange={onVolumeChange}
           muted={muted}
           onToggleMute={onToggleMute}
-          skinId={skinId}
-          onSelectSkin={onSelectSkin}
         />
 
         <div
@@ -147,14 +141,12 @@ export function GameOverView({
   best,
   signedIn,
   onAgain,
-  onTitle,
   onLeaderboard,
 }: {
   score: number;
   best: number | null;
   signedIn: boolean;
   onAgain: () => void;
-  onTitle: () => void;
   onLeaderboard: () => void;
 }) {
   const isBest = signedIn && best != null && score >= best;
@@ -237,14 +229,6 @@ export function GameOverView({
             onClick={onLeaderboard}
           >
             ◫ RANKS
-          </button>
-          <button
-            type="button"
-            className="btn"
-            style={{ padding: "15px 28px", fontSize: 13 }}
-            onClick={onTitle}
-          >
-            TITLE
           </button>
         </div>
       </div>

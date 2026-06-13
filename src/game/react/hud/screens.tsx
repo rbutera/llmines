@@ -4,46 +4,37 @@
  *
  * - StartView: the most-polished screen — reticle, glowing LLMINES wordmark,
  *   ENGAGE + CONTROLS, the personal-best / global-#1 stat row, and a sign-in +
- *   skin-cycle footer. Reads real auth/scores via props from GameShell.
- * - PlayHud: data-on-glass over the fullscreen board. Score top-left, LLMINES
- *   top-rail, tempo gauge + pause top-right, NEXT queue right-edge (real queue),
- *   a timeline sweep caret driven by the REAL sweepX, inset frame + brackets +
- *   edge tick-rails, and the maximal clear juice (score pop / ×N flash /
- *   clear-wash / shake) keyed off real clear events.
+ *   leaderboard footer. Reads real auth/scores via props from GameShell. There
+ *   is NO skin toggle — skins advance only on song completion.
+ * - PlayHud: data-on-glass over the fullscreen board. Score top-left (legible,
+ *   on a backing chip), LLMINES top-rail, tempo gauge + pause top-right, NEXT
+ *   queue right-edge (real queue), a timeline sweep caret driven by the REAL
+ *   sweepX, inset frame + brackets, and the maximal clear juice (score pop / ×N
+ *   flash / clear-wash / shake) keyed off real clear events.
  */
 
 import type { GeneratedPiece } from "../../core";
 import { COLS, PREVIEW_DEPTH } from "../../core";
 import { Corners, fmt, Gauge, type PieceCellShade, Reticle } from "./atoms";
 
-/** A skin shown in the start footer's cycle control. */
-export interface SkinChoice {
-  id: string;
-  label: string;
-}
-
 export function StartView({
   onStart,
   onControls,
   onSign,
-  onCycleSkin,
   onLeaderboard,
   signedIn,
   signedInName,
   personalBest,
   globalTop,
-  skinLabel,
 }: {
   onStart: () => void;
   onControls: () => void;
   onSign: () => void;
-  onCycleSkin: () => void;
   onLeaderboard: () => void;
   signedIn: boolean;
   signedInName: string | null;
   personalBest: number | null;
   globalTop: { name: string; best: number } | null;
-  skinLabel: string;
 }) {
   return (
     <div
@@ -204,14 +195,6 @@ export function StartView({
         >
           ◫ LEADERBOARD
         </button>
-        <button
-          type="button"
-          className="btn"
-          style={{ padding: "9px 16px", fontSize: 11 }}
-          onClick={onCycleSkin}
-        >
-          SKIN ▸ <span className="glow-text">{skinLabel}</span>
-        </button>
       </div>
 
       {/* NCS attribution (kept visible per the audio licence). */}
@@ -296,26 +279,30 @@ export function PlayHud({
       />
       <Corners size={20} inset={22} />
 
-      {/* edge tick-rails */}
+      {/* top edge tick-rail (the bottom rail is removed — it was dead chrome) */}
       <div className="recede">
         <div
           className="tickrail"
           style={{ position: "absolute", top: 23, left: 23, right: 23 }}
         />
       </div>
-      <div className="recede">
-        <div
-          className="tickrail"
-          style={{ position: "absolute", bottom: 23, left: 23, right: 23 }}
-        />
-      </div>
 
-      {/* score — top-left */}
+      {/* score — top-left, on a legible backing chip (NOT in `.recede`, so it
+          reads at full contrast against the fullscreen board). */}
       <div
-        className="recede"
-        style={{ position: "absolute", top: 46, left: 44 }}
+        style={{
+          position: "absolute",
+          top: 40,
+          left: 40,
+          padding: "8px 16px 10px",
+          borderRadius: 8,
+          background: "oklch(0.16 0.03 var(--hue) / 0.62)",
+          border: "1px solid oklch(0.6 0.12 var(--hue) / 0.4)",
+          backdropFilter: "blur(3px)",
+          boxShadow: "0 2px 14px rgba(0,0,0,0.5)",
+        }}
       >
-        <div className="label" style={{ marginBottom: 2 }}>
+        <div className="label" style={{ marginBottom: 2, opacity: 0.9 }}>
           SCORE
         </div>
         <div
@@ -327,6 +314,7 @@ export function PlayHud({
             fontWeight: 800,
             lineHeight: 0.9,
             fontVariantNumeric: "tabular-nums",
+            color: "var(--hud-accent-hi, #fff)",
           }}
         >
           {score}
@@ -476,19 +464,6 @@ export function PlayHud({
             }}
           />
         </div>
-      </div>
-
-      {/* pause hint */}
-      <div
-        className="recede hint"
-        style={{
-          position: "absolute",
-          bottom: 14,
-          left: "50%",
-          transform: "translateX(-50%)",
-        }}
-      >
-        esc · ❚❚ pause
       </div>
 
       {/* transient chain juice — keyed off real clear events */}

@@ -21,17 +21,17 @@ Merge AFTER `core-lumines-fidelity` (owns `sweep.ts` / `GameState`) and after/al
 
 ## 3. Wave 2 — Host skin = single source + tempo on the bundle
 
-- [ ] 3.1 In `src/game/skins/skins.ts`: add a `tempo: number` field to the `Skin` interface; set `SKIN_NEON.tempo` = song1 manifest tempo (≈ 109.957) and `SKIN_PIPELINE.tempo` = song2 manifest tempo (≈ 126.05).
-- [ ] 3.2 Add a guard test asserting each skin's `tempo` equals the manifest `tempo` for its `track.id` (single-source check).
-- [ ] 3.3 Confirm `SKINS` ordering = progression order and `nextSkin` wraps (last → first); keep `DEFAULT_SKIN = SKINS[0]` as the base skin.
+- [x] 3.1 In `src/game/skins/skins.ts`: add a `tempo: number` field to the `Skin` interface; set `SKIN_NEON.tempo` = song1 manifest tempo (≈ 109.957) and `SKIN_PIPELINE.tempo` = song2 manifest tempo (≈ 126.05).
+- [x] 3.2 Add a guard test asserting each skin's `tempo` equals the manifest `tempo` for its `track.id` (single-source check).
+- [x] 3.3 Confirm `SKINS` ordering = progression order and `nextSkin` wraps (last → first); keep `DEFAULT_SKIN = SKINS[0]` as the base skin.
 
 ## 4. Wave 3 — Slim `useSkinSwitch` (programmatic only)
 
-- [ ] 4.1 Remove `SKIN_STORAGE_KEY`, the mount-hydrate localStorage effect, and both `localStorage.setItem` calls (no persistence).
-- [ ] 4.2 Rename `cycleSkin` → `advanceSkin` (advance to `nextSkin` with the colour + audio crossfade); used only by song completion.
-- [ ] 4.3 Add `resetToBaseSkin()` that jumps to `SKINS[0]` instantly (no crossfade) for restart / new game.
-- [ ] 4.4 Remove `setSkin` (it is a toggle by another name) and the `cycleSkin` export from `SkinSwitchState`.
-- [ ] 4.5 Rewrite `src/game/skins/useSkinSwitch.test.*` (and adjust `crossfade.test.ts`/`skins.test.ts` as needed) to the new programmatic-only surface: advance-to-next crossfades, reset-to-base is instant, no persistence.
+- [x] 4.1 Remove `SKIN_STORAGE_KEY`, the mount-hydrate localStorage effect, and both `localStorage.setItem` calls (no persistence).
+- [x] 4.2 Rename `cycleSkin` → `advanceSkin` (advance to `nextSkin` with the colour + audio crossfade); used only by song completion.
+- [x] 4.3 Add `resetToBaseSkin()` that jumps to `SKINS[0]` instantly (no crossfade) for restart / new game.
+- [x] 4.4 Remove `setSkin` (it is a toggle by another name) and the `cycleSkin` export from `SkinSwitchState`.
+- [x] 4.5 Rewrite `src/game/skins/useSkinSwitch.test.ts` to the new programmatic-only surface (advance-to-next crossfades + wraps, reset-to-base is instant, no persistence); `crossfade.test.ts`/`skins.test.ts` unaffected.
 
 ## 5. Wave 4 — GameShell wiring + chrome cleanup
 
