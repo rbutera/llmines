@@ -5,6 +5,7 @@
       "id": "song1",
       "title": "Especifico Primero",
       "tempo": 109.957,
+      "key": { "root": "A", "scale": "minor" },
       "barSeconds": 2.1827,
       "segments": [
         {
@@ -260,6 +261,7 @@
       "id": "song2",
       "title": "pipeline male phonk (Verde el Pipeline)",
       "tempo": 126.05,
+      "key": { "root": "F#", "scale": "minor" },
       "barSeconds": 1.904,
       "segments": [
         {

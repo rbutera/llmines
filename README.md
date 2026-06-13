@@ -47,41 +47,57 @@ Do **not** reintroduce an autonomous timeline.)
 
 ---
 
-## 2. Audio design — the intended model
+## 2. Audio design — the intended model (heat-driven)
 
 Each song is a sequence of **segments** played **in order**. Each segment is pre-rendered at several
-cumulative **tiers** (stem layers). Two orthogonal progressions, both driven by clears, both
-quantised to musical loop boundaries:
+cumulative **tiers** (stem layers). The progression is driven by a continuous **heat** meter that
+the player's **clears** build — clears still gate progression (README §1), heat is just the
+continuous form of "how well the player is clearing". Both the segment advance and the layer count
+are derived from heat, quantised to musical loop boundaries.
 
-### 2a. HORIZONTAL — clear-gated segment advance (the song's position)
+> **Model note (revision).** The earlier implementation used a *binary* per-segment clear counter
+> with a *sticky-up-only* tier reveal that reset (capped at top-1) on every segment entry. That
+> produced a jarring **vocal cut** at transitions (full mix playing, advance, next segment drops
+> below vocals). The model below replaces that counter with a continuous **heat** meter: layers
+> follow heat **up AND down**, the layer count **carries across** a transition (sustained heat keeps
+> vocals — no cut), and a segment advances only once its top tier is **built and held a loop** (no
+> bare-heat threshold, so unheard material is never skipped). It is still clear-driven and the loop
+> mechanic is retained.
 
-The original brief, captured verbatim in the bead `focused-0gg0` under "DESIRED MODEL (Rai's
-brief...)":
+### 2a. HORIZONTAL — heat-gated segment advance (the song's position)
 
-> - Progression is GATED BY CLEARS, FORWARD-ONLY: pass a clear-threshold -> the backing transitions
->   (on a bar boundary / end-of-bar) to the NEXT segment. Threshold TBD by experiment. Once it has
->   progressed it never goes backwards. If a progression/transition is already in flight, further
->   clears don't stack another until it finishes. You CANNOT fast-forward/queue (no skipping to the
->   end by spamming clears) — you should hear the whole song as you play.
+A segment advances forward by one **only** once its **top tier (all layers) is audible AND has been
+held for one full loop** — "the progression opens at the end once all the layers are built up".
+There is **no bare-heat threshold**: advancing on a heat number below 1.0 could fire before the top
+tier is audible (song2's top reveals only at heat ≥ 0.875) and **skip unheard vocals**, which the
+brief forbids. Below the gate the segment **loops in place**.
 
-In short:
-
-- **Clear-gated.** The current segment loops in place until the player has cleared enough.
+- **Heat-gated.** The segment loops until its top tier is built (by heat) and held a loop.
+- **No bare-heat / no skip.** The song can never advance past a tier the player has not heard.
 - **Forward-only.** Once advanced, never goes back.
-- **One-step.** A burst of clears advances **one** segment, not several.
-- **In-flight-locked.** While a transition is mid-flight, further clears do not queue another.
-- **No fast-forward.** You cannot spam clears to skip to the end — you must hear the whole song.
-- **Bar-aligned.** Transitions land on a bar boundary so the hand-off is musical.
+- **One-step.** A burst of clears advances **one** segment per boundary, not several.
+- **In-flight-locked.** While a transition is mid-flight, further advances do not queue.
+- **No fast-forward.** Reaching the top takes several one-step boundaries + a held loop, per
+  segment — you cannot spam clears to skip to the end; you hear the whole song.
+- **Bar-aligned.** Transitions land on a loop boundary so the hand-off is musical.
+
+The original brief (bead `focused-0gg0`, "DESIRED MODEL"):
+
+> - Progression is GATED BY CLEARS, FORWARD-ONLY ... Once it has progressed it never goes backwards.
+>   If a progression/transition is already in flight, further clears don't stack another until it
+>   finishes. You CANNOT fast-forward/queue ... you should hear the whole song as you play.
 
 When the song advances past its final (TERMINAL) segment, the host swaps to the next song — a **skin
-switch**. From the brief:
+switch**:
 
 > - When all segments are exhausted -> switch to the next song (skin switch).
 
-### 2b. VERTICAL — cumulative stem layers (the song's fullness)
+### 2b. VERTICAL — cumulative stem layers (the song's fullness), heat-driven
 
 Each segment is rendered at N cumulative tiers: `tier0` = the backing bed (drums), then `+bass`,
-`+instruments`, up to the top tier = the full mix **including vocals**. Clears reveal higher tiers.
+`+instruments`, up to the top tier = the full mix **including vocals**. The audible tier is derived
+from heat: `tier ≈ round(heat × maxTier)`, moving **at most one step per loop boundary** toward that
+target — **UP when heat rises, DOWN when heat falls** (a sustained clear-less drought sheds layers).
 
 The original layer model, in Rai's words (voice-transcribed during the first spec):
 
@@ -94,22 +110,33 @@ The original layer model, in Rai's words (voice-transcribed during the first spe
 >
 > In Lumiere, in our version of Lumiere, the topmost layer is not played by the song or the mix. It's just played by the player; that's the player's contribution to the song. The bottom layer is always going to play on loop and the second and third layers, the instrumentation and the vocals, will get played by clearing. I'm thinking like one clear or a small number of clears and then you start getting the instrumentation..."
 
-Key vertical rules:
+Key vertical rules (heat-driven):
 
-- **Sticky within a segment.** Once a tier is revealed it stays — no decay, never sheds.
-- **Floor carried into the next segment** so a fresh section never resets to bare.
+- **Heat drives the tier up AND down.** More heat (clearing) reveals higher tiers; sustained
+  clear-less passes shed heat and the layers drop — one step per loop boundary, never below the
+  min-audible floor.
+- **Heat carries across a segment transition.** On entry the start tier is set DIRECTLY from current
+  heat (`round(heat × maxTier)`, no reset, no top-1 cap), so sustained heat keeps vocals across the
+  hand-off — **the no-vocal-cut fix**. (The one-step-per-boundary cap is a within-segment rule; the
+  entry carry may be a multi-step jump straight to the top.)
+- **Heat curve.** Gain on a clear = `0.06 + 0.025·squares + 0.02·comboStep`; decay = `0.08` per
+  clear-less loop pass (deliberately below a typical clear gain so a single dry pass between clears
+  does not thrash a layer). **There is no `ADVANCE_HEAT` constant** — the advance is gated on the top
+  tier being audible + held, not a heat threshold.
 - **Cumulative renders, not live summing.** At steady state exactly one bed player has non-zero gain
   (≤2 across a crossfade), which is the no-hiss mechanic — the runtime never sums many stems.
 
 Two refinements Rai added after a playthrough (`4509c7e feat(audio): 3 gameplay-feel refinements`):
 
-**Minimum 2 layers** — the bed alone is too thin:
+**Minimum 2 layers** — the bed alone is too thin, so the audible tier never drops below 2 cumulative
+layers (the min-audible floor), at the opening and on every entry:
 
 > "one thing i noticed is that the base number of layyers is too low. so we should start at 2 layers
 > minimum"
 
-**Reaching vocals makes advancing mandatory** — if the top (vocal) layer is playing in a segment,
-the song must move on rather than loop the vocal forever:
+**Reaching the top makes advancing inevitable** — a segment that has built to its top tier (vocals)
+and held it a full loop **must** move on rather than loop the vocal forever (this is the advance gate
+itself, §2a):
 
 > "the next thing i noticed is that if we are playing vocals in one segment, then progression to next
 > segment is mandatory"
@@ -137,13 +164,38 @@ Some sections are meant to loop indefinitely (intros, breaks) and some are meant
 this is encoded per segment as `LOOPER` / `PROGRESSION` / `TERMINAL` in the manifest. (paraphrased
 from Rai's "the intro can just repeat indefinitely and a break could just repeat indefinitely".)
 
-### 2d. Per-action SFX
+### 2d. Per-action SFX — tone-based, in key (default), recorded path behind a selector
 
-Distinct one-shots for each player action, drawn from the song's palette. From the brief:
+The recorded ad-lib one-shots clashed with the music-led mix, so the SFX are now **synthesised
+in-key tones** by default. An `SfxMode` selector (`"tone" | "sample"`, default `"tone"`) keeps the
+recorded per-segment sample path available; switchable at runtime via `setSfxMode`.
+
+**Tone mode (default):**
+
+- **The sweep CLEAR is silent** and a **CHAIN is silent** (clearing makes no noise). Heat is still
+  fed by clears and chains.
+- **Forming a 2×2 match** (a square newly staged for clear) plays a short in-key **ding** — the
+  audible reward. It is brighter (higher velocity / pitch) for a bigger newly-formed square. The
+  match event is derived from the render-only **`markedSquares` count rising** versus the previous
+  frame (so a square formed by a post-clear gravity **cascade** dings too — it is **not** gated on
+  the piece lock id, which a cascade does not bump). A decrease (the sweep erasing a square) is
+  silent.
+- **rotate / soft-drop / lock** play subtle in-key tones (root / degree-2 / root-octave-down by
+  cause); **move** is silent.
+- Notes are drawn from the song's musical **key/scale** (manifest `key`, default `A minor`), so they
+  never clash. The tone synth is built **lazily inside the unlock gesture** (autoplay rule).
+
+**Sample mode** keeps the original recorded routing: match → `stage`, chain → `stage` + layered
+`drop`, lock → `drop`, rotate/soft-drop → their one-shots; the sweep clear stays silent. From the
+original brief:
 
 > - PER-ACTION SOUNDS (distinct, per the stem palette): rotate sound, fast-drop sound, small-drop
 >   sound, and a CLEAR-STAGE sound. "Clear stage" = the player completes a 2x2 same-colour square
 >   (instant clear on drop, OR a connection that clears on the sweep pass). Each gets its own sound.
+
+**Manifest key.** Each song may declare an optional `key: { root, scale }` (e.g.
+`{ "root": "A", "scale": "minor" }`); `song1` = A minor, `song2` (phonk) = F# minor. Absent → the
+engine default `A minor`.
 
 ### 2e. Reset on game over
 
@@ -291,10 +343,13 @@ erase A3, fixed seed A4, in-field spawn A5, sweep/music BPM decoupling A6, inven
 ### Audio engine
 
 - **`src/game/audio/procedural/engine.ts`** — the manifest-driven, N-tier, loop-quantised,
-  **CLEAR-GATED** interactive-audio engine. Its module docstring is the authoritative description of
-  the runtime model (horizontal clear-gated forward-only one-step in-flight-locked advance; vertical
-  sticky cumulative tier reveal with a carried floor; cumulative renders so ≤2 stems are ever
-  audible). Read it before touching audio.
+  **HEAT-DRIVEN** interactive-audio engine. Its module docstring is the authoritative description of
+  the runtime model (a continuous `heat` meter built by clears; the audible tier follows heat up and
+  down one step per boundary; the tier carries across a transition from heat — the no-vocal-cut fix;
+  a heat-gated forward-only one-step in-flight-locked advance that fires only once the top tier is
+  audible and held a loop, with no bare-heat threshold; cumulative renders so ≤2 stems are ever
+  audible). It also owns the **tone SFX** path (lazy in-key synth, the match ding, the SFX-mode
+  selector). Read it before touching audio.
 - **`public/audio/manifest.json`** — the served FINE5 cut. `song1` ("Especifico Primero", ~110 BPM):
   **12 segments × 4 tiers**; `song2` ("Verde el Pipeline", phonk, ~126 BPM): **10 segments × 5
   tiers**. Each segment carries `type` (`LOOPER`/`PROGRESSION`/`TERMINAL`), `bars`, `barWindowSeconds`,
@@ -304,9 +359,13 @@ erase A3, fixed seed A4, in-field spawn A5, sweep/music BPM decoupling A6, inven
   analysis), `cut-plan.json`, `render-tiers.py` (cumulative tier renders), `render-sfx.py`,
   `validate-stems.py`, `check-loops.py` (clean-loop verification), `transcode-and-manifest.py`
   (→ `.opus` + manifest emit).
-- **`src/game/audio/procedural/sfxRouting.ts`** — the preset-free action→SFX map
-  (rotate / soft-drop / hard-drop / clear). The old A/B/C "audio mix preset" system was removed
-  (`d9aeee0 wave2(audio): ... remove A/B/C preset system`).
+- **`src/game/audio/procedural/sfxRouting.ts`** — the mode-aware action→SFX map. `routeEvent(ev,
+  mode)`: TONE mode routes the events that SOUND a synthesised tone (match / rotate / soft-drop /
+  lock); SAMPLE mode keeps the recorded path (match → `stage`, chain → `stage` + layered `drop`,
+  lock → `drop`). The sweep clear + move are silent in both; the chain is silent in TONE mode only.
+- **`src/game/audio/procedural/events.ts`** — derives the audio events from the RenderState diff,
+  including the new **`match`** event (the render-only `markedSquares` count rising — not gated on
+  the lock id, so a cascade-formed square dings).
 
 ### The autoplay gotcha (important)
 
