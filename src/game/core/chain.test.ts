@@ -409,3 +409,34 @@ describe("chain flood-fill clear (shares the sweep delete step)", () => {
     expect(s.score).toBe(40 + SINGLE_COLOUR_BONUS);
   });
 });
+
+describe("a surviving gem's special travels with its cell through a sweep settle", () => {
+  it("relocates the special coord to the cell's new row after the column drops", () => {
+    const base = createGame(1);
+    // A 2x2 colour-0 square at rows 8-9, cols 0-1 -> erased by the sweep.
+    base.grid[8]![0] = 0;
+    base.grid[8]![1] = 0;
+    base.grid[9]![0] = 0;
+    base.grid[9]![1] = 0;
+    // A lone colour-1 GEM at row 7, col 0 — NOT part of any square, so it
+    // survives the sweep and falls when the square below it is erased.
+    base.grid[7]![0] = 1;
+    base.specials = new Set([7 * COLS + 0]);
+    // Keep the board multi-colour so no single-colour bonus path interferes.
+    base.grid[9]![11] = 1;
+
+    const s = advanceSweep(base, COLS);
+
+    // The gem cell fell from row 7 to the floor of its (now-empty) column.
+    expect(s.grid[9]![0]).toBe(1);
+    // Its special MOVED with it: new coord present, stale coord gone.
+    expect(s.specials.has(9 * COLS + 0)).toBe(true);
+    expect(s.specials.has(7 * COLS + 0)).toBe(false);
+    // No special ever points at an empty cell.
+    for (const coord of s.specials) {
+      const r = Math.floor(coord / COLS);
+      const c = coord % COLS;
+      expect(s.grid[r]![c]).not.toBeNull();
+    }
+  });
+});

@@ -1,7 +1,7 @@
 import { chainFlood, type ChainClearRecord } from "./chain-clear";
 import { COLS, ROWS, SWEEP_WRAP_EPSILON } from "./constants";
 import { isSquareAt } from "./detect";
-import { cloneGrid, settleColumnWithMarks } from "./grid";
+import { cloneGrid, settleColumnWithMarksAndSpecials } from "./grid";
 import { boardStateBonus, nextCombo, passPackage, passScore } from "./scoring";
 import type { GameState, Grid, SweepPass } from "./types";
 
@@ -151,10 +151,11 @@ function eraseGroup(
   // per-column gravity is independent, so this equals settling only the affected
   // columns, just simpler and provably complete.
   if (hadChain) {
-    for (let c = 0; c < COLS; c++) settleColumnWithMarks(grid, pass.marks, c);
+    for (let c = 0; c < COLS; c++)
+      settleColumnWithMarksAndSpecials(grid, pass.marks, specials, c);
   } else {
     for (let col = fromCol; col <= toCol; col++) {
-      settleColumnWithMarks(grid, pass.marks, col);
+      settleColumnWithMarksAndSpecials(grid, pass.marks, specials, col);
     }
   }
   pass.groupErases.push({ cells: erased, hadChain });

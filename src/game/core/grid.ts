@@ -158,3 +158,46 @@ export function settleColumnWithMarks(
     marks[row]![col] = false;
   }
 }
+
+/**
+ * Per-column gravity carrying BOTH the `marks` grid AND the `specials` coordinate
+ * set in lockstep with the cells, mutating all three in place. Like
+ * {@link settleColumnWithMarks}, but a cell carrying a chain special keeps that
+ * special wherever gravity drops it: the column's special coords are rebuilt at
+ * the cells' NEW rows. Without this, a sweep that erases a cell below a surviving
+ * gem drops the gem's cell but leaves `specials` pointing at the gem's OLD row —
+ * desyncing the gem (it loses its chain power and its visual marker drifts). This
+ * mirrors the lock-time {@link settleSpecials} invariant for the sweep path.
+ */
+export function settleColumnWithMarksAndSpecials(
+  grid: Grid,
+  marks: boolean[][],
+  specials: Set<number>,
+  col: number,
+): void {
+  const cells: Cell[] = [];
+  const cellMarks: boolean[] = [];
+  const cellSpecials: boolean[] = [];
+  for (let row = 0; row < ROWS; row++) {
+    const cell = grid[row]![col] ?? null;
+    if (cell !== null) {
+      cells.push(cell);
+      cellMarks.push(marks[row]![col] ?? false);
+      cellSpecials.push(specials.has(row * COLS + col));
+    }
+  }
+  // Clear this column's special coords before re-laying — they are re-added at the
+  // cells' settled rows below, so a stale (now-empty) coordinate never lingers.
+  for (let row = 0; row < ROWS; row++) specials.delete(row * COLS + col);
+  let row = ROWS - 1;
+  for (let i = cells.length - 1; i >= 0; i--) {
+    grid[row]![col] = cells[i]!;
+    marks[row]![col] = cellMarks[i]!;
+    if (cellSpecials[i]) specials.add(row * COLS + col);
+    row--;
+  }
+  for (; row >= 0; row--) {
+    grid[row]![col] = null;
+    marks[row]![col] = false;
+  }
+}
