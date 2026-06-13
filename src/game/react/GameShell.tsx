@@ -209,7 +209,12 @@ export function GameShell() {
           gameOverSubmittedRef.current = true;
           if (userRef.current) void submitRef.current(rs.score);
         }
-        if (phaseRef.current === "playing") setPhase("gameover");
+        if (phaseRef.current === "playing") {
+          // Reset the music progression back to the song's opening so the NEXT game
+          // starts fresh (segment 0, floor tiers), not wherever this game ended.
+          audioEngineRef.current?.resetForNewGame();
+          setPhase("gameover");
+        }
       }
     });
     const uninstall = TEST_MODE ? installTestApi(c) : undefined;
@@ -428,6 +433,8 @@ export function GameShell() {
   const handleEndRun = useCallback(() => {
     if (controller?.isPaused()) controller.togglePause();
     setPaused(false);
+    // Reset the music progression to the song's opening for the next game.
+    audioEngineRef.current?.resetForNewGame();
     setPhase("gameover");
     // Submit once if the run wasn't already submitted (e.g. ended via END RUN
     // rather than a stack-overflow game over).

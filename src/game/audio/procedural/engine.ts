@@ -105,16 +105,21 @@ const SFX_RETRIGGER_EPSILON = 0.002;
 //
 /**
  * Monotonic per-segment clear-progress (`segmentScore`) needed to advance to the
- * NEXT segment. Reached on the next bar boundary, in-flight-locked, one step per
- * crossing. Reset to 0 on every segment entry, so the burst that earned this advance
- * can't also pre-pay the next one (no fast-forward).
+ * NEXT segment via the CLEAR-PROGRESS path. Reached on the next bar boundary,
+ * in-flight-locked, one step per crossing. Reset to 0 on every segment entry, so the
+ * burst that earned this advance can't also pre-pay the next one (no fast-forward).
  *
- * Sized DELIBERATELY ABOVE the top-tier reveal for the fattest song: song2 has 5
- * tiers, so its top tier (tier4) reveals at 4 × TIER_REVEAL_STEP = 24 — the advance
- * must sit above that (30) so a section is FULLY revealed before it moves on, never
- * cut off mid-fill. A clear feeds weight = 1 + squares + combo (≈3–5 typical), so an
- * advance is ~6–10 clears (≈2 bar windows of steady clearing): a competent player
- * walks the whole 12/10-segment fine cut at a musical pace — not stuck, not skipping.
+ * Sized ABOVE the top-tier reveal for the fattest song: song2 has 5 tiers, so its top
+ * tier (tier4) reveals at 4 × TIER_REVEAL_STEP = 24; 30 sits above that.
+ *
+ * NB on pacing: with the MANDATORY full-reveal advance ({@link shouldAdvance}), a
+ * section in practice advances ONE LOOP AFTER its top tier is revealed (at score
+ * = (tierCount−1)·TIER_REVEAL_STEP = 18 for the 4-tier songs, 24 for the 5-tier),
+ * which is BELOW this 30. So for the current content the mandatory full-reveal path is
+ * the usual trigger and this clear-gate is the higher fallback (it still governs any
+ * segment that has no tier above its min-audible floor, where the mandatory path is
+ * intentionally disabled — see shouldAdvance gate (a)). A clear feeds weight =
+ * 1 + squares + combo (≈3–5 typical).
  */
 const ADVANCE_THRESHOLD = 30;
 /**
@@ -126,13 +131,25 @@ const ADVANCE_THRESHOLD = 30;
  */
 const TIER_REVEAL_STEP = 6;
 /**
- * The sticky-unlock entry FLOOR: the minimum tier a freshly-entered segment starts
- * at, so the opening bars are never bare silence (and the very first segment of the
- * song still has a bed to hear). On a mid-song advance the carried-forward floor (the
- * tier reached in the previous segment) is honoured on top of this; this is the hard
- * lower bound. 1 = "+bass", clamped down for any segment with fewer tiers.
+ * MINIMUM AUDIBLE LAYERS — the never-drop-below floor, in CUMULATIVE LAYERS (not a
+ * tier index). The tiers are cumulative: tier0 = 1 layer (drums+perc), tier1 = 2
+ * layers (+bass), tier2 = 3 (+synth/gtr/fx), … so N layers == tier index N-1. A bare
+ * opening (≈1 layer) felt too thin in playtest, so we hold the audible minimum at
+ * 2 LAYERS ALWAYS: at game start, on every segment entry, and as the floor the sticky
+ * reveal never drops below. {@link tierFloorFor} converts this to a tier index per
+ * segment (= MIN_AUDIBLE_LAYERS - 1), clamped down for any segment that has fewer
+ * tiers than that (so a 1-tier segment still works).
  */
-const TIER_ENTRY_FLOOR = 1;
+const MIN_AUDIBLE_LAYERS = 2;
+/**
+ * The sticky-unlock entry FLOOR as a TIER INDEX (= MIN_AUDIBLE_LAYERS - 1): the
+ * minimum tier a freshly-entered segment starts at, so the opening bars are never
+ * bare (and the very first segment of the song still has bed + bass to hear). On a
+ * mid-song advance the carried-forward floor (the tier reached in the previous
+ * segment) is honoured on top of this; this is the hard lower bound. 1 = "+bass"
+ * (2 cumulative layers), clamped down for any segment with fewer tiers.
+ */
+const TIER_ENTRY_FLOOR = MIN_AUDIBLE_LAYERS - 1;
 
 /** Segment role drives loop-vs-rideout behavior. */
 export type SegmentType = "LOOPER" | "PROGRESSION" | "TERMINAL";
@@ -326,6 +343,16 @@ export class InteractiveAudioEngine {
 
   private manifest?: AudioManifest;
   private song?: ManifestSong;
+  /**
+   * Load generation token. Bumped whenever the segment bank is being torn down + rebuilt
+   * (a {@link resetForNewGame}, a switchTrack, or a dispose). A `loadSong`/`loadSegment`
+   * call captures it and, after each await, bails (disposing any just-built node) if the
+   * token has since moved — so an in-flight load from a PREVIOUS game/track can never
+   * start orphan players, stomp `this.segments`/`bedReady`, or reschedule a loop tick
+   * into the new bank. (The `currentTrack.id` guard alone misses a reload of the SAME
+   * track, which is exactly what a new-game reset does.)
+   */
+  private loadGen = 0;
   private currentTrack: TrackBundle = TRACK_SONG1;
   private switching = false;
   private bedReady = false;
@@ -374,6 +401,13 @@ export class InteractiveAudioEngine {
    * cancel a pending disposal or reset (Blocker 3). Cleared only on full teardown.
    */
   private settleEvents: number[] = [];
+  /**
+   * The setTimeout fallback ids paired with {@link settleEvents}. The transport `clear`
+   * can't cancel a `window.setTimeout`, so these are tracked separately and cancelled on
+   * reset/dispose so a settle fallback can't mutate state after the bank it targeted is
+   * gone.
+   */
+  private settleTimeouts: Array<ReturnType<typeof setTimeout>> = [];
   /** Generation token for the self-rescheduling loop tick (bumped on every reschedule). */
   private loopTickGen = 0;
 
@@ -401,6 +435,17 @@ export class InteractiveAudioEngine {
   private maxTier(seg: LoadedSegment | undefined): number {
     if (!seg) return 0;
     return Math.max(0, tierCountOf(seg) - 1);
+  }
+
+  /**
+   * The hard minimum-audible tier index FOR THIS SEGMENT (the "always ≥2 layers"
+   * floor): {@link TIER_ENTRY_FLOOR} (= MIN_AUDIBLE_LAYERS − 1), clamped DOWN to the
+   * segment's own ceiling so a segment with fewer tiers than the floor still works
+   * (a 1-tier segment floors at tier0). This is the single source of truth for the
+   * never-drop-below floor, applied at entry, on every reveal, and on reconcile.
+   */
+  private tierFloorFor(seg: LoadedSegment | undefined): number {
+    return Math.min(this.maxTier(seg), TIER_ENTRY_FLOOR);
   }
 
   /**
@@ -581,6 +626,7 @@ export class InteractiveAudioEngine {
     const master = this.master;
     const seg = this.segments[index];
     if (!master || !seg || seg.loaded) return;
+    const gen = this.loadGen; // capture: a reset/switch/dispose bumps this
     seg.loaded = true; // claim early so concurrent prefetch doesn't double-load
     const tierUrls = seg.tierKeys.map(
       (k) => `${ASSET_BASE}/${seg.meta.tiers[k]}`,
@@ -590,6 +636,18 @@ export class InteractiveAudioEngine {
         try {
           const gain = new ToneRT!.Gain(0).connect(master);
           const player = await this.loadPlayer(url);
+          // If a reset/switch superseded this load while it was in flight, the segment
+          // bank it targeted is gone — dispose what we just built so it can't orphan a
+          // live player or stomp the new bank, and bail.
+          if (gen !== this.loadGen || this.segments[index] !== seg) {
+            try {
+              player?.dispose();
+            } catch {
+              // ignore
+            }
+            gain.dispose();
+            return;
+          }
           if (player) {
             player.loop = true;
             // Loop the SPILL-FREE bar window, not the whole file.
@@ -611,6 +669,9 @@ export class InteractiveAudioEngine {
         }
       }),
     );
+    // A reset/switch may have landed while the tier loads were in flight — don't
+    // reconcile gain into a superseded bank.
+    if (gen !== this.loadGen || this.segments[index] !== seg) return;
     // If this segment became active before its players finished loading (advance-into-
     // unloaded / loop-back onto a disposed seg), the entry ramp landed on undefined
     // gains. Now the players exist — re-apply the target tier so it isn't silent.
@@ -671,7 +732,9 @@ export class InteractiveAudioEngine {
   private async loadSong(track: TrackBundle): Promise<void> {
     const master = this.master;
     if (!master) return;
+    const gen = this.loadGen; // a reset/switch/dispose bumps this; bail if superseded
     const manifest = await this.loadManifest();
+    if (gen !== this.loadGen) return; // a reset/switch landed during the fetch
     if (!manifest) return; // degrade to silence
     const song = this.resolveSong(manifest, track);
     if (!song || song.segments.length === 0) return;
@@ -679,7 +742,8 @@ export class InteractiveAudioEngine {
 
     this.manifest = manifest;
     this.song = song;
-    this.segments = this.buildSegments(song);
+    const built = this.buildSegments(song);
+    this.segments = built;
     this.segmentIndex = 0;
     this.maxSegmentReached = 0;
     this.segmentScore = 0;
@@ -688,8 +752,11 @@ export class InteractiveAudioEngine {
 
     // Initial load = intro tiers only (lazy per-segment).
     await this.loadSegment(0);
-    if (this.currentTrack.id !== track.id) {
-      this.disposeAll();
+    if (gen !== this.loadGen || this.currentTrack.id !== track.id) {
+      // Superseded mid-load. Dispose the bank THIS call built (the captured `built`),
+      // never `this.segments` — a newer loadSong may already have installed a fresh bank
+      // there, and disposing that would silence the live song.
+      for (const seg of built) this.disposeLoaded(seg);
       return;
     }
     this.enterSegment(0, /*fresh*/ true);
@@ -734,8 +801,13 @@ export class InteractiveAudioEngine {
 
     const top = this.maxTier(seg);
     // The sticky floor carried in from the previous segment (0 on a fresh first entry),
-    // raised to the hard TIER_ENTRY_FLOOR so the opening bars always have a bed + bass.
-    let startTier = Math.max(this.entryFloor, TIER_ENTRY_FLOOR);
+    // raised to the hard min-audible floor (tierFloorFor → ≥2 layers) so EVERY entry —
+    // the opening included — always has at least drums + bass, never a bare ≈1 layer.
+    // The carried floor may be the previous section's TOP tier (fully-revealed carries
+    // forward); the MANDATORY full-reveal advance does NOT cascade off that, because
+    // {@link shouldAdvance} requires the top reveal to be EARNED by clears in THIS
+    // segment (segmentScore ≥ top·TIER_REVEAL_STEP), not merely carried — see its (b).
+    let startTier = Math.max(this.entryFloor, this.tierFloorFor(seg));
     // Clamp to this segment's ceiling (a 4-tier seg can't show tier4) + a loaded tier.
     startTier = Math.max(0, Math.min(top, startTier));
     startTier = this.nearestAvailableAtOrBelow(seg, startTier);
@@ -773,7 +845,9 @@ export class InteractiveAudioEngine {
     const seg = this.segments[index];
     if (!seg) return;
     const top = this.maxTier(seg);
-    let want = Math.max(0, Math.min(top, this.targetTier));
+    // Honour the min-audible floor here too (a target set before load still ≥2 layers).
+    let want = Math.max(this.tierFloorFor(seg), this.targetTier);
+    want = Math.max(0, Math.min(top, want));
     want = this.nearestAvailableAtOrBelow(seg, want);
     // If the audible tier is already gained up, nothing to do.
     if (this.tier === want && this.readGain(seg.tierGains[want]) > 0.5) return;
@@ -895,6 +969,13 @@ export class InteractiveAudioEngine {
     const seg = this.active();
     if (!seg) return;
 
+    // The audible tier AS WE ENTER this boundary, BEFORE step 1's reveal. The mandatory
+    // full-reveal advance keys off THIS (not the post-reveal tier) so the top tier is
+    // never revealed and advanced-away on the SAME boundary — vocals always sound for at
+    // least one full loop before the section moves on (and the reveal ramp isn't
+    // immediately cancelled by the advance's fade-out).
+    const tierBefore = this.tier;
+
     // 1) VERTICAL FIRST: reveal the sticky cumulative tier earned so far and crossfade
     //    up to it on this boundary. Updating `this.tier` here means an advance committed
     //    in step 2 carries the JUST-REVEALED tier forward as the next segment's floor.
@@ -905,7 +986,7 @@ export class InteractiveAudioEngine {
 
     // 2) HORIZONTAL: clears earned an advance → step forward ONE segment (advancing
     //    re-enters the next segment + reschedules its loop tick, carrying the floor).
-    if (this.shouldAdvance()) {
+    if (this.shouldAdvance(seg, tierBefore)) {
       this.advanceSegment(time);
     }
   }
@@ -923,8 +1004,9 @@ export class InteractiveAudioEngine {
     if (this.tierFading) return; // don't re-arm mid-fade
     const top = this.maxTier(seg);
     const revealed = Math.floor(this.segmentScore / TIER_REVEAL_STEP);
-    // sticky: at least the floor, at least the current tier, never above the ceiling.
-    let want = Math.max(this.entryFloor, this.tier, revealed);
+    // sticky: at least the hard min-audible floor (≥2 layers), at least the carried
+    // entry floor, at least the current tier, never above the ceiling.
+    let want = Math.max(this.tierFloorFor(seg), this.entryFloor, this.tier, revealed);
     want = Math.max(0, Math.min(top, want));
     // demote to the highest LOADED tier at or below `want` (a missing file never silences).
     want = this.nearestAvailableAtOrBelow(seg, want);
@@ -950,16 +1032,56 @@ export class InteractiveAudioEngine {
   // ── horizontal: clear-gated forward-only advance ─────────────────────────────
 
   /**
-   * Advance gate: the player has accumulated `segmentScore ≥ ADVANCE_THRESHOLD` AND no
-   * transition is already in flight (the in-flight lock — a burst can't queue a second
-   * advance). Returns true even on the TERMINAL/last segment: an earned advance there
-   * means "past the end of the song", which {@link advanceSegment} turns into the
-   * end-of-song song switch instead of a forward step.
+   * Advance gate, evaluated in {@link onLoopBoundary} AFTER this boundary's tier reveal.
+   * The section advances when EITHER:
+   *  - CLEAR-PROGRESS: `segmentScore ≥ ADVANCE_THRESHOLD` (the normal earned advance), OR
+   *  - FULL REVEAL (MANDATORY): the section has been BUILT UP to its TOP tier (vocals)
+   *    by EARNED reveal and has ALREADY been heard at full mix for a loop. A
+   *    fully-revealed section MUST move on — it can't keep looping at full mix. This is
+   *    INDEPENDENT of ADVANCE_THRESHOLD, so it can fire below the clear-gate; it just
+   *    guarantees a section advances no LATER than one loop after full reveal.
+   *
+   * The mandatory path is gated by THREE conditions so it neither cascades nor cuts the
+   * vocals off the bar they appear:
+   *   (a) the segment has HEADROOM above the min-audible floor (`maxTier > tierFloorFor`)
+   *       — a segment whose top IS the entry floor (e.g. a 1/2-tier segment that the
+   *       ≥2-layer floor parks at its ceiling) has nothing to "earn", so it never
+   *       mandatorily advances (it can still advance via the clear-gate). This is what
+   *       prevents a low-tier segment from auto-advancing every bar with zero clears.
+   *   (b) the top reveal was EARNED by clears (`segmentScore ≥ maxTier·TIER_REVEAL_STEP`)
+   *       — being at the top because it was the carried entry floor is NOT enough; the
+   *       player must have actually cleared up to the top in THIS segment.
+   *   (c) the top tier was ALREADY audible coming INTO this boundary (`tierBefore ≥ top`)
+   *       — so a boundary that JUST revealed the top tier does not also advance off it on
+   *       the same boundary (which would cancel the reveal ramp and the vocals would
+   *       never sound). Vocals play for a full loop, then the section moves on.
+   *
+   * Both paths respect the in-flight lock. Returns true even on the TERMINAL/last
+   * segment: an earned advance there means "past the end of the song", which
+   * {@link advanceSegment} turns into the end-of-song song switch instead of a step.
+   *
+   * @param seg the active segment at this boundary.
+   * @param tierBefore the audible tier as the boundary was entered (pre-reveal).
    */
-  private shouldAdvance(): boolean {
+  private shouldAdvance(seg: LoadedSegment, tierBefore: Tier): boolean {
     if (this.transitionInFlight) return false;
     if (this.segments.length === 0) return false;
-    return this.segmentScore >= ADVANCE_THRESHOLD;
+    const top = this.maxTier(seg);
+    // NEVER advance on the SAME boundary the top tier was just revealed — on ANY path
+    // (clear-gate OR mandatory). step 1 of onLoopBoundary started the top tier's gain
+    // ramp at `time`; advancing now would fade that exact gain back out at the same
+    // `time` and cancel the ramp, so the vocals would never sound. A hot bar that banks
+    // BOTH the top reveal AND the clear-gate must therefore wait one loop (the top is
+    // heard, then the section moves on next boundary). Only blocks the freshly-revealed
+    // top; a section already at top coming in is unaffected.
+    if (tierBefore < top && this.tier >= top) return false;
+    // CLEAR-PROGRESS path: enough banked clears to advance.
+    if (this.segmentScore >= ADVANCE_THRESHOLD) return true;
+    // MANDATORY full-reveal advance — see the three gates (a)/(b)/(c) above.
+    if (top <= this.tierFloorFor(seg)) return false; // (a) no headroom above the floor
+    if (this.segmentScore < top * TIER_REVEAL_STEP) return false; // (b) reveal not earned
+    if (tierBefore < top) return false; // (c) top wasn't audible yet (don't cut vocals)
+    return true;
   }
 
   /**
@@ -1227,12 +1349,17 @@ export class InteractiveAudioEngine {
   private afterSettle(at: number, fn: () => void): void {
     let ran = false;
     let settleId: number | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const once = () => {
       if (ran) return;
       ran = true;
       if (settleId != null) {
         const i = this.settleEvents.indexOf(settleId);
         if (i >= 0) this.settleEvents.splice(i, 1);
+      }
+      if (timeoutId != null) {
+        const j = this.settleTimeouts.indexOf(timeoutId);
+        if (j >= 0) this.settleTimeouts.splice(j, 1);
       }
       fn();
     };
@@ -1251,8 +1378,14 @@ export class InteractiveAudioEngine {
       // keep default
     }
     try {
-      if (typeof window !== "undefined") window.setTimeout(once, ms);
-      else once();
+      if (typeof window !== "undefined") {
+        // track the timeout id so a reset/dispose can cancel this fallback before it
+        // mutates post-reset state (the transport `clear` can't reach a setTimeout).
+        timeoutId = setTimeout(once, ms);
+        this.settleTimeouts.push(timeoutId);
+      } else {
+        once();
+      }
     } catch {
       once();
     }
@@ -1280,7 +1413,8 @@ export class InteractiveAudioEngine {
     if (!master || !manifest) return;
     this.switching = true;
 
-    // invalidate any pending transition + cancel the loop tick.
+    // invalidate any pending transition + in-flight loads + cancel the loop tick.
+    const gen = ++this.loadGen;
     this.transitionToken++;
     this.transitionInFlight = false;
     this.clearScheduled();
@@ -1308,7 +1442,11 @@ export class InteractiveAudioEngine {
       this.entryFloor = 0;
       this.applyTempo(song);
       await this.loadSegment(0);
-      if (this.currentTrack.id !== track.id) {
+      // Superseded during the intro load (a reset/dispose/another switch bumped loadGen,
+      // or a later switch changed the track) → don't enter/schedule into this now-stale
+      // bank. Dispose the nodes this switch built and bail.
+      if (gen !== this.loadGen || this.currentTrack.id !== track.id) {
+        for (const seg of newSegments) this.disposeLoaded(seg);
         this.switching = false;
         return;
       }
@@ -1336,6 +1474,80 @@ export class InteractiveAudioEngine {
     } finally {
       this.switching = false;
     }
+  }
+
+  // ── new-game reset (GAME OVER → fresh start) ─────────────────────────────────
+
+  /**
+   * Reset the audio/music progression COMPLETELY back to a fresh start, so a NEW game
+   * begins at the CURRENT song's OPENING (segment 0, floor tiers) rather than wherever
+   * the previous game left the song. Wired from the GameShell game-over transition.
+   *
+   * Resets every progression field — `segmentIndex → 0`, `segmentScore → 0`,
+   * `tier`/`armedTier` → the segment's entry floor, `entryFloor → 0` (default),
+   * `transitionInFlight → false`, `maxSegmentReached → 0` — invalidates any in-flight
+   * transition (token bump), cancels the scheduled loop tick + pending settle callbacks,
+   * silences + disposes the old segment players, then RELOADS the current track from its
+   * first segment (re-seating playback at the opening). Idempotent + self-guarded: a
+   * no-op before {@link unlock} (nothing to reset), never throws into the game.
+   *
+   * Keeps the CURRENT track (the active skin's song) — a new game restarts the song the
+   * player is on, it does NOT force back to song1. The skin/track is owned by GameShell.
+   */
+  resetForNewGame(): void {
+    if (!this.started) return;
+    const track = this.currentTrack;
+    try {
+      // Invalidate any in-flight advance/switch + in-flight segment loads + stop the loop
+      // tick from firing into the old (about-to-be-disposed) segments.
+      this.loadGen++;
+      this.transitionToken++;
+      this.transitionInFlight = false;
+      this.switching = false;
+      this.songCompleted = false;
+      this.clearScheduled();
+      this.clearSettleEvents();
+
+      // Silence + tear down the old segment bank (no lingering audio from the last game).
+      this.disposeAll();
+
+      // Reset all progression state to the song's opening.
+      this.segments = [];
+      this.segmentIndex = 0;
+      this.maxSegmentReached = 0;
+      this.segmentScore = 0;
+      this.tier = 0;
+      this.armedTier = 0;
+      this.targetTier = 0;
+      this.tierFading = false;
+      this.entryFloor = 0;
+      this.bedReady = false;
+
+      // Rebuild + re-enter the current track from segment 0 (fresh opening, floor tiers).
+      void this.loadSong(track);
+    } catch {
+      // degrade silently — a failed reset must never crash the game-over transition.
+    }
+  }
+
+  /** Cancel + drop any pending settle callbacks (disposals / state resets). */
+  private clearSettleEvents(): void {
+    for (const id of this.settleEvents) {
+      try {
+        ToneRT!.getTransport().clear(id);
+      } catch {
+        // ignore
+      }
+    }
+    this.settleEvents = [];
+    for (const t of this.settleTimeouts) {
+      try {
+        clearTimeout(t);
+      } catch {
+        // ignore
+      }
+    }
+    this.settleTimeouts = [];
   }
 
   // ── disposal ─────────────────────────────────────────────────────────────────
@@ -1406,9 +1618,11 @@ export class InteractiveAudioEngine {
   }
 
   dispose(): void {
+    this.loadGen++;
     this.transitionToken++;
     this.transitionInFlight = false;
     this.clearScheduled();
+    this.clearSettleEvents();
     this.removeResumePrimer?.();
     this.removeResumePrimer = undefined;
     try {
@@ -1442,6 +1656,7 @@ export class InteractiveAudioEngine {
     this.entryFloor = 0;
     this.segmentScore = 0;
     this.settleEvents = [];
+    this.settleTimeouts = [];
     this.songCompleted = false;
     this.started = false;
   }
