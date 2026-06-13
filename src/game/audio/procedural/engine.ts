@@ -1616,14 +1616,15 @@ export class InteractiveAudioEngine {
   /**
    * Feed the continuous `heat` meter on a CLEAR, scaled by the real squares + combo
    * (design D1): `gain = HEAT_GAIN_BASE + HEAT_GAIN_SQUARE*squares + HEAT_GAIN_COMBO*
-   * comboStep`, clamped to 0..1. Also marks `clearedSinceBoundary` so the next loop
-   * boundary does NOT decay (design D2). Clearing makes the song hotter (more layers,
-   * eventually an advance); heat never moves backward on a clear.
+   * comboStep`, clamped to 0..1. On a VALID clear it also marks `clearedSinceBoundary`
+   * so the next loop boundary does NOT decay (design D2). Clearing makes the song hotter
+   * (more layers, eventually an advance); heat never moves backward on a clear.
    *
    * Defends against a non-finite contribution (an upstream bug feeding NaN/Infinity
-   * squares or combo): a non-finite gain is ignored and `heat` is left unchanged (and
-   * re-clamped to a finite 0..1 defensively). The clear STILL counts toward the
-   * no-decay flag — a clear happened even if its telemetry was malformed.
+   * squares or combo): the WHOLE contribution is ignored — `heat` is left unchanged
+   * (re-clamped to a finite 0..1 defensively) AND `clearedSinceBoundary` is NOT set, so
+   * a poisoned event is treated as "no real clear" and cannot suppress the next
+   * clear-less pass's decay.
    */
   private onClear(squares: number, comboStep: number): void {
     if (this.segments.length === 0) return;
