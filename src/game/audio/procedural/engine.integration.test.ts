@@ -42,8 +42,16 @@ const mockState = vi.hoisted(() => ({
   pending: [] as { cb: (t: number) => void; time: number; id: number }[],
   /** every gain ramp start time recorded for quantization assertions. */
   rampStarts: [] as number[],
-  /** every FakePlayer constructed, for loopEnd / SFX-pool assertions. */
-  players: [] as { url: string; loopEnd: number; starts: number[] }[],
+  /** every FakePlayer constructed, for loopEnd / SFX-pool / velocity assertions. */
+  players: [] as {
+    url: string;
+    loopEnd: number;
+    starts: number[];
+    /** volume PARAM: value = gainToDb(velocity); read for SFX velocity scaling. */
+    volume: { value: number };
+    /** set true by dispose() — read for the per-segment SFX lifecycle assertions. */
+    disposed: boolean;
+  }[],
   nextId: 1,
   /**
    * When true, a FakePlayer does NOT fire onload immediately; its onload is parked in
@@ -244,7 +252,13 @@ const MANIFEST = {
         seg("s1-break", "LOOPER", 1),
         seg("s1-outro", "TERMINAL", 1),
       ],
-      sfx: { move: "sfx-move.opus", rotate: "sfx-rotate.opus", drop: "sfx-drop.opus" },
+      sfx: {
+        move: "sfx-move.opus",
+        rotate: "sfx-rotate.opus",
+        softdrop: "sfx-softdrop.opus",
+        drop: "sfx-drop.opus",
+        stage: "sfx-stage.opus",
+      },
     },
     {
       id: "song2",
@@ -567,19 +581,20 @@ describe("clear-gated engine: loop-in-place, sticky reveal, gated advance", () =
     expect(calls).toBe(1); // still once (host's switchTrack would rebuild)
   });
 
-  it("the sticky FLOOR carries forward — the next segment never resets to bare", async () => {
-    const e = await freshEngine(); // 3-tier default fixture
+  it("the sticky FLOOR carries forward but is CAPPED below the new top (vocals re-earned)", async () => {
+    const e = await freshEngine(); // 3-tier default fixture (top tier = tier2)
     // raise tier2 on segment 0, then advance.
     for (let i = 0; i < 3; i++) clear(e, 2, 1); // score 12 → arms tier2
     loopBoundary();
     await settle();
     expect(e.getAudioState().tier).toBe(2);
-    // now earn the advance (clear-gate). The just-revealed top tier carries forward.
+    // now earn the advance (clear-gate). The carried floor is CAPPED at top-1 (D3) so
+    // the new segment does NOT enter at vocals — it re-earns the top via clears.
     await earnAdvance(e);
     expect(e.getAudioState().segmentIndex).toBe(1);
-    // the carried floor = the tier reached (2), clamped to the new segment's ceiling —
-    // not reset to tier0/bare (the fully-revealed tier carries forward).
-    expect(e.getAudioState().tier).toBe(2); // not reset to tier0/bare
+    // carried floor = min(reached, top-1) = min(2, 1) = 1: not reset to bare (tier0),
+    // not carried all the way to the top (tier2) — vocals are re-earned per segment.
+    expect(e.getAudioState().tier).toBe(1);
   });
 
   it("no-hiss: active bed players stay <= 2 throughout a full clear-driven play-through", async () => {
@@ -696,18 +711,110 @@ describe("SFX voice pool (no machine-gun stutter)", () => {
     }
   });
 
-  it("a CLEAR is silent — it fires NO SFX voice (only feeds clear-progress)", async () => {
+  it("a CLEAR plays the `stage` one-shot AND feeds clear-progress (B3 — no longer silent)", async () => {
     const e = await freshEngine();
+    // warm the stage pool then clear (a first fire kicks the async pool load).
+    e.fire({ type: "lineClear", squares: 2, combo: 1 });
+    await settle();
     const before = mockState.players.length;
     for (let i = 0; i < 6; i++) clear(e, 2, 1);
     await settle();
-    // no new SFX players were constructed by the clears (clears are silent).
-    const sfxPlayers = mockState.players
-      .slice(before)
-      .filter((p) => p.url.includes("sfx-"));
-    expect(sfxPlayers.length).toBe(0);
-    // but the clears DID register as clear-progress (the audible effect is the tier).
+    // the clear-stage one-shot fired (stage SFX players exist + got start()s).
+    const stagePlayers = mockState.players.filter((p) =>
+      p.url.includes("sfx-stage"),
+    );
+    expect(stagePlayers.length).toBeGreaterThan(0);
+    const stageStarts = stagePlayers.flatMap((p) => p.starts);
+    expect(stageStarts.length).toBeGreaterThan(0);
+    // AND the clears still register as clear-progress (the progression is untouched).
     expect(e.getAudioState().segmentScore).toBeGreaterThan(0);
+    void before;
+  });
+
+  it("a BIGGER clear plays `stage` at a higher velocity than a single-square clear", async () => {
+    const e = await freshEngine();
+    e.fire({ type: "lineClear", squares: 1, combo: 0 }); // warm the pool
+    await settle();
+    // Read the volume of the voice that ACTUALLY fired last (most recent start), not
+    // the max across all pooled voices (untriggered voices keep their default 0 dB,
+    // which would read as "louder" than any real attenuated hit). gainToDb(velocity).
+    const lastFiredDb = (sub: string): number => {
+      const fired = mockState.players
+        .filter((p) => p.url.includes(sub) && p.starts.length > 0)
+        .sort((a, b) => Math.max(...b.starts) - Math.max(...a.starts));
+      return fired.length ? fired[0]!.volume.value : Number.NEGATIVE_INFINITY;
+    };
+    // a 1-square clear (velocity 0.7) then a 4-square clear (velocity 1.0).
+    e.fire({ type: "lineClear", squares: 1, combo: 0 });
+    await settle();
+    const smallDb = lastFiredDb("sfx-stage");
+    e.fire({ type: "lineClear", squares: 4, combo: 0 });
+    await settle();
+    const bigDb = lastFiredDb("sfx-stage");
+    expect(bigDb).toBeGreaterThan(smallDb); // 4-square is hotter than 1-square
+  });
+
+  it("a CHAIN is audibly distinct — it fires `stage` AND a layered `drop`", async () => {
+    const e = await freshEngine();
+    // warm both pools.
+    e.fire({ type: "chain", size: 6 });
+    await settle();
+    const stageBefore = mockState.players
+      .filter((p) => p.url.includes("sfx-stage"))
+      .flatMap((p) => p.starts).length;
+    const dropBefore = mockState.players
+      .filter((p) => p.url.includes("sfx-drop"))
+      .flatMap((p) => p.starts).length;
+    e.fire({ type: "chain", size: 6 });
+    await settle();
+    const stageAfter = mockState.players
+      .filter((p) => p.url.includes("sfx-stage"))
+      .flatMap((p) => p.starts).length;
+    const dropAfter = mockState.players
+      .filter((p) => p.url.includes("sfx-drop"))
+      .flatMap((p) => p.starts).length;
+    // a chain fired BOTH a stage hit and a layered drop impact.
+    expect(stageAfter).toBeGreaterThan(stageBefore);
+    expect(dropAfter).toBeGreaterThan(dropBefore);
+  });
+
+  it("EVERY settle plays a `drop`, with velocity scaled by cause (hard > soft > gravity)", async () => {
+    const e = await freshEngine();
+    e.fire({ type: "lock", cause: "gravity" }); // warm the drop pool
+    await settle();
+    const drop = () => mockState.players.filter((p) => p.url.includes("sfx-drop"));
+    // volume of the drop voice that fired most recently (default 0-dB untriggered
+    // voices would otherwise mask the real attenuated hits).
+    const lastDropDb = (): number => {
+      const fired = drop()
+        .filter((p) => p.starts.length > 0)
+        .sort((a, b) => Math.max(...b.starts) - Math.max(...a.starts));
+      return fired.length ? fired[0]!.volume.value : Number.NEGATIVE_INFINITY;
+    };
+    e.fire({ type: "lock", cause: "gravity" });
+    await settle();
+    const gravityDb = lastDropDb();
+    e.fire({ type: "lock", cause: "soft" });
+    await settle();
+    const softDb = lastDropDb();
+    e.fire({ type: "lock", cause: "hard" });
+    await settle();
+    const hardDb = lastDropDb();
+    // a gravity lock (the common case) is audible at all — B4 (not only hard drops).
+    expect(drop().flatMap((p) => p.starts).length).toBeGreaterThan(0);
+    expect(hardDb).toBeGreaterThan(softDb);
+    expect(softDb).toBeGreaterThan(gravityDb);
+  });
+
+  it("a MOVE fires no SFX voice (silent by decision)", async () => {
+    const e = await freshEngine();
+    const before = mockState.players.length;
+    for (let i = 0; i < 6; i++) e.fire({ type: "move" });
+    await settle();
+    const movePlayers = mockState.players
+      .slice(before)
+      .filter((p) => p.url.includes("sfx-move"));
+    expect(movePlayers.length).toBe(0);
   });
 });
 
@@ -742,6 +849,57 @@ describe("switchTrack (skin swap) on the manifest model", () => {
     await settle();
     expect(e.getAudioState().trackId).toBe("pipeline");
     expect(e.getAudioState().bpm).toBeCloseTo(126, 1);
+  });
+
+  it("a SUPERSEDED switchTrack does NOT orphan the old SFX voices (re-attach + later teardown disposes them)", async () => {
+    // Regression (Codex review): switchTrack installs a fresh empty SFX map at the top
+    // of the swap. If the new intro load is SUPERSEDED (loadGen bump) and the switch
+    // bails, the old still-playing bank's SFX voices must remain reachable so a later
+    // dispose frees them — they must NOT leak behind the orphaned old map.
+    const e = await freshEngine();
+    // build the active (song1) segment's SFX pool by firing a clear (loads sfx-stage).
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    const oldSfx = mockState.players.filter((p) => p.url.includes("sfx-stage"));
+    expect(oldSfx.length).toBeGreaterThan(0);
+    expect(oldSfx.every((p) => !p.disposed)).toBe(true);
+    // also capture the old TIER bank's players (song1 segment tiers) — they must be freed
+    // on the bail too, not leak behind the suspended switch's local.
+    const oldTiers = mockState.players.filter(
+      (p) => p.url.includes("s1-") && p.url.includes("tier"),
+    );
+    expect(oldTiers.length).toBeGreaterThan(0);
+    expect(oldTiers.every((p) => !p.disposed)).toBe(true);
+
+    // start a switch whose intro load is DEFERRED (parked, unresolved)...
+    mockState.deferLoads = true;
+    const switching = e.switchTrack({ id: "song2", base: "/audio/song2" });
+    // ...then SUPERSEDE it with a reset (bumps loadGen + installs its OWN fresh map)
+    // before the intro resolves.
+    e.resetForNewGame();
+    await releaseDeferredLoads(); // the superseded switch's intro load now resolves → bail
+    await switching;
+    await settle();
+
+    // the bail retires the OLD bank it was replacing: the old song1 SFX voices AND tier
+    // players are freed by the bail itself (not orphaned behind the suspended switch's
+    // locals / the empty map the aborted switch installed).
+    expect(oldSfx.every((p) => p.disposed)).toBe(true); // SFX freed — no leak
+    expect(oldTiers.every((p) => p.disposed)).toBe(true); // tier players freed — no leak
+
+    // and the reset-owned game is still HEALTHY — its own tier audio plays at the opening
+    // (the aborted switch must not have disposed the reset's pools or stomped its map). The
+    // fresh load is async; flush any remaining parked loads + settle so it is fully up.
+    await releaseDeferredLoads();
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBe(0);
+    expect(e.getAudioState().activeStems).toBeGreaterThanOrEqual(1);
+    expect(e.getAudioState().layerGains[e.getAudioState().tier]).toBeGreaterThan(0.5);
+
+    // a later full dispose is clean (no double-dispose throw) and frees everything.
+    expect(() => e.dispose()).not.toThrow();
+    await settle();
+    expect(oldSfx.every((p) => p.disposed)).toBe(true); // still freed, no resurrection
   });
 });
 
@@ -825,11 +983,12 @@ describe("N-tier generalization (4-tier and 5-tier segments)", () => {
     expect(e.getAudioState().segmentIndex).toBe(0); // still here — vocals just revealed
     expect(e.getAudioState().tier).toBe(4); // top revealed + audible
     expect(e.getAudioState().layerGains[4]).toBeGreaterThan(0.9); // vocals ramp not cancelled
-    // BOUNDARY 2: now it advances (clear-gate score still ≥ 30, sticky), carrying the top.
+    // BOUNDARY 2: now it advances (clear-gate score still ≥ 30, sticky), carrying the
+    // floor — CAPPED at top-1 (D3) so the next segment re-earns its own vocals.
     loopBoundary();
     await settle();
     expect(e.getAudioState().segmentIndex).toBe(1);
-    expect(e.getAudioState().tier).toBe(4); // carried the fully-revealed top forward
+    expect(e.getAudioState().tier).toBe(3); // carried floor capped at top-1 (4-1), not 4
   });
 
   it("switchTrack works across DIFFERENT tier counts (song1 4-tier -> song2 5-tier)", async () => {
@@ -1092,21 +1251,23 @@ describe("mandatory advance on full reveal (vocals in → must move on)", () => 
     }
   });
 
-  it("a carried top floor does NOT cascade — the next section re-earns its reveal", async () => {
-    // Section A built to top, advances carrying the top tier as B's floor. B enters at
-    // top but with score 0 → the mandatory advance must NOT fire until B's top reveal is
-    // EARNED again by clears (gate (b)), so B loops in place rather than cascading.
+  it("a carried floor is capped below top → the next section does NOT cascade (re-earns its reveal)", async () => {
+    // Section A built to top, advances. B's carried floor is CAPPED at top-1 (D3), so B
+    // enters BELOW its top with score 0 → it cannot be at-top on entry, and the held flag
+    // resets, so the mandatory advance can't fire until B re-earns the top by clears. B
+    // loops in place rather than cascading.
     const e = await freshEngineWith(nTierManifest("song5", 5));
     for (let i = 0; i < 10; i++) clear(e, 2, 0); // score 30 → clear-gate advance + top
     loopBoundary(); // boundary 1: reveals top tier4 (held — not advanced off the reveal)
     await settle();
     expect(e.getAudioState().segmentIndex).toBe(0);
-    loopBoundary(); // boundary 2: now advances, carrying the top tier as B's floor
+    loopBoundary(); // boundary 2: now advances, carrying the capped floor into B
     await settle();
     expect(e.getAudioState().segmentIndex).toBe(1);
-    expect(e.getAudioState().tier).toBe(4); // carried the top tier forward
-    expect(e.getAudioState().segmentScore).toBe(0); // ...but re-earns from zero
-    // dry boundaries: B is at its top by carry, but the reveal wasn't earned here → holds.
+    expect(e.getAudioState().tier).toBe(3); // carried floor capped at top-1 (4-1), below top
+    expect(e.getAudioState().segmentScore).toBe(0); // ...and re-earns from zero
+    // dry boundaries: B is below its top and earns nothing → it never reaches top, never
+    // arms the mandatory advance → no cascade.
     for (let k = 0; k < 4; k++) {
       loopBoundary();
       await settle();
@@ -1173,5 +1334,221 @@ describe("low-tier segments never auto-advance (no cascade with zero clears)", (
     }
     await earnAdvance(e);
     expect(e.getAudioState().segmentIndex).toBe(1); // clear-gate still advances it
+  });
+});
+
+// ── audio-truth task 2.5: the D3 clear-gated-progression contract, all 6 cases ─────
+describe("clear-gated progression (audio-truth D3) — the 6 contract cases", () => {
+  // (i) carried full-reveal floor caps at top-1, the top is RE-EARNED, then advances
+  //     after one loop at top.
+  it("(i) carried floor caps at top-1, top is re-earned, then advances after one loop", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5)); // top tier = tier4
+    // Build segment 0 to its top + earn the clear-gate, advance into segment 1.
+    for (let i = 0; i < 10; i++) clear(e, 2, 0); // score 30 → top + clear-gate
+    loopBoundary(); // reveal top
+    await settle();
+    loopBoundary(); // advance into seg 1 (carried floor capped at top-1 = 3)
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBe(1);
+    expect(e.getAudioState().tier).toBe(3); // entered at top-1, NOT at vocals
+    // RE-EARN the top in segment 1: bank to the top reveal (tier4 at score ≥24), below
+    // the clear-gate (30), so only the mandatory full-reveal path can advance it.
+    for (let i = 0; i < 8; i++) clear(e, 2, 0); // score 24, < 30
+    expect(e.getAudioState().segmentScore).toBeLessThan(30);
+    loopBoundary(); // boundary A: re-reveal the top tier (vocals) — NO advance here
+    await settle();
+    expect(e.getAudioState().tier).toBe(4);
+    expect(e.getAudioState().segmentIndex).toBe(1); // held this loop (vocals sound)
+    loopBoundary(); // boundary B: top held a full loop → mandatory advance fires
+    await settle();
+    expect(e.getAudioState().segmentIndex).toBe(2);
+  });
+
+  // (ii) a low-tier / floor-only segment never auto-advances with zero clears.
+  it("(ii) a floor-only (top == min-audible floor) segment never auto-advances with zero clears", async () => {
+    const e = await freshEngineWith(nTierManifest("song2t", 2)); // floor == top
+    for (let k = 0; k < 10; k++) {
+      loopBoundary();
+      await settle();
+      expect(e.getAudioState().segmentIndex).toBe(0); // loops forever with no clears
+    }
+  });
+
+  // (iii) no advance on the reveal boundary (ramp-cancel guard, gate c).
+  it("(iii) no advance on the boundary that first reveals the top (ramp-cancel guard)", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5));
+    e.__injectClears(10); // banks BOTH the top reveal AND the clear-gate in one pass
+    loopBoundary(); // reveals top — must NOT advance off it on this same boundary
+    await settle();
+    expect(e.getAudioState().tier).toBe(4); // top revealed + audible
+    expect(e.getAudioState().segmentIndex).toBe(0); // not advanced (gate c held)
+    expect(e.getAudioState().layerGains[4]).toBeGreaterThan(0.9); // reveal ramp intact
+  });
+
+  // (iv) no cascade — a fresh advance needs a fresh full loop in the new segment.
+  it("(iv) the new segment needs a fresh full loop at top — no cascade", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5));
+    for (let i = 0; i < 10; i++) clear(e, 2, 0);
+    loopBoundary(); // reveal
+    await settle();
+    loopBoundary(); // advance into seg 1 (capped floor, held flag reset, score 0)
+    await settle();
+    const idx = e.getAudioState().segmentIndex;
+    expect(idx).toBe(1);
+    for (let k = 0; k < 5; k++) {
+      loopBoundary();
+      await settle();
+      expect(e.getAudioState().segmentIndex).toBe(idx); // no cascade on dry boundaries
+    }
+  });
+
+  // (v) end-of-song fires onSongComplete.
+  it("(v) an earned advance past the TERMINAL segment fires onSongComplete", async () => {
+    const e = await freshEngineWith(nTierManifest("song5", 5));
+    let calls = 0;
+    e.onSongComplete = () => {
+      calls++;
+    };
+    const last = e.getAudioState().segmentCount - 1;
+    for (let k = 0; k < last; k++) await earnAdvance(e);
+    expect(e.getAudioState().segmentIndex).toBe(last);
+    expect(calls).toBe(0);
+    await earnAdvance(e); // advance PAST the terminal segment
+    expect(calls).toBe(1);
+  });
+
+  // (vi) weight pacing: typical clear = 3, big clear = 5 (< 30), streak = 7.
+  it("(vi) clear weight pacing — typical=3, big harvest=5, streak=7, all under the 30 gate", async () => {
+    const e = await freshEngine();
+    // a typical 2-square, no-streak clear → weight 1 + 2 + 0 = 3.
+    clear(e, 2, 0);
+    await settle();
+    expect(e.getAudioState().segmentScore).toBe(3);
+    // a big 4-square single-sweep harvest, no streak → 1 + 4 + 0 = 5 (rewarded, ≪ 30).
+    clear(e, 4, 0);
+    await settle();
+    expect(e.getAudioState().segmentScore).toBe(3 + 5);
+    // a 4-square pass on a ×3 streak (combo = streak-1 = 2) → 1 + 4 + 2 = 7.
+    clear(e, 4, 2);
+    await settle();
+    expect(e.getAudioState().segmentScore).toBe(3 + 5 + 7);
+    // none of these single clears alone crosses ADVANCE_THRESHOLD (30) → no fast-forward.
+    expect(e.getAudioState().segmentScore).toBeLessThan(30);
+  });
+});
+
+// ── audio-truth task 4.3: per-segment SFX palettes + hot-swap lifecycle (D5) ───────
+describe("per-segment SFX palettes (audio-truth D5)", () => {
+  /**
+   * A manifest where segment 0 carries its OWN per-segment `stage` sample but
+   * segment 1 does NOT — to prove the per-segment override AND the song-level
+   * fallback in one fixture (mixed manifest).
+   */
+  const MIXED_SFX = {
+    version: "test-segsfx",
+    songs: [
+      {
+        id: "song1",
+        title: "Song 1",
+        tempo: 110,
+        barSeconds: SEC_PER_BAR,
+        segments: [
+          {
+            ...seg("s0", "PROGRESSION", 1, 4),
+            sfx: { stage: "song1/s0-stage.opus", drop: "song1/s0-drop.opus" },
+          },
+          seg("s1", "PROGRESSION", 1, 4), // NO per-segment sfx → song-level fallback
+          seg("s2", "TERMINAL", 1, 4),
+        ],
+        sfx: {
+          move: "sfx-move.opus",
+          rotate: "sfx-rotate.opus",
+          softdrop: "sfx-softdrop.opus",
+          drop: "song-drop.opus",
+          stage: "song-stage.opus",
+        },
+      },
+    ],
+  };
+
+  it("a segment with its own palette plays ITS sample, not the song-level one", async () => {
+    const e = await freshEngineWith(MIXED_SFX);
+    expect(e.getAudioState().segmentIndex).toBe(0);
+    // a clear on segment 0 must load + fire the SEGMENT's own stage sample.
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    const segStage = mockState.players.filter((p) =>
+      p.url.includes("s0-stage"),
+    );
+    const songStage = mockState.players.filter((p) =>
+      p.url.includes("song-stage"),
+    );
+    expect(segStage.length).toBeGreaterThan(0); // the per-segment sample loaded
+    expect(segStage.flatMap((p) => p.starts).length).toBeGreaterThan(0); // and fired
+    // the song-level stage sample may be PREFETCHED for OTHER segments' pools, but on
+    // segment 0 it is never STARTED — the per-segment override is what sounds.
+    expect(songStage.flatMap((p) => p.starts).length).toBe(0);
+  });
+
+  it("a segment WITHOUT a palette falls back to the song-level sample", async () => {
+    const e = await freshEngineWith(MIXED_SFX);
+    // advance to segment 1 (no per-segment sfx).
+    await earnAdvance(e);
+    expect(e.getAudioState().segmentIndex).toBe(1);
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    // segment 1's stage resolves to the SONG-LEVEL sample (no s1-stage exists).
+    const songStage = mockState.players.filter((p) =>
+      p.url.includes("song-stage"),
+    );
+    expect(songStage.length).toBeGreaterThan(0);
+    expect(songStage.flatMap((p) => p.starts).length).toBeGreaterThan(0);
+  });
+
+  it("an OLD manifest (no per-segment sfx anywhere) resolves all actions to the song-level set", async () => {
+    // the default fixture has only song-level sfx — byte-identical to before.
+    const e = await freshEngine();
+    e.fire({ type: "rotate" });
+    await settle();
+    e.fire({ type: "rotate" });
+    await settle();
+    const rotateVoices = mockState.players.filter((p) =>
+      p.url.includes("sfx-rotate"),
+    );
+    expect(rotateVoices.length).toBeGreaterThan(0); // song-level rotate resolved + played
+    expect(rotateVoices.flatMap((p) => p.starts).length).toBeGreaterThan(0);
+  });
+
+  it("leaving a segment DISPOSES its SFX voices (per-segment lifecycle)", async () => {
+    const e = await freshEngineWith(MIXED_SFX);
+    // fire on segment 0 so its per-segment stage pool is constructed.
+    e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    await settle();
+    const s0Stage = mockState.players.filter((p) => p.url.includes("s0-stage"));
+    expect(s0Stage.length).toBeGreaterThan(0);
+    expect(s0Stage.every((p) => !p.disposed)).toBe(true);
+    // advance OFF segment 0 → after the settle, its SFX voices are disposed.
+    await earnAdvance(e);
+    expect(e.getAudioState().segmentIndex).toBeGreaterThan(0);
+    await settle();
+    const s0StageAfter = mockState.players.filter((p) =>
+      p.url.includes("s0-stage"),
+    );
+    expect(s0StageAfter.length).toBeGreaterThan(0); // they were constructed
+    expect(s0StageAfter.every((p) => p.disposed)).toBe(true); // ...and now disposed
+  });
+
+  it("a one-shot requested during a swap never throws into the game (silent drop)", async () => {
+    const e = await freshEngineWith(MIXED_SFX);
+    // fire on segment 1 BEFORE its pool has a chance to exist — must not throw.
+    await earnAdvance(e);
+    expect(() => {
+      e.fire({ type: "lineClear", squares: 2, combo: 0 });
+    }).not.toThrow();
+    await settle();
   });
 });

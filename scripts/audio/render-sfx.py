@@ -12,8 +12,19 @@ map to gameplay-action categories:
 song2: NO slicing (D5, low budget). A few subtle in-key sine/triangle tones
 derived from the song key, short and understated, for move/rotate/stage/drop.
 
+PER-SEGMENT SFX (audio-truth task 8.1 / action-sfx spec). On top of the song-level
+set, cut a per-SEGMENT palette: for each segment, slice action one-shots from THAT
+segment's own stems within its bar window, biased by the segment's `character`
+(e.g. a "build" segment's stage sound is a riser from its own build stems; a
+"beat-drop" segment's drop is its own kick/impact). A segment that yields no clean
+slice for an action keeps the SONG-LEVEL sample as the fallback (the engine already
+resolves segment -> song-level -> silence), so per-segment is an improvement layer,
+never a hard dependency. Originals are preserved (new output dirs, like the
+existing song-level convention). Toggle with PER_SEGMENT_SFX.
+
 Each SFX is trimmed, fades applied (no clicks), peak-guarded, loudness-normalized
-to ~-14 LUFS. Outputs build/wav/sfx/<song>/<name>.wav + a per-song sfx report.
+to ~-14 LUFS. Outputs build/wav/sfx/<song>/<name>.wav (song-level) +
+build/wav/sfx/<song>/<segid>/<name>.wav (per-segment) + a per-song sfx report.
 
 Run: .venv-audio/bin/python scripts/audio/render-sfx.py
 """
@@ -31,6 +42,50 @@ REPORTS = os.path.join(ROOT, "build-reports")
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 SR = 48000
 TARGET_LUFS = -14.0
+
+# ── per-segment SFX (task 8.1) ────────────────────────────────────────────────
+# When on, cut a per-SEGMENT palette from each segment's own stems within its bar
+# window (in ADDITION to the song-level set, which is the fallback). Off => only the
+# song-level set is rendered (byte-identical to before).
+PER_SEGMENT_SFX = True
+
+# Per-segment source stems to slice from, by action — biased so each action's sound
+# comes from a fitting layer of THAT segment (a stage riser from synth/fx, a drop
+# from drums/bass, vocal ad-libs for move/rotate). Names mirror render-tiers LAYERS;
+# the slicer falls back across the list until one yields a clean slice.
+SEG_SLICE_STEMS = {
+    "song1": {
+        "stage": ["2 Synth.wav", "1 FX.wav", "4 Guitar.wav"],
+        "drop": ["6 Drums.wav", "5 Bass.wav", "3 Percussion.wav"],
+        "move": ["7 Vocals.wav", "2 Synth.wav"],
+        "rotate": ["7 Vocals.wav", "4 Guitar.wav"],
+        "softdrop": ["7 Vocals.wav", "2 Synth.wav"],
+    },
+    "song2": {
+        "stage": ["2 Synth.wav", "1 FX.wav"],
+        "drop": ["4 Drums.wav", "3 Bass.wav"],
+        "move": ["6 Vocals.wav", "2 Synth.wav"],
+        "rotate": ["6 Vocals.wav", "1 FX.wav"],
+        "softdrop": ["6 Vocals.wav", "2 Synth.wav"],
+    },
+}
+
+# A segment's `character` biases WHICH actions get a per-segment cut and how (a
+# vocal-body segment yields good move/rotate ad-libs; an instrumental break yields a
+# good stage/drop). A substring match on the lowercased character string.
+def character_action_bias(character):
+    c = (character or "").lower()
+    bias = {"stage", "drop", "move", "rotate", "softdrop"}  # default: try all
+    if "vocal" in c:
+        # vocal-led: prefer the vocal-derived move/rotate/softdrop + stage.
+        bias = {"move", "rotate", "softdrop", "stage"}
+    elif "drop" in c or "beat" in c or "break" in c or "loop" in c:
+        # rhythmic/instrumental: prefer drop + stage.
+        bias = {"drop", "stage"}
+    elif "build" in c or "riser" in c or "intro" in c or "outro" in c:
+        # builds/risers: a stage riser + a drop impact.
+        bias = {"stage", "drop"}
+    return bias
 
 
 def loudnorm(in_path, out_path, target=TARGET_LUFS):
@@ -135,6 +190,105 @@ def slice_song1():
     return chosen, len(cands), len(onsets)
 
 
+def _candidates_in_window(mono, sr):
+    """Onset-detect + score clean one-shot candidates in a mono buffer (the segment's
+    stem window). Same scoring as slice_song1, factored for reuse: returns a list of
+    candidate dicts (samples + dur/peak/centroid/isolation)."""
+    n = len(mono)
+    if n < int(0.06 * sr):
+        return []
+    onsets = librosa.onset.onset_detect(y=mono, sr=sr, backtrack=True, units="samples")
+    cands = []
+    max_len = int(0.9 * sr)
+    floor = 10 ** (-45 / 20)
+    for k, on in enumerate(onsets):
+        nxt = onsets[k + 1] if k + 1 < len(onsets) else n
+        end = min(on + max_len, nxt, n)
+        seg = mono[on:end]
+        if len(seg) < int(0.04 * sr):
+            continue
+        env = np.abs(seg)
+        active = np.where(env > floor)[0]
+        if len(active) == 0:
+            continue
+        seg = seg[: active[-1] + int(0.02 * sr)]
+        dur = len(seg) / sr
+        if dur < 0.06 or dur > 0.85:
+            continue
+        pre0 = max(0, on - int(0.06 * sr))
+        pre_rms = np.sqrt(np.mean(mono[pre0:on] ** 2)) + 1e-9
+        peak = float(np.abs(seg).max())
+        if peak < 0.05:
+            continue
+        rms = float(np.sqrt(np.mean(seg ** 2)))
+        cen = float(librosa.feature.spectral_centroid(y=seg, sr=sr).mean())
+        isolation_db = 20 * np.log10((rms + 1e-9) / pre_rms)
+        cands.append({
+            "dur": round(dur, 3), "peak": round(peak, 3),
+            "rms_db": round(20 * np.log10(rms + 1e-12), 2),
+            "centroid": round(cen, 1), "isolation_db": round(isolation_db, 2),
+            "samples": seg.astype(np.float32),
+        })
+    return cands
+
+
+def _pick_for_action(cands, action):
+    """Pick the single best candidate for an action from a window's candidates.
+    move/rotate/softdrop -> short + bright + isolated; stage -> longer/rising;
+    drop -> punchy (high peak). None if nothing clean enough."""
+    if not cands:
+        return None
+    if action in ("move", "rotate", "softdrop"):
+        pool = sorted(
+            [c for c in cands if c["dur"] <= 0.30 and c["isolation_db"] > 0],
+            key=lambda c: (c["centroid"], c["isolation_db"]), reverse=True,
+        )
+    elif action == "stage":
+        pool = sorted(
+            [c for c in cands if 0.20 < c["dur"] <= 0.85],
+            key=lambda c: (c["centroid"] * 0.5 + c["isolation_db"]), reverse=True,
+        )
+    else:  # drop
+        pool = sorted(cands, key=lambda c: c["peak"], reverse=True)
+    return pool[0] if pool else None
+
+
+def slice_segment(song, character, i0, i1):
+    """Cut a per-SEGMENT action palette from THAT segment's own stems within its bar
+    window [i0,i1]. Biased by `character` (which actions to attempt). Returns a dict
+    {action -> candidate}; any action with no clean slice is OMITTED so the engine
+    falls back to the song-level sample. Best-effort per action/stem."""
+    bias = character_action_bias(character)
+    stem_map = SEG_SLICE_STEMS.get(song, {})
+    chosen = {}
+    cache = {}  # stem name -> mono window (load once per stem per segment)
+    for action in ("stage", "drop", "move", "rotate", "softdrop"):
+        if action not in bias:
+            continue
+        for stem_name in stem_map.get(action, []):
+            if stem_name not in cache:
+                try:
+                    d, sr = sf.read(os.path.join(SRC, song, stem_name),
+                                    dtype="float32", always_2d=True)
+                    if sr != SR:
+                        cache[stem_name] = None
+                    else:
+                        lo = max(0, min(i0, d.shape[0]))
+                        hi = max(lo, min(i1, d.shape[0]))
+                        cache[stem_name] = d[lo:hi].mean(axis=1)
+                except Exception:  # noqa: BLE001
+                    cache[stem_name] = None
+            mono = cache[stem_name]
+            if mono is None:
+                continue
+            pick = _pick_for_action(_candidates_in_window(mono, SR), action)
+            if pick is not None:
+                pick = {**pick, "stem": stem_name}
+                chosen[action] = pick
+                break  # first stem that yields a clean slice wins
+    return chosen
+
+
 def tone(freq, dur, kind="tri", attack=0.01, release=0.12):
     n = int(dur * SR)
     t = np.arange(n) / SR
@@ -167,10 +321,11 @@ def synth_song2():
     }
 
 
-def emit(song, items, report):
-    outdir = os.path.join(OUT, song)
+def _emit_set(outdir, items):
+    """Write one {action -> candidate/buffer} set to `outdir` as sfx-<name>.wav.
+    Returns the per-action metadata map."""
     os.makedirs(outdir, exist_ok=True)
-    song_rep = {}
+    rep = {}
     for name, payload in items.items():
         buf = payload["samples"] if isinstance(payload, dict) else payload
         if buf.ndim == 1:
@@ -185,22 +340,60 @@ def emit(song, items, report):
         meta = {"wav": out, "durSec": round(buf.shape[0] / SR, 3)}
         if isinstance(payload, dict):
             meta.update({k: payload[k] for k in
-                         ("onset_s", "centroid", "isolation_db", "peak") if k in payload})
-        song_rep[name] = meta
-        print(f"  {song} sfx-{name:<9} {meta['durSec']}s "
-              + (f"src@{payload.get('onset_s')}s cen={payload.get('centroid')}"
-                 if isinstance(payload, dict) else "(synth tone)"))
+                         ("onset_s", "centroid", "isolation_db", "peak", "stem")
+                         if k in payload})
+        rep[name] = meta
+    return rep
+
+
+def emit(song, items, report):
+    """Emit the SONG-LEVEL set into build/wav/sfx/<song>/."""
+    song_rep = _emit_set(os.path.join(OUT, song), items)
+    for name, meta in song_rep.items():
+        print(f"  {song} sfx-{name:<9} {meta['durSec']}s")
     report[song] = song_rep
+
+
+def emit_segments(song, segments, report):
+    """Cut + emit a PER-SEGMENT palette for each segment (task 8.1). Each segment's
+    set lands in build/wav/sfx/<song>/<segid>/; only the actions that yielded a clean
+    slice are written (the rest fall back to the song-level set in the engine). The
+    song-level originals (emitted by `emit`) are untouched."""
+    if not PER_SEGMENT_SFX:
+        return
+    plan = json.load(open(os.path.join(ROOT, "scripts", "audio", "cut-plan.json")))
+    sp = plan.get(song, {})
+    spb, origin = sp.get("secPerBar"), sp.get("origin")
+    if spb is None or origin is None:
+        return
+    seg_reports = {}
+    for seg in segments:
+        i0 = int(round((origin + seg["startBar"] * spb) * SR))
+        i1 = int(round((origin + (seg["endBar"] + 1) * spb) * SR))
+        chosen = slice_segment(song, seg.get("character"), i0, i1)
+        if not chosen:
+            print(f"  {song} {seg['id']:<12} per-seg: no clean slice -> song-level fallback")
+            continue
+        outdir = os.path.join(OUT, song, seg["id"])
+        seg_rep = _emit_set(outdir, chosen)
+        seg_reports[seg["id"]] = seg_rep
+        print(f"  {song} {seg['id']:<12} per-seg cut: {list(seg_rep)}")
+    report.setdefault("perSegment", {})[song] = seg_reports
 
 
 def main():
     report = {}
-    print("song1: slicing ad-lib stabs from vocal stem...")
+    plan = json.load(open(os.path.join(ROOT, "scripts", "audio", "cut-plan.json")))
+    print("song1: slicing ad-lib stabs from vocal stem (song-level)...")
     chosen, ncand, nonset = slice_song1()
     print(f"  onsets={nonset} candidates(after gate)={ncand} chosen={list(chosen)}")
     emit("song1", chosen, report)
-    print("song2: subtle in-key tones (D5, no slicing)...")
+    print("song2: subtle in-key tones (D5, no slicing, song-level)...")
     emit("song2", synth_song2(), report)
+    if PER_SEGMENT_SFX:
+        print("per-segment palettes (cut from each segment's own stems)...")
+        for song in ("song1", "song2"):
+            emit_segments(song, plan.get(song, {}).get("segments", []), report)
     os.makedirs(REPORTS, exist_ok=True)
     # strip numpy from report
     json.dump(report, open(os.path.join(REPORTS, "sfx-report.json"), "w"), indent=2, default=str)

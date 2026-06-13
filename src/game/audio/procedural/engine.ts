@@ -92,6 +92,38 @@ const SNAP_S = 0.012;
 const SFX_VOICES = 4;
 /** Min spacing between two starts on the SFX pool so Tone never sees a tie. */
 const SFX_RETRIGGER_EPSILON = 0.002;
+/** Default velocity for the non-scaled action one-shots (rotate / soft-drop). */
+const SFX_ACTION_VELOCITY = 0.85;
+/** Fixed-hot velocity for a chain's clear-stage hit (bigger than any plain clear). */
+const SFX_CHAIN_VELOCITY = 0.95;
+
+/**
+ * Clear-stage velocity from the clear size: a bigger clear sounds hotter (D4).
+ * `clamp(0.6 + 0.1*squares, 0.6, 1.0)` — a 1-square clear = 0.7, a 4-square = 1.0.
+ * Exported for the routing/velocity unit test.
+ */
+export function stageVelocityForSquares(squares: number): number {
+  const s = Number.isFinite(squares) ? Math.max(0, squares) : 0;
+  return Math.max(0.6, Math.min(1.0, 0.6 + 0.1 * s));
+}
+
+/**
+ * Universal-lock velocity from the settle cause (D4): hard hits hardest, gravity /
+ * soft are softer. An absent/unknown cause (neutral lock) uses the gravity floor.
+ * Exported for the routing/velocity unit test.
+ */
+export function dropVelocityForCause(
+  cause: "hard" | "soft" | "gravity" | undefined,
+): number {
+  switch (cause) {
+    case "hard":
+      return 1.0;
+    case "soft":
+      return 0.7;
+    default: // "gravity" or undefined → the neutral floor
+      return 0.6;
+  }
+}
 
 // ── clear-gated tuning (the named knobs — sized for the FINE cut) ─────────────
 //
@@ -119,7 +151,10 @@ const SFX_RETRIGGER_EPSILON = 0.002;
  * the usual trigger and this clear-gate is the higher fallback (it still governs any
  * segment that has no tier above its min-audible floor, where the mandatory path is
  * intentionally disabled — see shouldAdvance gate (a)). A clear feeds weight =
- * 1 + squares + combo (≈3–5 typical).
+ * `1 + squares + combo` where `combo` is the REAL streak offset (`comboMultiplier - 1`,
+ * 0 = no streak) from truthful pass telemetry (audio-truth D2): a typical 2-square
+ * no-streak clear = 1+2+0 = 3, a 4-square single-sweep harvest = 1+4+0 = 5 (rewarded,
+ * still ≪ 30 = no fast-forward), a 4-square pass on a ×3 streak = 1+4+2 = 7.
  */
 const ADVANCE_THRESHOLD = 30;
 /**
@@ -173,12 +208,22 @@ export function makeTrack(id: string, base: string): TrackBundle {
   return { id, base };
 }
 
-/** A coarse "what just happened" describing one game action, fed to the engine. */
+/**
+ * A coarse "what just happened" describing one game action, fed to the engine.
+ *
+ * `lock.cause` (additive, audio-truth D1/D4): the settle cause carried from the
+ * deriver's `lastLock.cause` so the universal lock thud scales by it (hard hits
+ * hardest). Optional for back-compat — an absent cause routes a neutral lock.
+ *
+ * `lineClear.combo` now carries the REAL streak offset (`comboMultiplier - 1`,
+ * 0 = no streak) from truthful pass telemetry, so the engine's existing
+ * `1 + squares + combo` clear-weight needs no change (audio-truth D1/D2).
+ */
 export type AudioEvent =
   | { type: "move" }
   | { type: "rotate" }
   | { type: "softDrop" }
-  | { type: "lock" }
+  | { type: "lock"; cause?: "hard" | "soft" | "gravity" }
   | { type: "lineClear"; squares: number; combo: number }
   | { type: "chain"; size: number };
 
@@ -204,6 +249,15 @@ interface ManifestSegment {
   barWindowSeconds?: number;
   character?: string;
   tiers: ManifestTiers;
+  /**
+   * OPTIONAL per-segment SFX palette (audio-truth D5), same shape as the song-level
+   * `sfx`. When present, the engine plays THESE samples while this segment is active
+   * (action sounds belong to what's currently playing — an intro's ad-libs differ
+   * from a beat-drop's). Resolution falls back to the song-level `sfx`, then silence
+   * (see {@link segmentSfxUrlFor}). Absent on every current manifest → the song-level
+   * set is used unchanged (no behaviour change without new assets).
+   */
+  sfx?: ManifestSfx;
 }
 interface ManifestSfx {
   move?: string;
@@ -257,18 +311,36 @@ function tierCountOf(seg: LoadedSegment): number {
   return seg.tierKeys.length;
 }
 
-/** Resolve the {move,rotate,softdrop,harddrop,stage} SfxName set from manifest sfx. */
+/**
+ * Resolve the {move,rotate,softdrop,drop,stage} SfxName set from a manifest sfx
+ * map. `SfxName` now matches the `ManifestSfx` keys ONE-TO-ONE (the prior
+ * harddrop→drop quirk is gone), so this is a direct lookup.
+ */
 function sfxUrlFor(
   name: SfxName,
   sfx: ManifestSfx | undefined,
   base: string,
 ): string | undefined {
   if (!sfx) return undefined;
-  // The SFX routing calls hard-drop "harddrop"; the manifest names it "drop". Every
-  // other SfxName is also a ManifestSfx key, so this maps the one mismatch.
-  const key: keyof ManifestSfx = name === "harddrop" ? "drop" : name;
-  const rel = sfx[key];
+  const rel = sfx[name];
   return rel ? `${base}/${rel}` : undefined;
+}
+
+/**
+ * Resolve one action SFX url for a SEGMENT (audio-truth D5): the segment's own
+ * `sfx` entry if present, else the song-level `sfx`, else undefined (silence). An
+ * old manifest (no `segments[].sfx`) resolves every action to the song-level set
+ * exactly as before — byte-identical behaviour without new assets.
+ */
+function segmentSfxUrlFor(
+  name: SfxName,
+  seg: ManifestSegment | undefined,
+  song: ManifestSong | undefined,
+  base: string,
+): string | undefined {
+  return (
+    sfxUrlFor(name, seg?.sfx, base) ?? sfxUrlFor(name, song?.sfx, base)
+  );
 }
 
 /** A round-robin pool of identical one-shot voices for one SFX name. */
@@ -390,6 +462,19 @@ export class InteractiveAudioEngine {
    * burst that earns one advance leaves the next segment back at 0.
    */
   private segmentScore = 0;
+  /**
+   * Per-segment flag (reset on every {@link enterSegment}): the segment's TOP tier
+   * has been AUDIBLE for at least one full loop. Set true on the boundary AFTER the
+   * one that first makes `this.tier === top`, so the top mix (vocals) is heard for a
+   * whole loop before the mandatory full-reveal advance can arm — see {@link
+   * shouldAdvance} gate (b). This is the B2 fix: it replaces the old
+   * "top reveal earned in-segment (segmentScore ≥ top·STEP)" gate so a segment that
+   * reached the top by ANY path advances after one loop instead of looping vocals
+   * forever. The carried entry floor is capped at `top - 1` (see enterSegment), so
+   * the top is always RE-EARNED in-segment, then held one loop — the rule fires
+   * uniformly with no special case for carries.
+   */
+  private topHeldSinceBoundary = false;
   /** A segment hand-off crossfade is mid-flight (the in-flight advance lock). */
   private transitionInFlight = false;
   private transitionToken = 0;
@@ -774,9 +859,10 @@ export class InteractiveAudioEngine {
     }
   }
 
-  /** Prefetch (lazy-load) a segment ahead of reaching it. Best-effort. */
+  /** Prefetch (lazy-load) a segment's tiers + SFX ahead of reaching it. Best-effort. */
   private async prefetch(index: number): Promise<void> {
     if (index < 0 || index >= this.segments.length) return;
+    this.prefetchSegmentSfx(index); // its action sounds are ready before entry
     await this.loadSegment(index);
   }
 
@@ -803,11 +889,17 @@ export class InteractiveAudioEngine {
     // The sticky floor carried in from the previous segment (0 on a fresh first entry),
     // raised to the hard min-audible floor (tierFloorFor → ≥2 layers) so EVERY entry —
     // the opening included — always has at least drums + bass, never a bare ≈1 layer.
-    // The carried floor may be the previous section's TOP tier (fully-revealed carries
-    // forward); the MANDATORY full-reveal advance does NOT cascade off that, because
-    // {@link shouldAdvance} requires the top reveal to be EARNED by clears in THIS
-    // segment (segmentScore ≥ top·TIER_REVEAL_STEP), not merely carried — see its (b).
     let startTier = Math.max(this.entryFloor, this.tierFloorFor(seg));
+    // B2 FIX (D3): CAP the carried floor below this segment's TOP so vocals are
+    // RE-EARNED per segment. A fully-revealed previous segment would otherwise carry
+    // its top tier in and the section would enter AT vocals with segmentScore 0 —
+    // either looping vocals forever (old gate (b)) or, if gate (b) accepted carries,
+    // auto-advancing every post-climax segment with zero clears (autonomous timeline
+    // by the back door). Capping at `max(tierFloorFor, top - 1)` forces the player's
+    // clears to re-reveal the top in THIS segment, keeping clears in the loop while
+    // still guaranteeing the top never loops forever. The ≥2-layer min-audible floor
+    // still wins for a low-tier segment (tierFloorFor ≥ top - 1 there).
+    startTier = Math.min(startTier, Math.max(this.tierFloorFor(seg), top - 1));
     // Clamp to this segment's ceiling (a 4-tier seg can't show tier4) + a loaded tier.
     startTier = Math.max(0, Math.min(top, startTier));
     startTier = this.nearestAvailableAtOrBelow(seg, startTier);
@@ -816,6 +908,9 @@ export class InteractiveAudioEngine {
     this.armedTier = startTier;
     this.tierFading = false;
     this.segmentScore = 0;
+    // Reset the full-reveal-held flag: the top must be re-earned + heard a full loop
+    // in THIS segment before the mandatory advance can arm (no cascade across entries).
+    this.topHeldSinceBoundary = false;
     // The floor THIS segment will hold to (sticky reveal never drops below it).
     this.entryFloor = startTier;
     // Record what this segment SHOULD sound at, so a tier whose player loads AFTER
@@ -829,6 +924,11 @@ export class InteractiveAudioEngine {
       const target = t === startTier ? 1 : 0;
       this.rampGain(seg.tierGains[t], target, fresh ? SNAP_S : XFADE_S, at);
     }
+
+    // Hot-swap the SFX palette (D5): prefetch THIS segment's per-segment SFX pools so
+    // the action sounds belong to what is now playing. Falls back to the song-level
+    // set per name; a no-op if already loaded (idempotent).
+    this.prefetchSegmentSfx(index);
   }
 
   /**
@@ -976,6 +1076,15 @@ export class InteractiveAudioEngine {
     // immediately cancelled by the advance's fade-out).
     const tierBefore = this.tier;
 
+    // TOP-HELD latch (D3 gate (b)): if the top tier was ALREADY audible coming INTO
+    // this boundary (it was revealed on a PRIOR boundary and has now played a full
+    // loop), mark it held. This is set on the boundary AFTER the one that first put
+    // `this.tier === top` — so the top mix is heard for one whole loop before the
+    // mandatory advance can arm. Reset to false on every enterSegment (no cascade).
+    if (tierBefore >= this.maxTier(seg)) {
+      this.topHeldSinceBoundary = true;
+    }
+
     // 1) VERTICAL FIRST: reveal the sticky cumulative tier earned so far and crossfade
     //    up to it on this boundary. Updating `this.tier` here means an advance committed
     //    in step 2 carries the JUST-REVEALED tier forward as the next segment's floor.
@@ -1048,9 +1157,13 @@ export class InteractiveAudioEngine {
    *       ≥2-layer floor parks at its ceiling) has nothing to "earn", so it never
    *       mandatorily advances (it can still advance via the clear-gate). This is what
    *       prevents a low-tier segment from auto-advancing every bar with zero clears.
-   *   (b) the top reveal was EARNED by clears (`segmentScore ≥ maxTier·TIER_REVEAL_STEP`)
-   *       — being at the top because it was the carried entry floor is NOT enough; the
-   *       player must have actually cleared up to the top in THIS segment.
+   *   (b) the top tier has been AUDIBLE for a full loop (`topHeldSinceBoundary`) — set
+   *       on the boundary AFTER the one that first revealed the top (B2/D3). The carried
+   *       entry floor is capped at `top - 1` (see enterSegment), so the top is always
+   *       RE-EARNED in THIS segment by clears and then held one loop; the rule fires
+   *       uniformly whether the top was earned from the floor or from bare, with no
+   *       special case for carries. A carried-in top is impossible (the cap), so this
+   *       never fires on a zero-clear segment that merely inherited a high floor.
    *   (c) the top tier was ALREADY audible coming INTO this boundary (`tierBefore ≥ top`)
    *       — so a boundary that JUST revealed the top tier does not also advance off it on
    *       the same boundary (which would cancel the reveal ramp and the vocals would
@@ -1079,7 +1192,7 @@ export class InteractiveAudioEngine {
     if (this.segmentScore >= ADVANCE_THRESHOLD) return true;
     // MANDATORY full-reveal advance — see the three gates (a)/(b)/(c) above.
     if (top <= this.tierFloorFor(seg)) return false; // (a) no headroom above the floor
-    if (this.segmentScore < top * TIER_REVEAL_STEP) return false; // (b) reveal not earned
+    if (!this.topHeldSinceBoundary) return false; // (b) top not yet audible a full loop
     if (tierBefore < top) return false; // (c) top wasn't audible yet (don't cut vocals)
     return true;
   }
@@ -1176,21 +1289,40 @@ export class InteractiveAudioEngine {
   }
 
   /**
-   * Route an event. Clears (lineClear/chain) are SILENT — they only feed the monotonic
-   * `segmentScore` that drives BOTH the sticky tier reveal and the segment advance.
-   * Actions fire their mapped Layer-4 ad-lib one-shot.
+   * Route an event. Clears (lineClear/chain) BOTH feed the monotonic `segmentScore`
+   * (the progression — sticky tier reveal + segment advance) AND fire the clear-stage
+   * one-shot (B3 — clears are no longer silent). Every other action fires its mapped
+   * one-shot at a cause-/size-scaled velocity. `move` is silent (no routing entry).
    */
   private play(ev: AudioEvent, time: number): void {
+    // Clears drive progression first (unchanged weight: 1 + squares + combo, where
+    // combo is the real streak offset; chain: 2 + min(8, size)). The early `return`
+    // that suppressed their SFX is gone — they now ALSO route the clear-stage sound.
     if (ev.type === "lineClear") {
       this.onScore(1 + ev.squares + ev.combo);
+      const route = routeEvent(ev);
+      if (route.sfx) {
+        this.playSfx(route.sfx, time, stageVelocityForSquares(ev.squares));
+      }
       return;
     }
     if (ev.type === "chain") {
       this.onScore(2 + Math.min(8, ev.size));
+      const route = routeEvent(ev);
+      // A chain is audibly DISTINCT: a hot `stage` plus a layered `drop` impact (D4a).
+      if (route.sfx) this.playSfx(route.sfx, time, SFX_CHAIN_VELOCITY);
+      if (route.layer) this.playSfx(route.layer, time, SFX_CHAIN_VELOCITY);
       return;
     }
     const route = routeEvent(ev);
-    if (route.sfx) this.playSfx(route.sfx, time, 0.85);
+    if (!route.sfx) return; // move (and any unmapped action) is silent
+    // A lock thuds on EVERY settle, scaled by cause (hard hardest); other actions use
+    // the default action velocity.
+    const velocity =
+      ev.type === "lock"
+        ? dropVelocityForCause(ev.cause)
+        : SFX_ACTION_VELOCITY;
+    this.playSfx(route.sfx, time, velocity);
   }
 
   /**
@@ -1250,14 +1382,40 @@ export class InteractiveAudioEngine {
     this.onLoopBoundary(this.nextBar());
   }
 
-  // ── Layer-4 SFX (lazy voice POOL per name, loaded per active song) ──────────
+  // ── Layer-4 SFX — PER-SEGMENT voice pools, hot-swapped on segment entry (D5) ──
+  //
+  // SFX are SEGMENT-scoped: each segment has its own per-name pool, resolved from
+  // its `segments[].sfx` (falling back to the song-level set). Prefetched on segment
+  // entry, disposed with the left-behind segment, and `playSfx` reads the ACTIVE
+  // segment's pool — so action sounds always belong to what is currently playing. An
+  // old manifest (no per-segment sfx) resolves every segment to the song-level urls,
+  // so this is byte-identical to the song-scoped behaviour without new assets.
 
-  private sfxPools: Partial<Record<SfxName, SfxVoicePool>> = {};
+  /** Per-segment SFX pools, keyed by segment index → {name → voice pool}. */
+  private sfxPoolsBySegment = new Map<number, Partial<Record<SfxName, SfxVoicePool>>>();
+
+  /** The active segment's pool set (created lazily). */
+  private activeSfxPools(): Partial<Record<SfxName, SfxVoicePool>> {
+    return this.sfxPoolsForSegment(this.segmentIndex);
+  }
+
+  /** The pool set for `index`, created (empty) on first access. */
+  private sfxPoolsForSegment(
+    index: number,
+  ): Partial<Record<SfxName, SfxVoicePool>> {
+    let pools = this.sfxPoolsBySegment.get(index);
+    if (!pools) {
+      pools = {};
+      this.sfxPoolsBySegment.set(index, pools);
+    }
+    return pools;
+  }
 
   private playSfx(name: SfxName, time: number, velocity = 1): void {
-    const pool = this.sfxPools[name];
+    const pools = this.activeSfxPools();
+    const pool = pools[name];
     if (!pool || pool.voices.length === 0) {
-      void this.ensureSfx(name);
+      void this.ensureSfx(this.segmentIndex, name);
       return;
     }
     try {
@@ -1274,18 +1432,28 @@ export class InteractiveAudioEngine {
     }
   }
 
-  private async ensureSfx(name: SfxName): Promise<void> {
+  /**
+   * Lazily load one SFX name's voice pool FOR a specific segment, resolving the url
+   * segment → song-level → silence ({@link segmentSfxUrlFor}). Idempotent per
+   * (segment, name); load-gen guarded so a teardown can't leave orphan voices.
+   */
+  private async ensureSfx(index: number, name: SfxName): Promise<void> {
     const master = this.master;
     const song = this.song;
-    if (!master || !song || this.sfxPools[name]) return;
-    const url = sfxUrlFor(name, song.sfx, ASSET_BASE);
+    if (!master || !song) return;
+    const pools = this.sfxPoolsForSegment(index);
+    if (pools[name]) return;
+    const url = segmentSfxUrlFor(name, this.segments[index]?.meta, song, ASSET_BASE);
     if (!url) return;
+    const gen = this.loadGen;
     const pool: SfxVoicePool = { voices: [], next: 0, lastStart: -Infinity };
-    this.sfxPools[name] = pool;
+    pools[name] = pool;
     const loaded = await Promise.all(
       Array.from({ length: SFX_VOICES }, () => this.loadPlayer(url)),
     );
-    if (this.sfxPools[name] !== pool) {
+    // a teardown/switch (loadGen bump) or a fresh pool replaced this one mid-load →
+    // dispose what we built rather than leaking orphan voices into a dead bank.
+    if (gen !== this.loadGen || this.sfxPoolsBySegment.get(index)?.[name] !== pool) {
       for (const p of loaded) p?.dispose();
       return;
     }
@@ -1295,7 +1463,35 @@ export class InteractiveAudioEngine {
         pool.voices.push(p);
       }
     }
-    if (pool.voices.length === 0) delete this.sfxPools[name];
+    if (pool.voices.length === 0) delete pools[name];
+  }
+
+  /**
+   * Prefetch the ENTERING segment's SFX pools (D5) alongside its tier prefetch, so
+   * its action sounds are ready the moment it becomes audible. Best-effort: each name
+   * resolves segment → song-level → silence; a name with no url is simply skipped.
+   */
+  private prefetchSegmentSfx(index: number): void {
+    const song = this.song;
+    if (!song || index < 0 || index >= this.segments.length) return;
+    const names: SfxName[] = ["move", "rotate", "softdrop", "drop", "stage"];
+    for (const name of names) {
+      const url = segmentSfxUrlFor(
+        name,
+        this.segments[index]?.meta,
+        song,
+        ASSET_BASE,
+      );
+      if (url) void this.ensureSfx(index, name);
+    }
+  }
+
+  /** Dispose + drop a segment's entire SFX pool set (best-effort). */
+  private disposeSegmentSfx(index: number): void {
+    const pools = this.sfxPoolsBySegment.get(index);
+    if (!pools) return;
+    for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
+    this.sfxPoolsBySegment.delete(index);
   }
 
   // ── timing + gain helpers ────────────────────────────────────────────────────
@@ -1419,6 +1615,21 @@ export class InteractiveAudioEngine {
     this.transitionInFlight = false;
     this.clearScheduled();
 
+    // The old (outgoing) per-segment SFX pools. The switch OWNS retiring this bank: it
+    // disposes oldSfx on success (after the crossfade settles) AND on every bail/throw,
+    // so the old voices never leak. `newSfx` is the switch's OWN fresh map; the switch
+    // only ever installs/disposes it under an IDENTITY check, so a concurrent
+    // resetForNewGame/dispose that installs its own map is never stomped.
+    const oldSfx = this.sfxPoolsBySegment;
+    let newSfx: Map<number, Partial<Record<SfxName, SfxVoicePool>>> | undefined;
+    // Retire the old bank's SFX (dispose every pool); idempotent (clear() empties it).
+    const disposeOldSfx = () => {
+      for (const pools of oldSfx.values()) {
+        for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
+      }
+      oldSfx.clear();
+    };
+
     try {
       const song = this.resolveSong(manifest, track);
       if (!song || song.segments.length === 0) {
@@ -1426,7 +1637,6 @@ export class InteractiveAudioEngine {
         return;
       }
       const oldSegments = this.segments;
-      const oldSfx = this.sfxPools;
       const from = oldSegments[this.segmentIndex];
 
       // Build + load the new song's intro before crossfading.
@@ -1434,7 +1644,8 @@ export class InteractiveAudioEngine {
       this.segments = newSegments;
       this.song = song;
       this.currentTrack = track;
-      this.sfxPools = {};
+      newSfx = new Map();
+      this.sfxPoolsBySegment = newSfx;
       this.songCompleted = false;
       this.segmentIndex = 0;
       this.maxSegmentReached = 0;
@@ -1443,10 +1654,29 @@ export class InteractiveAudioEngine {
       this.applyTempo(song);
       await this.loadSegment(0);
       // Superseded during the intro load (a reset/dispose/another switch bumped loadGen,
-      // or a later switch changed the track) → don't enter/schedule into this now-stale
-      // bank. Dispose the nodes this switch built and bail.
+      // or a later switch changed the track). Dispose the nodes THIS switch built and the
+      // OLD bank it was retiring, then bail. We do NOT re-attach oldSfx: the superseding
+      // op now owns `this.sfxPoolsBySegment` and is responsible for it; we only touch our
+      // OWN map (newSfx), and only if it is still the attached one (an identity check so
+      // we never dispose/replace a reset-owned map). The bail path never reached
+      // enterSegment/prefetch, so newSfx holds no pools — but dispose it defensively.
       if (gen !== this.loadGen || this.currentTrack.id !== track.id) {
         for (const seg of newSegments) this.disposeLoaded(seg);
+        // Retire the OLD TIER bank too: a superseding reset/dispose only sees + disposes
+        // the new `this.segments` (= newSegments); the original oldSegments are held only
+        // in this suspended call, so if we don't free them here their tier players/gains
+        // leak (and could keep playing). Symmetric with disposeOldSfx below.
+        for (const seg of oldSegments) this.disposeLoaded(seg);
+        if (this.sfxPoolsBySegment === newSfx) {
+          this.disposeAllSfx(); // our own (empty) map is still attached — free + clear it
+        } else {
+          // a superseding op replaced our map: dispose only our own pools, leave theirs.
+          for (const pools of newSfx.values()) {
+            for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
+          }
+          newSfx.clear();
+        }
+        disposeOldSfx(); // the old bank is being retired by this switch — free its voices
         this.switching = false;
         return;
       }
@@ -1465,12 +1695,24 @@ export class InteractiveAudioEngine {
       const disposeAt = at + seconds + 0.1;
       this.afterSettle(disposeAt, () => {
         for (const seg of oldSegments) this.disposeLoaded(seg);
-        for (const pool of Object.values(oldSfx)) {
-          this.disposeSfxPool(pool);
-        }
+        disposeOldSfx();
       });
     } catch {
-      // keep the old track running
+      // keep the old track running. If we'd already detached the old SFX map (the throw
+      // landed after the top-of-swap install), the old pools were never scheduled for
+      // disposal — free them now so they can't leak. Only re-attach our own new map's
+      // slot if it is still the attached one (don't stomp a superseding op's map).
+      if (newSfx !== undefined && this.sfxPoolsBySegment === newSfx) {
+        // our partial new map is still attached: drop it, restore the old bank's map so a
+        // later teardown frees those voices (the old track keeps playing on the catch).
+        this.disposeAllSfx();
+        this.sfxPoolsBySegment = oldSfx;
+      } else if (newSfx === undefined) {
+        // threw before we ever detached the old map — nothing to restore.
+      } else {
+        // a superseding op owns the current map: don't touch it; just retire the old bank.
+        disposeOldSfx();
+      }
     } finally {
       this.switching = false;
     }
@@ -1510,6 +1752,11 @@ export class InteractiveAudioEngine {
 
       // Silence + tear down the old segment bank (no lingering audio from the last game).
       this.disposeAll();
+      // Install a FRESH SFX map so the reloaded game's pools never share the map object
+      // an in-flight (now-superseded) switchTrack may still hold a reference to — that
+      // switch, on resume, only re-attaches/disposes ITS OWN map (identity-checked), so a
+      // distinct object here keeps reset-owned pools out of its reach.
+      this.sfxPoolsBySegment = new Map();
 
       // Reset all progression state to the song's opening.
       this.segments = [];
@@ -1521,6 +1768,7 @@ export class InteractiveAudioEngine {
       this.targetTier = 0;
       this.tierFading = false;
       this.entryFloor = 0;
+      this.topHeldSinceBoundary = false;
       this.bedReady = false;
 
       // Rebuild + re-enter the current track from segment 0 (fresh opening, floor tiers).
@@ -1586,10 +1834,21 @@ export class InteractiveAudioEngine {
 
   private disposeSegment(index: number): void {
     this.disposeLoaded(this.segments[index]);
+    // The left-behind segment's SFX voices go with its tier players (D5 lifecycle).
+    this.disposeSegmentSfx(index);
   }
 
   private disposeAll(): void {
     for (const seg of this.segments) this.disposeLoaded(seg);
+    this.disposeAllSfx();
+  }
+
+  /** Dispose + clear EVERY segment's SFX pool set (teardown / switch / reset). */
+  private disposeAllSfx(): void {
+    for (const pools of this.sfxPoolsBySegment.values()) {
+      for (const pool of Object.values(pools)) this.disposeSfxPool(pool);
+    }
+    this.sfxPoolsBySegment.clear();
   }
 
   // ── volume / mute ─────────────────────────────────────────────────────────────
@@ -1632,17 +1891,14 @@ export class InteractiveAudioEngine {
     } catch {
       // ignore
     }
-    this.disposeAll();
-    for (const pool of Object.values(this.sfxPools)) {
-      this.disposeSfxPool(pool);
-    }
+    this.disposeAll(); // disposes tier players AND every segment's SFX pools
     try {
       this.master?.dispose();
     } catch {
       // ignore
     }
     this.segments = [];
-    this.sfxPools = {};
+    this.sfxPoolsBySegment.clear();
     this.song = undefined;
     this.manifest = undefined;
     this.master = undefined;
@@ -1654,6 +1910,7 @@ export class InteractiveAudioEngine {
     this.targetTier = 0;
     this.tierFading = false;
     this.entryFloor = 0;
+    this.topHeldSinceBoundary = false;
     this.segmentScore = 0;
     this.settleEvents = [];
     this.settleTimeouts = [];

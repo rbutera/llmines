@@ -1,44 +1,63 @@
 /**
- * Per-action SFX routing — FINE5 Wave 2 (preset-free).
+ * Per-action SFX routing — audio-truth (D4).
  *
- * Extracted from the removed A/B/C preset system: keeps ONLY the action→SFX
- * one-shot routing. There is a SINGLE fixed map (no mix selector). Each gameplay
- * ACTION fires its recorded ad-lib one-shot; CLEARS (lineClear / chain) have NO
- * routing — a clear is SILENT by design (it only raises the gameplay intensity).
+ * The pure action→SFX one-shot map. There is a SINGLE fixed routing (no mix
+ * selector). Each gameplay event fires its mapped recorded one-shot:
+ *  - lineClear / chain → `stage` (the clear-stage sound, B3 fix — clears are no
+ *    longer silent). `chain` is the bigger, rarer event and is routed audibly
+ *    DISTINCT (a hot `stage` plus an optional layered `drop` impact — D4a, a
+ *    single decision point so the ear-gate can A/B it).
+ *  - lock → `drop` for EVERY settle (gravity / soft / hard), so a settle always
+ *    thuds (B4 fix — not only on hard drops). Velocity is scaled by cause at the
+ *    call site (engine.play), not here.
+ *  - rotate → `rotate`, softDrop → `softdrop` (unchanged).
+ *  - move → SILENT by explicit decision (a per-column blip on every step is noise
+ *    against a music-led mix; the felt actions are rotate / soft-drop / lock /
+ *    clear).
  *
- * Pure data + pure helper (no Tone import) so the routing stays unit-testable and
+ * The `SfxName` set matches the manifest keys 1:1 (`move`, `rotate`, `softdrop`,
+ * `drop`, `stage`) — the prior `harddrop`→`drop` name quirk is gone.
+ *
+ * Pure data + pure helpers (no Tone import) so the routing stays unit-testable and
  * importable in any environment.
  */
 
 import type { AudioEvent } from "./engine";
 
 /**
- * The action SFX slices (public/audio/sfx-*.mp3). ACTIONS ONLY — there is
- * deliberately NO clear/match/gem/chain SFX (a clear is silent). song1 supplies
- * recorded ad-libs for these; song2 (sfxMode "procedural") uses in-key blips.
+ * The action SFX slices. Matches the manifest `sfx` keys ONE-TO-ONE: `move`,
+ * `rotate`, `softdrop`, `drop`, `stage`.
  */
-export type SfxName = "move" | "rotate" | "softdrop" | "harddrop" | "stage";
+export type SfxName = "move" | "rotate" | "softdrop" | "drop" | "stage";
 
-/** Which voice an ACTION triggers — a recorded ad-lib one-shot (key into the SFX pool), if any. */
+/** Which voice(s) an event triggers. */
 export interface VoiceRouting {
-  /** Recorded ad-lib one-shot to play (key into the SFX pool), if any. */
+  /** Primary one-shot to play (key into the SFX pool), if any. */
   sfx?: SfxName;
+  /**
+   * An optional SECOND one-shot layered under `sfx` (D4a — a `chain` layers a
+   * `drop` impact under the hot `stage` so it sounds fatter than a plain clear).
+   * Undefined for every other event.
+   */
+  layer?: SfxName;
 }
 
 /**
- * The single fixed action→SFX map. Replaces `routeEvent(preset, ev)`. Clears are
- * absent (silent by design). `move` is intentionally unmapped (movement stays quiet;
- * the prior "blip" was a procedural voice that no longer exists).
+ * The single fixed action→SFX map. `lineClear`/`chain` route to the clear `stage`
+ * (chain also layers a `drop` impact). `lock` routes to `drop` (universal settle).
+ * `move` is intentionally absent (silent).
  */
 const ACTION_SFX: Partial<Record<AudioEvent["type"], VoiceRouting>> = {
+  lineClear: { sfx: "stage" },
+  chain: { sfx: "stage", layer: "drop" },
+  lock: { sfx: "drop" },
   rotate: { sfx: "rotate" },
   softDrop: { sfx: "softdrop" },
-  lock: { sfx: "harddrop" },
 };
 
 /**
- * The voice routing for one event (empty object = silence). Clears always route to
- * silence (no entry in the map).
+ * The voice routing for one event (empty object = silence). `move` returns `{}`
+ * (silent by decision); every other mapped event returns its one-shot(s).
  */
 export function routeEvent(ev: AudioEvent): VoiceRouting {
   return ACTION_SFX[ev.type] ?? {};
