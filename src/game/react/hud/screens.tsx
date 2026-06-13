@@ -14,7 +14,7 @@
  */
 
 import type { GeneratedPiece } from "../../core";
-import { COLS, PREVIEW_DEPTH } from "../../core";
+import { PREVIEW_DEPTH } from "../../core";
 import { Corners, fmt, Gauge, type PieceCellShade, Reticle } from "./atoms";
 
 export function StartView({
@@ -232,13 +232,10 @@ export function PlayHud({
   score,
   bpm,
   queue,
-  sweepX,
   scoreKey,
   multKey,
   mult,
   clearKey,
-  bar,
-  beat,
   onPause,
 }: {
   score: number;
@@ -260,8 +257,6 @@ export function PlayHud({
   onPause: () => void;
 }) {
   const upcoming = queue.slice(0, PREVIEW_DEPTH);
-  // Caret rides 6%..94% of the rail, mapped from the real sweep position.
-  const sweepPct = 6 + (Math.max(0, Math.min(COLS, sweepX)) / COLS) * 88;
   // BPM gauge: light a share of the 9 bars proportional to BPM (90..170 band).
   const active = Math.max(2, Math.min(9, Math.round(((bpm - 90) / 80) * 9)));
 
@@ -321,20 +316,8 @@ export function PlayHud({
         </div>
       </div>
 
-      {/* LLMINES wordmark — top rail chip */}
-      <div
-        className="recede"
-        style={{
-          position: "absolute",
-          top: 16,
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: "#000",
-          padding: "0 10px",
-        }}
-      >
-        <span className="cap label">LLMINES</span>
-      </div>
+      {/* (LLMINES wordmark removed from the in-play HUD — it sat dead-centre at the
+          top and obscured the piece-spawn area. The wordmark lives on StartView.) */}
 
       {/* tempo + pause — top-right (kept clear of the renderer Settings button) */}
       <div
@@ -417,54 +400,8 @@ export function PlayHud({
         })}
       </div>
 
-      {/* timeline sweep — bottom, caret driven by REAL sweepX */}
-      <div
-        className="recede"
-        style={{ position: "absolute", bottom: 40, left: 44, right: 44 }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
-          <span className="label" style={{ fontSize: 9 }}>
-            TIMELINE SWEEP
-          </span>
-          <span className="label" style={{ fontSize: 9 }}>
-            BAR {bar} · BEAT {beat}
-          </span>
-        </div>
-        <div className="tickrail tall" style={{ position: "relative" }}>
-          <div
-            style={{
-              position: "absolute",
-              left: `${sweepPct}%`,
-              top: -6,
-              transform: "translateX(-50%)",
-              width: 0,
-              height: 0,
-              borderLeft: "6px solid transparent",
-              borderRight: "6px solid transparent",
-              borderTop: "10px solid var(--hud-accent-hi)",
-              filter: "drop-shadow(0 0 6px var(--accent))",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: `${sweepPct}%`,
-              top: 0,
-              bottom: 0,
-              transform: "translateX(-50%)",
-              width: 2,
-              background: "var(--hud-accent-hi)",
-              boxShadow: "0 0 10px var(--accent)",
-            }}
-          />
-        </div>
-      </div>
+      {/* (Bottom "TIMELINE SWEEP" caret removed — it was a redundant duplicate of the
+          REAL sweep bar that already crosses the playfield on the board itself.) */}
 
       {/* transient chain juice — keyed off real clear events */}
       {multKey > 0 && (

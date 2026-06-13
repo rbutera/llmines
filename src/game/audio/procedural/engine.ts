@@ -677,8 +677,13 @@ export class InteractiveAudioEngine {
 
   private async loadManifest(): Promise<AudioManifest | undefined> {
     try {
+      // `no-cache` = always REVALIDATE with the server (ETag) before using a cached
+      // copy. `force-cache` was the bug: a returning browser kept a STALE manifest
+      // from a previous deploy, whose (now-deleted) opus paths 404'd → silent SFX.
+      // The manifest is tiny; revalidating each load guarantees the served cut's
+      // asset paths always exist.
       const res = await fetch(`${ASSET_BASE}/manifest.json`, {
-        cache: "force-cache",
+        cache: "no-cache",
       });
       if (!res.ok) return undefined;
       const m = (await res.json()) as AudioManifest;
