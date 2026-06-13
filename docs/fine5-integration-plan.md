@@ -1,3 +1,5 @@
+> ⚠️ **SUPERSEDED / PARTIALLY STALE.** This plan captured an interim *autonomous-timeline* audio model that was **REJECTED**. The canonical design is **CLEAR-GATED** progression (the player's clears drive the song forward — see `README.md` → "Audio design"). Do NOT re-introduce an autonomous timeline. Kept only for build-history context.
+
 # LLMines: FINE5 Audio Integration + Engine Rework — Implementation Plan
 
 Goal: make the actual game play the **approved FINE5 audio model**, deploy to llmines.e8n.dev. Rai ear-approved the assets + model via the soundboard (`public/soundboard/progression.html`); this ports that model into the game engine.
