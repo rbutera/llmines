@@ -863,6 +863,13 @@ describe("switchTrack (skin swap) on the manifest model", () => {
     const oldSfx = mockState.players.filter((p) => p.url.includes("sfx-stage"));
     expect(oldSfx.length).toBeGreaterThan(0);
     expect(oldSfx.every((p) => !p.disposed)).toBe(true);
+    // also capture the old TIER bank's players (song1 segment tiers) — they must be freed
+    // on the bail too, not leak behind the suspended switch's local.
+    const oldTiers = mockState.players.filter(
+      (p) => p.url.includes("s1-") && p.url.includes("tier"),
+    );
+    expect(oldTiers.length).toBeGreaterThan(0);
+    expect(oldTiers.every((p) => !p.disposed)).toBe(true);
 
     // start a switch whose intro load is DEFERRED (parked, unresolved)...
     mockState.deferLoads = true;
@@ -874,9 +881,11 @@ describe("switchTrack (skin swap) on the manifest model", () => {
     await switching;
     await settle();
 
-    // the bail retires the OLD bank it was replacing: the old song1 SFX voices are freed
-    // by the bail itself (not orphaned behind the empty map the aborted switch installed).
-    expect(oldSfx.every((p) => p.disposed)).toBe(true); // no leak
+    // the bail retires the OLD bank it was replacing: the old song1 SFX voices AND tier
+    // players are freed by the bail itself (not orphaned behind the suspended switch's
+    // locals / the empty map the aborted switch installed).
+    expect(oldSfx.every((p) => p.disposed)).toBe(true); // SFX freed — no leak
+    expect(oldTiers.every((p) => p.disposed)).toBe(true); // tier players freed — no leak
 
     // and the reset-owned game is still HEALTHY — its own tier audio plays at the opening
     // (the aborted switch must not have disposed the reset's pools or stomped its map). The

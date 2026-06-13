@@ -1662,6 +1662,11 @@ export class InteractiveAudioEngine {
       // enterSegment/prefetch, so newSfx holds no pools — but dispose it defensively.
       if (gen !== this.loadGen || this.currentTrack.id !== track.id) {
         for (const seg of newSegments) this.disposeLoaded(seg);
+        // Retire the OLD TIER bank too: a superseding reset/dispose only sees + disposes
+        // the new `this.segments` (= newSegments); the original oldSegments are held only
+        // in this suspended call, so if we don't free them here their tier players/gains
+        // leak (and could keep playing). Symmetric with disposeOldSfx below.
+        for (const seg of oldSegments) this.disposeLoaded(seg);
         if (this.sfxPoolsBySegment === newSfx) {
           this.disposeAllSfx(); // our own (empty) map is still attached — free + clear it
         } else {
