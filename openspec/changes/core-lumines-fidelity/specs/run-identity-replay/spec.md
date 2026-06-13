@@ -71,9 +71,10 @@ NOT affect deletion, scoring, or timing.
 
 #### Scenario: Pass completion emits truthful clear data
 
-- **WHEN** a pass clears 4 squares with a ×8 multiplier applied across two erased groups, one of
-  which had a chain
-- **THEN** the emitted event carries `squares: 4`, `comboMultiplier: 8`, and a `groupErases` list of
+- **WHEN** a pass clears 4 squares with a ×2 streak multiplier applied across two erased groups, one
+  of which had a chain (the `STREAK_CURVE = [1,2,3,4]` value, since the big-clear package already
+  contains the ×4 — there is no ×8)
+- **THEN** the emitted event carries `squares: 4`, `comboMultiplier: 2`, and a `groupErases` list of
   two entries with the correct cell coordinates and `hadChain` flags
 
 #### Scenario: Monotonic id fires once per pass

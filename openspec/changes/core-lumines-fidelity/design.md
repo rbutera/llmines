@@ -286,7 +286,7 @@ right edge. Shape on `GameState` (record-only, like `lastChainClear`):
 lastPassComplete?: {
   id: number;                 // monotonic; renderer/audio fire once per new id
   squares: number;            // distinct squares cleared this pass (scoring count)
-  comboMultiplier: number;    // the multiplier actually applied (1 or COMBO_CURVE[idx])
+  comboMultiplier: number;    // the multiplier actually applied (1 or STREAK_CURVE[idx], i.e. 1..4)
   groupErases: { cells: number[]; hadChain: boolean }[];  // per group erased this pass
 };
 ```

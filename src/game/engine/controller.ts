@@ -796,8 +796,24 @@ export class GameController {
       // Render-only: cells a gem is about to flood-clear (pre-clear marking).
       floodPreview: this.computeFloodPreview(),
       // D8 audio-truth telemetry passthrough (record-only, no logic change).
-      lastPassComplete: this.state.lastPassComplete,
-      lastLock: this.state.lastLock,
+      // COPIED (not aliased) so a subscriber can never mutate the core's internal
+      // telemetry — `lastPassComplete.groupErases[].cells` are nested mutable
+      // arrays, and this is a contract a sibling audio change consumes. Mirrors the
+      // deep-copy `publicState()` already does for the same fields.
+      lastPassComplete: this.state.lastPassComplete
+        ? {
+            id: this.state.lastPassComplete.id,
+            squares: this.state.lastPassComplete.squares,
+            comboMultiplier: this.state.lastPassComplete.comboMultiplier,
+            groupErases: this.state.lastPassComplete.groupErases.map((g) => ({
+              cells: g.cells.slice(),
+              hadChain: g.hadChain,
+            })),
+          }
+        : undefined,
+      lastLock: this.state.lastLock
+        ? { id: this.state.lastLock.id, cause: this.state.lastLock.cause }
+        : undefined,
     };
   }
 

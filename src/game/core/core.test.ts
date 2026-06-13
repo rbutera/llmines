@@ -1187,6 +1187,31 @@ describe("telemetry: pass-completion events (D8, record-only)", () => {
     expect(s.lastPassComplete!.comboMultiplier).toBe(2);
   });
 
+  it("the full D8 scenario: 4 squares, x2, two groups, one with a chain", () => {
+    // Two mono 1x3 bands = 2 squares each (4 total): group A cols 0-2 (chain),
+    // gap at col 3, group B cols 5-7. At streak entry (combo=1) the package x x2.
+    const base = createGame();
+    for (const c of [0, 1, 2]) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    for (const c of [5, 6, 7]) {
+      base.grid[ROWS - 1]![c] = 1;
+      base.grid[ROWS - 2]![c] = 1;
+    }
+    base.specials = new Set([(ROWS - 1) * COLS + 0]); // gem in group A
+    const s = advanceSweep({ ...base, combo: 1 }, COLS);
+    expect(s.lastPassComplete!.squares).toBe(4);
+    expect(s.lastPassComplete!.comboMultiplier).toBe(2);
+    expect(s.lastPassComplete!.groupErases.length).toBe(2);
+    expect(
+      s.lastPassComplete!.groupErases.filter((g) => g.hadChain).length,
+    ).toBe(1);
+    for (const g of s.lastPassComplete!.groupErases) {
+      expect(g.cells.length).toBeGreaterThan(0);
+    }
+  });
+
   it("monotonic id fires once per completed pass; unchanged when no pass completes", () => {
     const base = createGame();
     squareAt(base, 0, 0);
