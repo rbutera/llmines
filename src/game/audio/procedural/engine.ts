@@ -1506,15 +1506,17 @@ export class InteractiveAudioEngine {
   /**
    * Lazily construct the tone synth (a Tone.PolySynth) INSIDE a gesture / on first tone
    * use — NEVER at module-eval (autoplay rule, design D6). Routed through `this.master`.
-   * Attempted at most once per build outcome: a failure leaves it undefined and the tone
-   * path degrades to silence (never throws into the game).
+   * A real build attempt (master + Tone present) is made at most once: a failure leaves
+   * the synth undefined and the tone path degrades to silence (never throws). If called
+   * BEFORE unlock (no master/Tone yet — e.g. `setSfxMode("tone")` pre-gesture) it is a
+   * no-op that does NOT mark "tried", so unlock()'s later call still builds it.
    */
   private ensureToneSynth(): void {
     if (this.toneSynth || this.toneSynthTried) return;
-    this.toneSynthTried = true;
     const master = this.master;
     const T = ToneRT;
-    if (!master || !T) return;
+    if (!master || !T) return; // pre-unlock: retry later (don't burn the one attempt)
+    this.toneSynthTried = true;
     try {
       const synth = new T.PolySynth(T.Synth);
       // a short subtle envelope + a soft triangle wave for an unobtrusive ding.
@@ -1625,14 +1627,15 @@ export class InteractiveAudioEngine {
    */
   private onClear(squares: number, comboStep: number): void {
     if (this.segments.length === 0) return;
-    this.clearedSinceBoundary = true;
     // A non-finite squares OR combo (an upstream bug) means the WHOLE contribution is
-    // untrustworthy — ignore it entirely (heat unchanged), don't sanitise to 0 and
-    // bank the base gain anyway. Re-clamp heat defensively.
+    // untrustworthy — ignore it ENTIRELY: heat unchanged AND the no-decay flag is NOT
+    // set (a poisoned event is treated as "no real clear", so it must not suppress the
+    // next clear-less pass's decay). Don't sanitise to 0 and bank the base gain.
     if (!Number.isFinite(squares) || !Number.isFinite(comboStep)) {
-      this.heat = clamp01(this.heat);
+      this.heat = clamp01(this.heat); // re-clamp defensively, no change
       return;
     }
+    this.clearedSinceBoundary = true;
     const s = Math.max(0, squares);
     const c = Math.max(0, comboStep);
     const gain = HEAT_GAIN_BASE + HEAT_GAIN_SQUARE * s + HEAT_GAIN_COMBO * c;
@@ -1651,11 +1654,12 @@ export class InteractiveAudioEngine {
    */
   private onChain(size: number): void {
     if (this.segments.length === 0) return;
-    this.clearedSinceBoundary = true;
     if (!Number.isFinite(size)) {
-      this.heat = clamp01(this.heat); // ignore a poisoned size entirely
+      // ignore a poisoned size ENTIRELY (heat unchanged, no-decay flag NOT set).
+      this.heat = clamp01(this.heat);
       return;
     }
+    this.clearedSinceBoundary = true;
     const sz = Math.max(0, Math.min(8, size));
     const gain = HEAT_GAIN_BASE + HEAT_GAIN_SQUARE * sz;
     if (!Number.isFinite(gain)) {

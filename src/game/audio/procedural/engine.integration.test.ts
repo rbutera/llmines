@@ -1221,6 +1221,27 @@ describe("advance-into-unloaded segment re-gains on load (Blocker 2)", () => {
     expect(s2.tier).toBeGreaterThanOrEqual(0);
     expect(s2.tier).toBeLessThanOrEqual(s2.tierCount - 1);
   });
+
+  it("a poisoned clear does NOT suppress the next clear-less pass's decay (ignored ENTIRELY)", async () => {
+    // Codex finding: onClear must not set the no-decay flag before validating finiteness
+    // — a poisoned (NaN/Infinity) clear is "no real clear", so the following loop pass is
+    // still a clear-less pass and MUST decay.
+    const e = await freshEngine();
+    e.__injectClears(5); // heat 0.55 (this real clear sets the no-decay flag)
+    // a clean boundary consumes + resets the flag (this pass saw a real clear → no decay).
+    loopBoundary();
+    await settle();
+    const h0 = e.getAudioState().heat; // 0.55, flag now reset to false
+    // a POISONED clear (should be ignored ENTIRELY — heat unchanged AND flag NOT set).
+    e.fire({ type: "lineClear", squares: Number.NaN, combo: 0 });
+    await settle();
+    expect(e.getAudioState().heat).toBe(h0); // unchanged
+    // the NEXT loop boundary is therefore still a clear-less pass → it MUST decay (the
+    // poisoned clear did not suppress it).
+    loopBoundary();
+    await settle();
+    expect(e.getAudioState().heat).toBeCloseTo(h0 - 0.08, 6);
+  });
 });
 
 // ── Change 1: GAME OVER resets the music to a fresh start (segment 0, floor) ──────
@@ -1615,6 +1636,25 @@ describe("tone SFX (default mode)", () => {
     expect(e.getAudioState().sfxMode).toBe("sample");
     e.setSfxMode("tone");
     expect(e.getAudioState().sfxMode).toBe("tone");
+  });
+
+  it("setSfxMode('tone') BEFORE unlock does not permanently disable the synth", async () => {
+    // Codex finding: ensureToneSynth must NOT burn its one attempt when master/Tone are
+    // absent (pre-unlock). setSfxMode('tone') before unlock used to set toneSynthTried,
+    // so unlock()'s later build was skipped and tone SFX stayed silent forever.
+    (globalThis as unknown as { window?: object }).window = globalThis;
+    installFetch();
+    const e = new InteractiveAudioEngine();
+    e.setSfxMode("tone"); // pre-unlock — must be a harmless no-op for the synth
+    expect(mockState.polySynthBuilds).toBe(0);
+    await e.unlock(); // now the synth MUST build
+    await settle();
+    expect(mockState.polySynthBuilds).toBeGreaterThan(0);
+    // and tone SFX actually sound.
+    const before = mockState.toneHits.length;
+    e.fire({ type: "match", squares: 1 });
+    await settle();
+    expect(mockState.toneHits.length).toBeGreaterThan(before);
   });
 });
 
