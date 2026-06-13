@@ -116,6 +116,19 @@ export function spawnFromQueue(state: GameState): GameState {
   return refillQueue(spawned);
 }
 
+/**
+ * Can a freshly spawned piece ENTER the visible field (audit A5/D4)? A piece
+ * stages above the field at {@link SPAWN_ROW} (= -2) and always "places" there
+ * (its cells are above row 0). The real top-out condition is whether it can reach
+ * an in-field row: test `canPlace` at the FIRST in-field row it would occupy —
+ * the 2x2 at row 0 (cells in rows 0-1 of the spawn columns). If those cells are
+ * blocked, the piece can never enter -> game over ("blocks pile to the top",
+ * README §3b item 1).
+ */
+function canEnterField(grid: Grid, cells: Piece): boolean {
+  return canPlace(grid, cells, { row: 0, col: SPAWN_COL });
+}
+
 /** Coordinate (`row*COLS+col`) of the cell at `cellIndex` for a piece at `pos`. */
 function specialCoordFor(pos: PiecePos, cellIndex: 0 | 1 | 2 | 3): number {
   const row = pos.row + (cellIndex >= 2 ? 1 : 0);
@@ -132,7 +145,9 @@ export function spawnGeneratedPiece(
   gp: GeneratedPiece,
 ): GameState {
   const pos: PiecePos = { row: SPAWN_ROW, col: SPAWN_COL };
-  if (!canPlace(state.grid, gp.cells, pos)) {
+  // Game over only when the piece cannot ENTER the field (its in-field entry
+  // cells are blocked) — NOT merely because it stages above the field (A5/D4).
+  if (!canEnterField(state.grid, gp.cells)) {
     return {
       ...state,
       active: null,
@@ -171,7 +186,9 @@ export function canPlace(grid: Grid, cells: Piece, pos: PiecePos): boolean {
  */
 export function spawnPiece(state: GameState, cells: Piece): GameState {
   const pos: PiecePos = { row: SPAWN_ROW, col: SPAWN_COL };
-  if (!canPlace(state.grid, cells, pos)) {
+  // Game over only when the piece cannot ENTER the field (A5/D4), not when it
+  // stages above it.
+  if (!canEnterField(state.grid, cells)) {
     return {
       ...state,
       active: null,
@@ -282,6 +299,13 @@ function canDescend(state: GameState): boolean {
 export function lockPiece(state: GameState): GameState {
   if (!state.active) return state;
   const grid = cloneGrid(state.grid);
+  // Top-out on a mid-air lock (A5/D4): if the piece locks with ANY cell still
+  // above row 0 (in the staging rows) it cannot fit inside the field — that IS
+  // the "blocks pile to the top" condition (e.g. a staged piece shoved sideways
+  // over a full-height column then unable to descend). The in-field cells still
+  // merge (so the visible pile is faithful), but the game ends rather than
+  // silently discarding the above-field cells with play continuing.
+  const locksAboveField = pieceCells(state.active).some(({ row }) => row < 0);
   for (const { row, col, color } of pieceCells(state.active)) {
     if (inBounds(row, col) && color !== null) grid[row]![col] = color;
   }
@@ -308,6 +332,8 @@ export function lockPiece(state: GameState): GameState {
     active: null,
     score: state.score + state.softDropBonus,
     softDropBonus: 0,
+    // A lock with any cell above the field tops the game out (A5/D4).
+    gameOver: state.gameOver || locksAboveField,
   };
 }
 

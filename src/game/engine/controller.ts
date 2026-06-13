@@ -511,7 +511,9 @@ export class GameController {
       // Clear sustained mode on a natural lock too, for symmetry with the
       // soft-drop lock path (the next piece's spawn-hold must be honoured).
       this.softDropSustained = false;
-      this.state = spawnFromQueue(this.state); // production auto-spawns
+      // A lock that topped the game out (A5/D4: cells above row 0) must NOT
+      // auto-spawn the next piece — the game is over.
+      if (!this.state.gameOver) this.state = spawnFromQueue(this.state);
     }
   }
 
@@ -601,7 +603,8 @@ export class GameController {
       // the player must press soft-drop again to fast-fall it, matching the
       // deliberate-placement model (a held key cannot cascade into a new piece).
       this.softDropSustained = false;
-      this.state = spawnFromQueue(this.state);
+      // A top-out lock (A5/D4) must NOT auto-spawn — the game is over.
+      if (!this.state.gameOver) this.state = spawnFromQueue(this.state);
     }
   }
 
@@ -634,7 +637,8 @@ export class GameController {
     this.state = hardDrop(this.state);
     if (!this.testMode) {
       this.gravityAccumMs = 0;
-      this.state = spawnFromQueue(this.state);
+      // A top-out lock (A5/D4) must NOT auto-spawn — the game is over.
+      if (!this.state.gameOver) this.state = spawnFromQueue(this.state);
     }
   }
 

@@ -82,7 +82,7 @@ describe("fallProgress gating (bottom-row settle)", () => {
 
     const rs = c.getRenderState();
     expect(rs.active).not.toBeNull();
-    expect(rs.active!.pos.row).toBe(0); // still mid-air at the top
+    expect(rs.active!.pos.row).toBe(-2); // still staged above the field (A5/D4)
     expect(rs.hold.active).toBe(false);
     // Smooth descent: a fractional offset toward the next row.
     expect(rs.fallProgress).toBeGreaterThan(0);
@@ -94,11 +94,12 @@ describe("fallProgress gating (bottom-row settle)", () => {
   it("reports zero fall offset once the piece rests on the bottom row", () => {
     const { c, step } = productionWithClock(1);
     startAndRelease(c, step);
-    // 58 post-hold frames -> 5800ms -> 8 gravity ticks (piece reaches the
-    // bottom row at pos.row = ROWS-2) with 200ms left over accumulating toward
-    // the next tick. Without the resting gate this leftover would push
-    // fallProgress and draw the piece below the canvas.
-    for (let i = 0; i < 58; i++) step(100);
+    // The piece stages at row -2 now, so it descends ROWS rows to the floor
+    // (pos.row = ROWS-2) in ROWS gravity ticks. 72 post-hold frames -> 7200ms =
+    // 10 ticks (the piece reaches the floor) with ~200ms left over — short of the
+    // 11th tick that would lock + respawn. The resting gate must read fallProgress
+    // 0 so the leftover accumulation cannot draw the piece below the canvas.
+    for (let i = 0; i < 72; i++) step(100);
 
     const rs = c.getRenderState();
     expect(rs.active).not.toBeNull();
@@ -147,7 +148,7 @@ describe("new-block hold (production timing)", () => {
     for (let i = 0; i < HOLD_FRAMES - 1; i++) step(100); // 400ms < 500ms hold
     let rs = c.getRenderState();
     expect(rs.hold.active).toBe(true);
-    expect(rs.active!.pos.row).toBe(0);
+    expect(rs.active!.pos.row).toBe(-2); // staged above the field while held
     expect(rs.fallProgress).toBe(0);
 
     // The hold lapses; the piece is still at the top (no carried-over fast-fall).
@@ -158,7 +159,7 @@ describe("new-block hold (production timing)", () => {
     step(100);
     rs = c.getRenderState();
     expect(rs.hold.active).toBe(false);
-    expect(rs.active!.pos.row).toBe(0);
+    expect(rs.active!.pos.row).toBe(-2); // still staged (no carried-over fast-fall)
 
     // After one gravity interval it descends exactly one row (normal gravity).
     // The V2 clock->dt path accumulates from absolute-time deltas, which can
@@ -166,7 +167,7 @@ describe("new-block hold (production timing)", () => {
     // advance one extra frame to guarantee the accumulator crosses the
     // threshold; the piece must descend by exactly one row, not more.
     for (let i = 0; i < GRAVITY_INTERVAL_MS / 100 + 1; i++) step(100);
-    expect(c.getRenderState().active!.pos.row).toBe(1);
+    expect(c.getRenderState().active!.pos.row).toBe(-1); // one row down from -2
     c.stop();
   });
 });
@@ -175,39 +176,35 @@ describe("new-block hold (deterministic test API)", () => {
   it("a freshly spawned block is held; a carried-over hold does not fast-fall", () => {
     const c = new GameController({ testMode: true });
     c.testSpawn(CHECKER);
-    let s = c.testState();
-    expect(s.hold).toEqual({ active: true, remainingMs: HOLD_MS });
-    // No press hook called (simulating a held key carrying over): stays at top.
-    expect(s.grid[0]![7]).not.toBeNull();
-    expect(s.grid[2]![7]).toBeNull();
+    expect(c.testState().hold).toEqual({ active: true, remainingMs: HOLD_MS });
+    // Staged above the field at row -2 (A5/D4): not yet drawn into the board grid.
+    expect(c.testRawState().active?.pos.row).toBe(-2);
+    expect(c.testState().grid[0]![7]).toBeNull();
 
-    // The first tick lapses the hold IN PLACE (no descent).
+    // The first tick lapses the hold IN PLACE (no descent): still at row -2.
     c.testTick();
-    s = c.testState();
-    expect(s.hold.active).toBe(false);
-    expect(s.grid[0]![7]).not.toBeNull();
-    expect(s.grid[1]![7]).not.toBeNull();
-    expect(s.grid[2]![7]).toBeNull();
+    expect(c.testState().hold.active).toBe(false);
+    expect(c.testRawState().active?.pos.row).toBe(-2);
 
-    // A following tick descends at normal gravity.
+    // Each following tick descends exactly one row (no carried-over fast-fall):
+    // -2 -> -1 -> 0. After two ticks the top cells enter the field at row 0.
     c.testTick();
-    s = c.testState();
-    expect(s.grid[0]![7]).toBeNull();
-    expect(s.grid[2]![7]).not.toBeNull();
+    expect(c.testRawState().active?.pos.row).toBe(-1);
+    c.testTick();
+    expect(c.testRawState().active?.pos.row).toBe(0);
+    expect(c.testState().grid[0]![7]).not.toBeNull();
   });
 
   it("a fresh soft-drop press ends the hold and descends immediately", () => {
     const c = new GameController({ testMode: true });
     c.testSpawn(CHECKER);
     expect(c.testState().hold.active).toBe(true);
+    expect(c.testRawState().active?.pos.row).toBe(-2); // staged above the field
 
     c.testPressSoftDrop();
-    const s = c.testState();
-    expect(s.hold.active).toBe(false);
-    // Engaged immediately: dropped from rows 0-1 to rows 1-2.
-    expect(s.grid[0]![7]).toBeNull();
-    expect(s.grid[1]![7]).not.toBeNull();
-    expect(s.grid[2]![7]).not.toBeNull();
+    expect(c.testState().hold.active).toBe(false);
+    // Engaged immediately: descended one row from the staging row -2 to -1.
+    expect(c.testRawState().active?.pos.row).toBe(-1);
   });
 
   it("a fresh hard-drop press ends the hold and locks at the bottom", () => {
@@ -225,31 +222,29 @@ describe("new-block hold (deterministic test API)", () => {
   it("after the hold ends, a normal soft-drop input descends", () => {
     const c = new GameController({ testMode: true });
     c.testSpawn(CHECKER);
-    c.testTick(); // lapse the hold in place
+    c.testTick(); // lapse the hold in place (still staged at row -2)
     expect(c.testState().hold.active).toBe(false);
+    expect(c.testRawState().active?.pos.row).toBe(-2);
 
     c.input("softDrop"); // a normal (post-hold) soft drop now moves the piece
-    expect(c.testState().grid[0]![7]).toBeNull();
+    expect(c.testRawState().active?.pos.row).toBe(-1); // descended one row
   });
 
   it("drop input is a no-op while held; move/rotate still apply during the hold", () => {
     const c = new GameController({ testMode: true });
     c.testSpawn(CHECKER);
 
-    // Carried-over (key-repeat) drop while held: ignored, piece unmoved.
+    // Carried-over (key-repeat) drop while held: ignored, piece unmoved (still
+    // staged at row -2, col 7).
     c.input("softDrop");
     c.input("hardDrop");
-    let s = c.testState();
-    expect(s.hold.active).toBe(true);
-    expect(s.grid[0]![7]).not.toBeNull();
-    expect(s.grid[2]![7]).toBeNull();
+    expect(c.testState().hold.active).toBe(true);
+    expect(c.testRawState().active?.pos).toEqual({ row: -2, col: 7 });
 
     // Move right applies during the hold and does not break it.
     c.input("right");
-    s = c.testState();
-    expect(s.grid[0]![8]).not.toBeNull();
-    expect(s.grid[0]![9]).not.toBeNull();
-    expect(s.hold.active).toBe(true);
+    expect(c.testRawState().active?.pos).toEqual({ row: -2, col: 8 });
+    expect(c.testState().hold.active).toBe(true);
 
     // Rotate applies during the hold and does not break it.
     c.input("rotate");
@@ -295,5 +290,24 @@ describe("testEndGame (deterministic game-over for the account submit path)", ()
     // Subscribers (e.g. GameShell's submit effect) see the game-over snapshot.
     expect(last?.gameOver).toBe(true);
     expect(last?.score).toBe(4242);
+  });
+});
+
+describe("top-out game over (A5/D4): no auto-spawn after a topping-out lock", () => {
+  it("a lock that fills the spawn columns ends the game and does not auto-spawn", () => {
+    const c = new GameController({ testMode: true });
+    // Pre-fill the spawn columns (7-8) right up to row 0 so the NEXT spawn cannot
+    // enter the field. testSpawn locks any active piece first, then attempts to
+    // place the new one — which must top out.
+    for (let r = 0; r < ROWS; r++) {
+      c.testSetCell(r, 7, 1);
+      c.testSetCell(r, 8, 1);
+    }
+    c.testSpawn([
+      [0, 0],
+      [0, 0],
+    ]);
+    expect(c.testState().gameOver).toBe(true);
+    expect(c.testRawState().active).toBe(null);
   });
 });

@@ -128,14 +128,18 @@ describe("piece mechanics (4.x)", () => {
     return spawnPiece(createGame(), cells);
   }
 
-  it("spawns at top-centre cols 7-8 rows 0-1", () => {
+  it("spawns STAGED above the field (cols 7-8, top at row -2) and the board grid stays clear", () => {
+    // A5/D4: pieces stage above the visible field at SPAWN_ROW = -2 and descend
+    // in under gravity. The board-grid projection (viewGrid) is unchanged — it
+    // only composites in-field cells, so the staged piece is NOT drawn into the
+    // board (it enters from the top edge).
     const s = withPiece(MONO_A);
-    expect(s.active?.pos).toEqual({ row: 0, col: 7 });
+    expect(s.active?.pos).toEqual({ row: -2, col: 7 });
     const v = viewGrid(s);
-    expect(v[0]![7]).toBe(0);
-    expect(v[0]![8]).toBe(0);
-    expect(v[1]![7]).toBe(0);
-    expect(v[1]![8]).toBe(0);
+    expect(v[0]![7]).toBe(null);
+    expect(v[0]![8]).toBe(null);
+    expect(v[1]![7]).toBe(null);
+    expect(v[1]![8]).toBe(null);
   });
 
   it("move left/right within bounds, blocked at walls", () => {
@@ -154,10 +158,19 @@ describe("piece mechanics (4.x)", () => {
   });
 
   it("move blocked by a settled cell", () => {
+    // Pieces stage above the field now, so the blocker must sit where the piece's
+    // in-field cells would be after it descends. Bring the piece down to rows 0-1,
+    // then block col 6 at both those rows so a leftward move overlaps.
     const base = createGame();
-    base.grid[0]![6] = 1; // settled cell immediately left of spawn col 7
-    const s = moveLeft(spawnPiece(base, MONO_A));
-    expect(s.active?.pos.col).toBe(7); // unchanged
+    base.grid[0]![6] = 1;
+    base.grid[1]![6] = 1; // settled cells immediately left of spawn col 7, rows 0-1
+    let s = spawnPiece(base, MONO_A);
+    // Descend from row -2 to row 0 (two gravity steps).
+    s = gravityStep(s).state;
+    s = gravityStep(s).state;
+    expect(s.active?.pos).toEqual({ row: 0, col: 7 });
+    s = moveLeft(s);
+    expect(s.active?.pos.col).toBe(7); // unchanged: blocked by the col-6 stack
   });
 
   it("rotateCells permutes [[a,b],[c,d]] -> [[c,a],[d,b]]", () => {
@@ -962,22 +975,82 @@ describe("sweep-clear-mechanics: per-group batch erase + cascades (D1/D2)", () =
   });
 });
 
-describe("game over (7.x)", () => {
-  it("occupied spawn cells -> gameOver true, no active piece", () => {
+describe("game over (7.x): spawn-above / top-out (A5/D4)", () => {
+  it("blocked spawn columns (filled up to row 0) end the game", () => {
     const base = createGame();
-    base.grid[0]![7] = 1; // block a spawn cell
-    const s = spawnPiece(base, [
-      [0, 0],
-      [0, 0],
-    ] as Piece);
+    // Fill the spawn columns (7-8) to the top: a new piece cannot ENTER the field.
+    for (let r = 0; r < ROWS; r++) {
+      base.grid[r]![7] = 1;
+      base.grid[r]![8] = 1;
+    }
+    const s = spawnPiece(base, MONO_A);
     expect(s.gameOver).toBe(true);
     expect(s.active).toBe(null);
   });
 
-  it("normal spawn into free space does not end the game", () => {
+  it("a single occupied in-field entry cell (row 0 of a spawn column) ends the game", () => {
+    const base = createGame();
+    base.grid[0]![7] = 1; // blocks the piece's top-left in-field entry cell
+    const s = spawnPiece(base, MONO_A);
+    expect(s.gameOver).toBe(true);
+    expect(s.active).toBe(null);
+  });
+
+  it("normal spawn into a free field does not end the game (stages above)", () => {
     const s = spawnPiece(createGame(), MONO_B);
     expect(s.gameOver).toBe(false);
     expect(s.active).not.toBe(null);
+    expect(s.active?.pos.row).toBe(-2); // staged above the field
+  });
+
+  it("free in-field entry rows admit the piece (spawn cols filled from row 2 down)", () => {
+    const base = createGame();
+    // Spawn columns full from row 2 to the floor; the entry rows 0-1 are free, so
+    // the 2x2 can enter (per D4 the entry test is canPlace at row 0, needing rows
+    // 0-1) — NOT game over.
+    for (let r = 2; r < ROWS; r++) {
+      base.grid[r]![7] = 1;
+      base.grid[r]![8] = 1;
+    }
+    const s = spawnPiece(base, MONO_A);
+    expect(s.gameOver).toBe(false);
+    expect(s.active).not.toBe(null);
+  });
+
+  it("the top rows of the field are usable away from the spawn columns", () => {
+    const base = createGame();
+    // Occupy rows 0-1 in distant columns (0-1); the spawn columns (7-8) are free.
+    base.grid[0]![0] = 0;
+    base.grid[1]![0] = 0;
+    base.grid[0]![1] = 0;
+    base.grid[1]![1] = 0;
+    const s = spawnPiece(base, MONO_A);
+    expect(s.gameOver).toBe(false);
+    expect(s.active).not.toBe(null);
+  });
+
+  it("a lateral shift onto a full column tops out on lock (A5/D4)", () => {
+    // Build a full-height column at col 6, spawn, shift the staged piece LEFT over
+    // it, then drive gravity: the piece cannot descend (col 6 is full to the top)
+    // and locks with cells still above row 0 -> game over, nothing silently lost.
+    const base = createGame();
+    for (let r = 0; r < ROWS; r++) base.grid[r]![6] = 1; // col 6 full
+    let s = spawnPiece(base, MONO_A); // staged at cols 7-8, row -2
+    s = moveLeft(s); // now over cols 6-7 (col 6 is the full one)
+    expect(s.active?.pos.col).toBe(6);
+    // Gravity: from -2, the piece can descend while above the field, but col 6 is
+    // full so it cannot enter row 0; it locks while a cell is still above row 0.
+    let locked = false;
+    for (let i = 0; i < ROWS + 4; i++) {
+      const r = gravityStep(s);
+      s = r.state;
+      if (r.locked) {
+        locked = true;
+        break;
+      }
+    }
+    expect(locked).toBe(true);
+    expect(s.gameOver).toBe(true);
   });
 });
 
@@ -1019,7 +1092,8 @@ describe("new-block hold (core)", () => {
   it("the hold does not move the piece; gravityStep is not hold-aware", () => {
     const s = spawnPiece(createGame(), MONO_A);
     // gravityStep stays a pure-movement primitive (hold suspension lives in the
-    // controller / test tick), so it still descends a held piece by one row.
-    expect(gravityStep(s).state.active?.pos.row).toBe(1);
+    // controller / test tick), so it still descends a held piece by one row —
+    // from the staging row -2 to -1 (one row down, still above the field).
+    expect(gravityStep(s).state.active?.pos.row).toBe(-1);
   });
 });

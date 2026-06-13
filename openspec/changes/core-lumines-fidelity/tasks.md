@@ -70,19 +70,19 @@
 
 ## 4. Wave 4 — Spawn staging above the field + top-out game over
 
-- [ ] 4.1 `src/game/core/constants.ts`: `SPAWN_ROW = -2` (2×2 staged above row 0). Keep `SPAWN_COL`.
-- [ ] 4.2 `src/game/core/piece.ts`: verify `canPlace` already treats `row < 0` as free and `row >= ROWS`
+- [x] 4.1 `src/game/core/constants.ts`: `SPAWN_ROW = -2` (2×2 staged above row 0). Keep `SPAWN_COL`.
+- [x] 4.2 `src/game/core/piece.ts`: verify `canPlace` already treats `row < 0` as free and `row >= ROWS`
   as out of bounds; keep. Spawn places the piece above the field without false game over.
-- [ ] 4.3 `src/game/core/piece.ts` `spawnGeneratedPiece`/`spawnPiece`: change the game-over test from
+- [x] 4.3 `src/game/core/piece.ts` `spawnGeneratedPiece`/`spawnPiece`: change the game-over test from
   "spawn cells occupied" to "the piece cannot enter the field" — i.e. the cells at the top in-field
   rows (rows 0-1 of the spawn columns) are occupied. Verify: piece-lifecycle game-over scenarios.
-- [ ] 4.3b `src/game/core/piece.ts` `lockPiece`: locking with ANY cell above row 0 sets `gameOver`
+- [x] 4.3b `src/game/core/piece.ts` `lockPiece`: locking with ANY cell above row 0 sets `gameOver`
   (the lateral-shift-onto-a-full-column top-out; above-field cells must never vanish with play
   continuing). Verify: piece-lifecycle "Lateral shift onto a full column tops out" scenario.
-- [ ] 4.4 Confirm `pieceCells`/`viewGrid`/`inBounds` handle negative spawn rows (composite only
+- [x] 4.4 Confirm `pieceCells`/`viewGrid`/`inBounds` handle negative spawn rows (composite only
   `row >= 0`); no renderer/grid blast radius. Verify: above-field cells are not drawn into the board
   grid; the descending piece enters from the top.
-- [ ] 4.5 Run gates. Rewrite `core.test.ts` spawn/game-over families to the new top-out condition; add
+- [x] 4.5 Run gates. Rewrite `core.test.ts` spawn/game-over families to the new top-out condition; add
   "top rows usable" + "one free in-field row admits the piece" scenarios. Verify: all gates green.
 
 ## 5. Wave 5 — Telemetry: pass-completion + lock events

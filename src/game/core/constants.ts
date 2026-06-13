@@ -13,9 +13,15 @@ export const ROWS = 10;
  */
 export const BOARD_ASPECT = `${COLS} / ${ROWS}`;
 
-/** Spawn position of the piece's top-left cell (columns 7-8, rows 0-1). */
+/**
+ * Spawn position of the piece's top-left cell. Columns 7-8; ROW = -2 so the 2x2
+ * STAGES ABOVE the visible field (top cell at row -2, bottom at row -1) and
+ * descends into the 16x10 field under gravity (audit A5/D4). The visible field's
+ * top two rows are therefore fully usable for stacking, and game over is decided
+ * by whether the piece can ENTER the field, not by the spawn row being occupied.
+ */
 export const SPAWN_COL = 7;
-export const SPAWN_ROW = 0;
+export const SPAWN_ROW = -2;
 
 /** Tempo: 120 BPM -> one beat = 0.5s. */
 export const BPM = 120;
