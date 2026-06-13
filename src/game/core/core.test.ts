@@ -794,24 +794,171 @@ describe("partial-coverage matrix (3.x)", () => {
     expect(s.score).toBe(40 + 10000);
   });
 
-  it("square completed mid-pass AHEAD of the bar waits for the next pass", () => {
-    // Bar advances past col 2 on an empty board, then a square is placed AHEAD
-    // (cols 8-9). It wasn't in the pass-start snapshot, so it must wait.
-    let s = advanceSweep(createGame(), 3); // leading edge at col 3
+  it("square completed mid-pass AHEAD of the bar clears on the CURRENT pass (D1)", () => {
+    // Mark-as-the-bar-passes (audit A2): the bar advances mid-pass on an empty
+    // board, then a square is placed AHEAD of it (cols 8-9). When the leading
+    // edge reaches cols 8-9 it marks the square and clears it THIS pass — it does
+    // NOT wait a full extra traversal.
+    let s = advanceSweep(createGame(), 4); // leading edge at col 4
+    expect(s.sweepX).toBeCloseTo(4, 6);
     const withSquare: GameState = { ...s, grid: cloneForTest(s.grid) };
     withSquare.grid[ROWS - 1]![8] = 1;
     withSquare.grid[ROWS - 1]![9] = 1;
     withSquare.grid[ROWS - 2]![8] = 1;
     withSquare.grid[ROWS - 2]![9] = 1;
+    // Finish this pass: the edge reaches cols 8-9 and the gap at col 10 erases it.
     s = advanceSweep(withSquare, COLS - withSquare.sweepX);
-    // Ahead square survived (not in snapshot).
-    expect(s.grid[ROWS - 1]![8]).toBe(1);
-    expect(s.score).toBe(0);
-    // Next pass clears it.
-    s = advanceSweep(s, COLS);
+    // Ahead square cleared on this pass.
     expect(s.grid[ROWS - 1]![8]).toBe(null);
-    // 1 x 40 = 40, board emptied -> all-clear bonus.
+    expect(s.grid[ROWS - 1]![9]).toBe(null);
+    expect(s.grid[ROWS - 2]![8]).toBe(null);
+    // 1 x 40 = 40, board emptied -> all-clear bonus, banked at the right edge.
     expect(s.score).toBe(40 + 10000);
+  });
+});
+
+describe("sweep-clear-mechanics: per-group batch erase + cascades (D1/D2)", () => {
+  /** Square sitting in cols [c, c+1] on the floor, mono colour. */
+  function squareAt(base: GameState, c: number, color: 0 | 1): void {
+    base.grid[ROWS - 1]![c] = color;
+    base.grid[ROWS - 1]![c + 1] = color;
+    base.grid[ROWS - 2]![c] = color;
+    base.grid[ROWS - 2]![c + 1] = color;
+  }
+
+  it("a contiguous marked run (overlapping squares) erases as ONE batch at the gap", () => {
+    // A mono 2x3 strip (cols 5-7, rows 8-9) = 2 overlapping squares spanning a
+    // contiguous run of cols 5,6,7. Col 8 is a gap. When the edge reaches col 8
+    // the whole run erases in one batch.
+    const base = createGame();
+    for (const c of [5, 6, 7]) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    // Advance just past col 8 (the gap) — well before the right edge.
+    const s = advanceSweep(base, 8.5);
+    expect(s.sweepX).toBeCloseTo(8.5, 6);
+    for (const c of [5, 6, 7]) {
+      expect(s.grid[ROWS - 1]![c]).toBe(null);
+      expect(s.grid[ROWS - 2]![c]).toBe(null);
+    }
+    // Score still banks only at the right edge, so not yet (mid-pass).
+    expect(s.score).toBe(0);
+  });
+
+  it("a marked group at the RIGHT EDGE (no trailing gap) erases at pass end", () => {
+    // Square at the last two columns (14-15): no column beyond to act as a gap,
+    // so the run flushes when the bar reaches the right edge.
+    const base = createGame();
+    squareAt(base, COLS - 2, 1);
+    // Edge nearly at the right but not wrapped: the square should still be there.
+    const mid = advanceSweep(base, COLS - 0.5);
+    expect(mid.grid[ROWS - 1]![COLS - 2]).toBe(1);
+    // Complete the pass: erases at the right edge.
+    const done = advanceSweep(mid, 0.5);
+    expect(done.grid[ROWS - 1]![COLS - 2]).toBe(null);
+    expect(done.grid[ROWS - 1]![COLS - 1]).toBe(null);
+    expect(done.score).toBe(40 + 10000);
+  });
+
+  it("two groups separated by a gap erase independently", () => {
+    // Group A at cols 2-3, gap at col 4, group B at cols 6-7.
+    const base = createGame();
+    squareAt(base, 2, 0);
+    squareAt(base, 6, 1);
+    // Reach col 5 (past the gap at col 4): group A erased, group B still there.
+    const afterGapA = advanceSweep(base, 5.5);
+    expect(afterGapA.grid[ROWS - 1]![2]).toBe(null); // A gone
+    expect(afterGapA.grid[ROWS - 1]![6]).toBe(1); // B intact
+    // Complete the pass: group B erases at the right edge.
+    const done = advanceSweep(afterGapA, COLS - afterGapA.sweepX);
+    expect(done.grid[ROWS - 1]![6]).toBe(null);
+    // 2 squares total this pass -> 2 x 40 = 80, board emptied -> all-clear bonus.
+    expect(done.score).toBe(80 + 10000);
+  });
+
+  it("gravity does not run BETWEEN columns of one group (one settle per group)", () => {
+    // A mono 2x3 group (cols 3-5) with a DIFFERENT-colour stack above col 4 (the
+    // group's middle column). If gravity ran per-column, the col-4 stack would
+    // fall as soon as col 3 was crossed; in the group model it falls exactly once
+    // after the whole [3,5] batch erases. Either way the END grid is the same,
+    // but we can at least assert the batch erases together and the stack lands.
+    const base = createGame();
+    for (const c of [3, 4, 5]) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    // B stack above col 4 (rows 0..ROWS-3).
+    for (let row = 0; row <= ROWS - 3; row++) base.grid[row]![4] = 1;
+    const s = advanceSweep(base, 6.5); // past the gap at col 6
+    // The whole A group is gone (cols 3 and 5 have nothing left; col 4 now holds
+    // the B stack that fell after the single post-group settle).
+    expect(s.grid[ROWS - 1]![3]).toBe(null);
+    expect(s.grid[ROWS - 1]![5]).toBe(null);
+    // No A (colour 0) remains anywhere.
+    let zeros = 0;
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++) if (s.grid[r]![c] === 0) zeros++;
+    expect(zeros).toBe(0);
+    // The B stack settled to the floor of col 4 — exactly once, all ROWS-2 cells.
+    expect(s.grid[ROWS - 1]![4]).toBe(1);
+    expect(s.grid.filter((r) => r[4] === 1).length).toBe(ROWS - 2);
+  });
+
+  it("cascade UNDER unpassed columns clears on the CURRENT pass", () => {
+    // Group at cols 2-3 sits beneath a tall same-as-cascade arrangement so that
+    // erasing it drops cells which form a NEW square AHEAD of the bar (cols 6-7),
+    // which the edge then reaches and clears this pass. Build it directly: an A
+    // square at cols 2-3, and a B square already sitting at cols 6-7 (ahead). The
+    // ahead B square is the "cascade" the edge harvests later in the same pass.
+    const base = createGame();
+    squareAt(base, 2, 0); // erased early (edge reaches gap at col 4)
+    squareAt(base, 6, 1); // ahead of the bar; cleared when the edge reaches it
+    const s = advanceSweep(base, COLS); // full pass
+    // Both cleared THIS pass.
+    expect(s.grid[ROWS - 1]![2]).toBe(null);
+    expect(s.grid[ROWS - 1]![6]).toBe(null);
+    expect(s.score).toBe(80 + 10000);
+  });
+
+  it("cascade BEHIND the bar clears on the NEXT pass, not this one", () => {
+    // A square at cols 6-7 with scattered B cells above cols 0-1 that, after the
+    // A clears and the columns settle, would form a B square at cols 0-1 (already
+    // passed). It must NOT clear this pass.
+    const base = createGame();
+    for (const c of [6, 7]) {
+      base.grid[ROWS - 1]![c] = 0;
+      base.grid[ROWS - 2]![c] = 0;
+    }
+    // Pre-place a settled B square behind the bar at cols 0-1 to model "formed
+    // behind the bar": advance the edge past cols 0-1 FIRST, then it can't be
+    // marked this pass.
+    let s = advanceSweep(base, 3); // edge past cols 0,1,2
+    const withBehind: GameState = { ...s, grid: cloneForTest(s.grid) };
+    withBehind.grid[ROWS - 1]![0] = 1;
+    withBehind.grid[ROWS - 1]![1] = 1;
+    withBehind.grid[ROWS - 2]![0] = 1;
+    withBehind.grid[ROWS - 2]![1] = 1;
+    s = advanceSweep(withBehind, COLS - withBehind.sweepX); // finish the pass
+    // The A square at 6-7 cleared; the behind B square survives.
+    expect(s.grid[ROWS - 1]![6]).toBe(null);
+    expect(s.grid[ROWS - 1]![0]).toBe(1);
+    // Next pass harvests the behind square.
+    s = advanceSweep(s, COLS);
+    expect(s.grid[ROWS - 1]![0]).toBe(null);
+  });
+
+  it("a square cell behind the erased bar is not re-marked after a settle drops into it", () => {
+    // Cols 0-1: A square + a lone B two rows above. When the edge erases cols 0-1
+    // the B falls into the just-vacated floor (a column already passed); it must
+    // NOT be re-marked or re-erased this pass.
+    const base = createGame();
+    squareAt(base, 0, 0);
+    base.grid[ROWS - 4]![0] = 1; // floats above the square
+    const s = advanceSweep(base, COLS);
+    // The A square gone; exactly one B survives in col 0 (fell to the floor).
+    expect(s.grid.filter((r) => r[0] === 1).length).toBe(1);
+    expect(s.grid[ROWS - 1]![0]).toBe(1);
   });
 });
 

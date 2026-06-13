@@ -79,27 +79,65 @@ export interface MarkResult {
 }
 
 /**
+ * One contiguous-group erase recorded during a sweep pass (audit A3 / D2). A
+ * group is a run of contiguous marked columns erased as a single batch when the
+ * bar reaches a gap (a column with no marks) or the right edge. RECORD-ONLY: the
+ * `cells` (each `row * COLS + col`) and the `hadChain` flag feed the audio
+ * layer's pass-completion telemetry (design D8); they never influence deletion,
+ * scoring, or timing.
+ */
+export interface GroupErase {
+  /** Coordinates (`row * COLS + col`) erased in this batch. */
+  cells: number[];
+  /** Whether a chain flood fired inside this batch. */
+  hadChain: boolean;
+}
+
+/**
  * Internal sweep-pass tracking. A "pass" is one full left-to-right traversal.
- * The marked set + distinct-square count are snapshotted at pass start (design
- * D5) so deletion is column-by-column but scoring is per completed pass. Not
- * exposed by the test `state()`.
+ *
+ * Marks are set INCREMENTALLY as the bar's leading edge reaches each column
+ * (design D1, audit A2) — NOT snapshotted once at pass start. A square completed
+ * ahead of the bar is therefore picked up when the edge reaches its left (anchor)
+ * column and clears on the CURRENT pass. `distinctSquares` accumulates (deduped
+ * by top-left corner) as squares are marked, used for scoring at the right edge.
+ * Not exposed by the test `state()`.
  */
 export interface SweepPass {
   /**
-   * Snapshot of which cells are marked for deletion, as a ROWS x COLS boolean
-   * grid (`marks[row][col]`). Identity-based, NOT a fixed (row,col) list: when a
-   * chain flood empties cells and the column settles, the marks fall with their
-   * cells (mark-aware settle), so the bar always deletes the originally-marked
-   * cell wherever gravity has since moved it — never an innocent cell that
-   * happened to land on a stale snapshot row.
+   * Which cells are marked for deletion, as a ROWS x COLS boolean grid
+   * (`marks[row][col]`). Set incrementally by `markColumn` as the edge crosses
+   * columns. Identity-based, NOT a fixed (row,col) list: when a chain flood
+   * empties cells and the column settles, the marks fall with their cells
+   * (mark-aware settle), so erasure always targets the originally-marked cell
+   * wherever gravity has since moved it — never an innocent cell that happened to
+   * land on a stale row.
    */
   marks: boolean[][];
-  /** Snapshot: distinct completed 2x2 squares present at pass start. */
+  /**
+   * Distinct completed 2x2 squares MARKED so far this pass, deduped by their
+   * top-left (anchor) corner. Accumulates as the edge crosses columns; used to
+   * bank scoring at the right edge. (No longer a pass-start snapshot.)
+   */
   distinctSquares: number;
-  /** Cells actually deleted so far this pass. */
+  /**
+   * Top-left corner coordinates (`row * COLS + col`) of squares already counted
+   * into `distinctSquares` this pass, so a square whose cells span two crossed
+   * columns is never double-counted.
+   */
+  countedCorners: Set<number>;
+  /** The leftmost column of the current contiguous marked run, or -1 if none. */
+  runStart: number;
+  /** Cells actually erased so far this pass. */
   deletedCount: number;
   /** Columns already processed (0..COLS). */
   processedCols: number;
+  /**
+   * RECORD-ONLY (design D8): the contiguous-group erases this pass, in erase
+   * order. Populated by `eraseGroup`; attached to `lastPassComplete` at the right
+   * edge. No gameplay effect.
+   */
+  groupErases: GroupErase[];
 }
 
 /**

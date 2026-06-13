@@ -22,34 +22,34 @@
 
 ## 2. Wave 2 — Sweep rewrite: mark-as-pass + per-group batch erase + deferred gravity
 
-- [ ] 2.1 `src/game/core/detect.ts`: factor a reusable predicate `isSquareAt(grid, row, col): boolean`
+- [x] 2.1 `src/game/core/detect.ts`: factor a reusable predicate `isSquareAt(grid, row, col): boolean`
   (the 2×2 all-same-colour test) used by both `computeMarked` and the new incremental marker. Verify:
   predicate matches `computeMarked` corner counts.
-- [ ] 2.2 `src/game/core/sweep.ts`: add `markColumn(grid, marks, col)` implementing the pinned rule:
+- [x] 2.2 `src/game/core/sweep.ts`: add `markColumn(grid, marks, col)` implementing the pinned rule:
   a square marks ALL FOUR cells when the edge reaches its LEFT (anchor) column `c` (the `c+1` cells
   are marked ahead of the bar); a square whose left column was already passed waits for the next
   pass. Accumulate distinct newly-marked squares into the pass `distinctSquares` (deduped). Verify: a square completed ahead of
   the bar is marked when the edge reaches it (sweep-clear-mechanics scenario 1).
-- [ ] 2.3 `src/game/core/sweep.ts`: replace `processColumn` with run-tracking — extend the current
+- [x] 2.3 `src/game/core/sweep.ts`: replace `processColumn` with run-tracking — extend the current
   contiguous marked run as marked columns are crossed; on a gap column (no marks) or the right edge,
   call `eraseGroup`. Verify: a contiguous run erases as one batch at the gap/right edge
   (sweep-clear-mechanics group scenarios).
-- [ ] 2.4 `src/game/core/sweep.ts`: generalise `deleteColumn` → `eraseGroup(grid, pass, runCols,
+- [x] 2.4 `src/game/core/sweep.ts`: generalise `deleteColumn` → `eraseGroup(grid, pass, runCols,
   specials, record)` that deletes all marked cells across `runCols` in one batch, fires `chainFlood`
   for any special in the batch, then settles the touched columns ONCE via `settleColumnWithMarks`.
   Preserve identity-based marks. Verify: no per-column settle within a group; chain extras score 0.
-- [ ] 2.5 `src/game/core/sweep.ts` `advanceSweep`: drive the new mark→run→eraseGroup loop as the edge
+- [x] 2.5 `src/game/core/sweep.ts` `advanceSweep`: drive the new mark→run→eraseGroup loop as the edge
   crosses columns; bank scoring at the right edge using accumulated `distinctSquares`; keep combo/skin
   advance + board-state bonus at the boundary; wrap and re-init the next pass. Verify: scoring banks
   only at the right edge (challenge-scoring scenario).
-- [ ] 2.6 `src/game/core/sweep.ts` `runFullSweep`: rewrite to the same group-batch model (mark all
+- [x] 2.6 `src/game/core/sweep.ts` `runFullSweep`: rewrite to the same group-batch model (mark all
   columns, erase contiguous groups, settle once per group). Verify: `testSweepNow` matches incremental
   result on static boards.
-- [ ] 2.7 Cascade timing: ensure a cascade under unpassed columns is marked this pass and a cascade
+- [x] 2.7 Cascade timing: ensure a cascade under unpassed columns is marked this pass and a cascade
   behind the bar waits the next pass; never re-enter an erased column. Verify: both cascade scenarios.
-- [ ] 2.8 `src/game/core/types.ts`: update `SweepPass` doc/comments (no longer snapshot-at-start;
+- [x] 2.8 `src/game/core/types.ts`: update `SweepPass` doc/comments (no longer snapshot-at-start;
   `distinctSquares` accumulates; `marks` set incrementally). Verify: typecheck.
-- [ ] 2.9 Run gates. Rewrite stale `core.test.ts` + `chain.test.ts` families: snapshot/per-column
+- [x] 2.9 Run gates. Rewrite stale `core.test.ts` + `chain.test.ts` families: snapshot/per-column
   assertions → mark-as-pass + group-batch; mid-pass-ahead-of-bar clears same pass; chain-flood timing
   at group-erase. Verify: `pnpm test` · `typecheck` · `lint` · `build` all green.
 
