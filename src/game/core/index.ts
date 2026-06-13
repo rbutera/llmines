@@ -26,6 +26,11 @@ export interface PublicState {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  /**
+   * Additive: the raw per-game seed (`state.seed`), so a test can assert
+   * reproducibility (same seed -> same run) and the game-over screen can show it.
+   */
+  seed: number;
   /** Spawn-hold for the currently active piece. */
   hold: HoldState;
   /**
@@ -72,6 +77,7 @@ export function publicState(state: GameState): PublicState {
     score: state.score,
     gameOver: state.gameOver,
     sweepX: state.sweepX,
+    seed: state.seed,
     hold: state.hold ?? { active: false, remainingMs: 0 },
     // Detection is over the settled grid (matches `marked()` semantics); the
     // active falling piece is excluded until it locks.

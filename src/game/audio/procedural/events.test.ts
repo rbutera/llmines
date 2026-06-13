@@ -17,6 +17,7 @@ function rs(over: Partial<RenderState> = {}): RenderState {
     score: 0,
     gameOver: false,
     sweepX: 0,
+    seed: 0,
     marked: [],
     hold: { active: false, remainingMs: 0 },
     queue: [],

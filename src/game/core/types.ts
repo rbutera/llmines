@@ -113,6 +113,12 @@ export interface GameState {
   gameOver: boolean;
   /** Sweep column position, float in [0, 16]. */
   sweepX: number;
+  /**
+   * The raw seed this game was created from (uint32), distinct from the evolving
+   * `rngState`. Stored so the run can be surfaced (HUD / game-over) and replayed
+   * (seed + ordered inputs reproduce the run). Set once by `createGame(seed)`.
+   */
+  seed: number;
   /** Mulberry32 RNG state (uint32). */
   rngState: number;
   /** Spawn-hold for the active piece (gravity suspended while `active`). */

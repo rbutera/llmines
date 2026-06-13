@@ -7,6 +7,7 @@ import {
   createGame,
   floodFill,
   GRAVITY_INTERVAL_MS,
+  randomSeed,
   gravityStep,
   hardDrop,
   isHeld,
@@ -53,6 +54,12 @@ export interface RenderState {
   score: number;
   gameOver: boolean;
   sweepX: number;
+  /**
+   * Additive (render-only): the raw per-game seed, copied straight from
+   * `state.seed`. Lets the HUD / game-over screen display the seed so a run can
+   * be reproduced. Pure projection.
+   */
+  seed: number;
   marked: MarkedCell[];
   /** Spawn-hold for the active piece (held => no descent; "ready to place"). */
   hold: HoldState;
@@ -236,7 +243,9 @@ export class GameController {
 
   constructor(opts: ControllerOptions = {}) {
     this.testMode = opts.testMode ?? false;
-    this.state = createGame(opts.seed ?? 1);
+    // Production seeds a fresh random run (audit A4); an explicit opts.seed pins
+    // a reproducible game (tests). NOT a fixed default of 1.
+    this.state = createGame(opts.seed ?? randomSeed());
     // Default time source per mode: a manual FakeClock in tests, the
     // AudioContext-backed clock in production. AudioContext is browser-only, so
     // it is only constructed in production (where the rAF loop also lives).
@@ -317,7 +326,9 @@ export class GameController {
   /** Reset to a fresh game (optionally reseeded) and restart play. */
   restart(seed?: number): void {
     this.stop();
-    this.state = createGame(seed ?? 1);
+    // A no-argument restart reseeds RANDOMLY (audit A4) — never back to seed 1,
+    // which dealt an identical run every time. An explicit seed still pins one.
+    this.state = createGame(seed ?? randomSeed());
     this.gravityAccumMs = 0;
     this.lastClockNow = 0;
     this.sweepStartT = 0;
@@ -696,6 +707,7 @@ export class GameController {
       score: this.state.score,
       gameOver: this.state.gameOver,
       sweepX: this.state.sweepX,
+      seed: this.state.seed,
       marked: computeMarked(this.state.grid).marked,
       hold: this.state.hold,
       queue: this.state.queue,

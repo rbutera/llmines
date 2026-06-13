@@ -37,6 +37,19 @@ const FORBIDDEN: { name: string; pattern: RegExp }[] = [
   { name: "any clock identifier", pattern: /\bClock\b/ },
 ];
 
+/**
+ * Per-file forbidden-pattern exemptions. `rng.ts` is the SOLE seed source: its
+ * `randomSeed()` deliberately draws an initial seed from `crypto.getRandomValues`
+ * with a `Date.now()` fallback (design D6). That is a one-off non-deterministic
+ * seed draw, never called by any pure game op — so the determinism contract
+ * ("same seed -> same run") is untouched. The `Date` reference there is therefore
+ * sanctioned and exempt; every OTHER pattern (and every other file) is still
+ * enforced verbatim.
+ */
+const EXEMPT: Record<string, ReadonlySet<string>> = {
+  "rng.ts": new Set(["Date"]),
+};
+
 describe("core purity", () => {
   const files = tsFiles(coreDir);
 
@@ -45,9 +58,12 @@ describe("core purity", () => {
   });
 
   for (const file of files) {
-    it(`no time/DOM/audio dependency in ${file.split("/core/")[1]}`, () => {
+    const rel = file.split("/core/")[1]!;
+    it(`no time/DOM/audio dependency in ${rel}`, () => {
       const src = readFileSync(file, "utf8");
+      const exempt = EXEMPT[rel];
       for (const { name, pattern } of FORBIDDEN) {
+        if (exempt?.has(name)) continue;
         expect(
           pattern.test(src),
           `${file} references forbidden "${name}"`,

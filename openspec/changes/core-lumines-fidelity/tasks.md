@@ -1,22 +1,22 @@
 ## 1. Wave 1 — Quick wins: gem-through-hard-drop + per-game seed
 
-- [ ] 1.1 `src/game/core/piece.ts` `hardDrop`: carry `active.special` through every rebuilt `active`
+- [x] 1.1 `src/game/core/piece.ts` `hardDrop`: carry `active.special` through every rebuilt `active`
   in the descent loop (mirror `gravityStep`/`movePiece`). Verify: a forced-gem piece hard-dropped
   lands with its coord in `specials`.
-- [ ] 1.2 `src/game/core/rng.ts`: add `randomSeed(): number` returning a uint32 from
+- [x] 1.2 `src/game/core/rng.ts`: add `randomSeed(): number` returning a uint32 from
   `crypto.getRandomValues(new Uint32Array(1))[0]`, fallback `(Date.now() ^ (Math.random()*2**32)) >>> 0`.
   Verify: returns a uint32; two calls differ with overwhelming probability.
-- [ ] 1.3 `src/game/core/types.ts` + `grid.ts`: add `seed: number` to `GameState`; `createGame(seed)`
+- [x] 1.3 `src/game/core/types.ts` + `grid.ts`: add `seed: number` to `GameState`; `createGame(seed)`
   records `seed` and sets `rngState = seedState(seed)`. Keep the explicit-seed signature for tests.
   Verify: `createGame(7).seed === 7`.
-- [ ] 1.4 `src/game/engine/controller.ts`: constructor uses `opts.seed ?? randomSeed()`;
+- [x] 1.4 `src/game/engine/controller.ts`: constructor uses `opts.seed ?? randomSeed()`;
   `restart(seed?)` uses `seed ?? randomSeed()` (NOT `?? 1`). Re-arm gesture-resume unchanged.
   Verify: `restart()` with no arg yields a non-1 seed; two restarts differ.
-- [ ] 1.5 `src/game/components/GameShell.tsx` (out-of-core, one line): drop the `restart(1)` arg in
+- [x] 1.5 `src/game/components/GameShell.tsx` (out-of-core, one line): drop the `restart(1)` arg in
   `handleRestart` so the controller's random default applies. Verify: deployed restart reseeds.
-- [ ] 1.6 Expose `seed` on `RenderState` (`controller.ts`) and `PublicState` (`core/index.ts`) as a
+- [x] 1.6 Expose `seed` on `RenderState` (`controller.ts`) and `PublicState` (`core/index.ts`) as a
   pure projection. Verify: render-state + public-state carry the seed.
-- [ ] 1.7 Run gates: `pnpm test` · `pnpm typecheck` · `pnpm lint` · `pnpm build`. Fix the determinism
+- [x] 1.7 Run gates: `pnpm test` · `pnpm typecheck` · `pnpm lint` · `pnpm build`. Fix the determinism
   test families that assumed `createGame(1)` identical sequences (pass an explicit seed; add a
   `randomSeed()`-varies test).
 

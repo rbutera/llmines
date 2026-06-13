@@ -271,6 +271,25 @@ describe("piece mechanics (4.x)", () => {
     expect(s.grid[ROWS - 1]![7]).toBe(0);
     expect(s.grid[ROWS - 2]![8]).toBe(0);
   });
+
+  it("hard drop carries the chain special through to the settled cell (regression A1)", () => {
+    // Regression: hardDrop rebuilt `active` per descent step WITHOUT special, so a
+    // gem hard-dropped (the common case) locked as a plain block. The special must
+    // survive the descent loop and land in `specials`.
+    const mk = () => {
+      const s = withPiece(MONO_A);
+      // cellIndex 2 = bottom-left of the 2x2 (spawn cols 7-8).
+      s.active!.special = { cellIndex: 2 };
+      return s;
+    };
+    // Repeat to assert it is never silently dropped.
+    for (let i = 0; i < 5; i++) {
+      const s = hardDrop(mk());
+      expect(s.active).toBe(null);
+      // Bottom-left cell rests at (ROWS-1, 7) after the drop+settle.
+      expect(s.specials.has((ROWS - 1) * COLS + 7)).toBe(true);
+    }
+  });
 });
 
 // Predicate that drives the renderer's fall-interpolation gate: a resting piece

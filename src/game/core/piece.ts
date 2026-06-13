@@ -402,6 +402,10 @@ export function hardDrop(state: GameState): GameState {
     active = {
       cells: active.cells,
       pos: { row: active.pos.row + 1, col: active.pos.col },
+      // Carry the chain special through every rebuilt `active` in the descent
+      // loop, exactly as movePiece / rotateCW / gravityStep do. Without this a
+      // gem hard-dropped (the common case) locked as a plain block (audit A1).
+      special: active.special,
     };
   }
   return lockPiece({ ...state, active });

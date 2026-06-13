@@ -14,7 +14,11 @@ export function cloneGrid(grid: Grid): Grid {
   return grid.map((row) => row.slice());
 }
 
-/** Fresh game: empty grid, no active piece, score 0, not over, sweep at 0. */
+/**
+ * Fresh game: empty grid, no active piece, score 0, not over, sweep at 0.
+ * The explicit-seed signature is retained so tests pin a reproducible run; the
+ * raw `seed` is recorded on the state (distinct from the evolving `rngState`).
+ */
 export function createGame(seed = 1): GameState {
   return {
     grid: emptyGrid(),
@@ -22,6 +26,7 @@ export function createGame(seed = 1): GameState {
     score: 0,
     gameOver: false,
     sweepX: 0,
+    seed,
     rngState: seedState(seed),
     hold: { active: false, remainingMs: 0 },
     combo: 0,
