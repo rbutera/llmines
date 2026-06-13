@@ -84,8 +84,19 @@ describe("per-game random seed", () => {
     const g1 = createGame(randomSeed());
     const g2 = createGame(randomSeed());
     expect(g1.seed).not.toBe(g2.seed);
-    expect(generateNext(g1.rngState)[1]).not.toEqual(
-      generateNext(g2.rngState)[1],
-    );
+    // Compare a LONG piece sequence, not just the first piece: one 2×2 of two
+    // colours has only 16 outcomes (~6% chance two seeds match on it — which made
+    // this test flaky). Eight pieces collide with probability ~16^-8 ≈ never.
+    const seq = (rng: number): string => {
+      let s = rng;
+      const out: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        const [next, gp] = generateNext(s);
+        s = next;
+        out.push(JSON.stringify(gp.cells));
+      }
+      return out.join("|");
+    };
+    expect(seq(g1.rngState)).not.toEqual(seq(g2.rngState));
   });
 });

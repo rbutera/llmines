@@ -1903,9 +1903,9 @@ export class InteractiveAudioEngine {
 
   // ── volume / mute ─────────────────────────────────────────────────────────────
 
-  setVolume(v: number): void {
+  setVolume(v: number, rampSeconds = 0.1): void {
     this.volume = Math.max(0, Math.min(1, v));
-    this.applyVolume();
+    this.applyVolume(rampSeconds);
   }
 
   setMuted(muted: boolean): void {
@@ -1917,10 +1917,10 @@ export class InteractiveAudioEngine {
     return this.muted;
   }
 
-  private applyVolume(): void {
+  private applyVolume(rampSeconds = 0.1): void {
     if (!this.master) return;
     try {
-      this.master.gain.rampTo(this.muted ? 0 : this.volume, 0.1);
+      this.master.gain.rampTo(this.muted ? 0 : this.volume, rampSeconds);
     } catch {
       // ignore
     }

@@ -77,6 +77,20 @@ export function GameShell() {
   const audioDeriverRef = useRef<AudioEventDeriver | null>(null);
   const phaseRef = useRef<Phase>("start");
   phaseRef.current = phase;
+  // Volume/pause coupling: while PAUSED the audio sits at 0 (so a backgrounded
+  // pause is silent), but dragging the volume slider in the pause menu briefly
+  // bumps it to the chosen level so the player can hear the result, then fades
+  // back to 0 after ~1s of no slider activity. Refs so the timer/handlers read
+  // current values without re-subscribing.
+  const musicVolumeRef = useRef(musicVolume);
+  musicVolumeRef.current = musicVolume;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  const volumePreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  /** How long the pause-menu volume preview stays audible after the last drag. */
+  const VOLUME_PREVIEW_MS = 1000;
   // Refs tracking the last-seen render event ids so the subscription fires each
   // juice effect exactly once per new event, and a wrap counter for the bar.
   const lastScoreRef = useRef(0);
@@ -241,6 +255,8 @@ export function GameShell() {
       audioEngineRef.current = null;
       audioDeriverRef.current = null;
       if (shakeTimerRef.current) clearTimeout(shakeTimerRef.current);
+      if (volumePreviewTimerRef.current)
+        clearTimeout(volumePreviewTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -361,11 +377,25 @@ export function GameShell() {
     setMusicVolume(loadSettings().musicVolume);
   }, []);
 
-  // Apply the volume to the interactive engine. (Audio-wiring — identical v2.5.)
+  // Apply the volume to the interactive engine. While PLAYING, the engine follows
+  // `musicVolume`. While PAUSED, volume is driven to 0 by the pause effect below
+  // (and previewed by the slider handler), so a volume change made while paused is
+  // NOT pushed here — the slider handler owns the paused preview.
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = 0;
-    audioEngineRef.current?.setVolume(musicVolume);
+    if (!pausedRef.current) audioEngineRef.current?.setVolume(musicVolume);
   }, [musicVolume]);
+
+  // Pause ⇒ silence; resume ⇒ restore the chosen volume. This makes a backgrounded
+  // pause silent (the player can pause and walk away with no sound). Any in-flight
+  // volume-preview fade is cancelled on either transition.
+  useEffect(() => {
+    if (volumePreviewTimerRef.current) {
+      clearTimeout(volumePreviewTimerRef.current);
+      volumePreviewTimerRef.current = null;
+    }
+    audioEngineRef.current?.setVolume(paused ? 0 : musicVolumeRef.current);
+  }, [paused]);
 
   // Apply the mute toggle to the engine. (Audio-wiring — identical v2.5.)
   useEffect(() => {
@@ -375,7 +405,23 @@ export function GameShell() {
   const handleVolumeChange = useCallback((v: number) => {
     const clamped = Math.max(0, Math.min(1, v));
     setMusicVolume(clamped);
+    musicVolumeRef.current = clamped;
     saveSettings({ ...loadSettings(), musicVolume: clamped });
+    if (pausedRef.current) {
+      // PAUSED: preview the chosen level so the player hears the result, then fade
+      // back to silence after a beat of no slider activity (each drag re-arms it).
+      audioEngineRef.current?.setVolume(clamped);
+      if (volumePreviewTimerRef.current) {
+        clearTimeout(volumePreviewTimerRef.current);
+      }
+      volumePreviewTimerRef.current = setTimeout(() => {
+        volumePreviewTimerRef.current = null;
+        // Only fade back if still paused (resume already restored full volume).
+        if (pausedRef.current) audioEngineRef.current?.setVolume(0, 0.6);
+      }, VOLUME_PREVIEW_MS);
+    } else {
+      audioEngineRef.current?.setVolume(clamped);
+    }
   }, []);
 
   const handleStart = useCallback(() => {
