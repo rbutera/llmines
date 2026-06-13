@@ -113,6 +113,10 @@ def main():
             "id": song,
             "title": sp["title"],
             "tempo": sp["bpm"],
+            # Per-song musical key for the in-key tone SFX (engine design D6). Sourced
+            # from the plan; defaults to A minor (song1's character) if the plan omits
+            # it. song1 = A minor, song2 (phonk) = F# minor.
+            "key": sp.get("key", {"root": "A", "scale": "minor"}),
             "barSeconds": round(sp["secPerBar"], 6),
             "segments": [],
         }

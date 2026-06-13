@@ -22,9 +22,15 @@
  *  - lineClear : `lastPassComplete.id` advanced AND its real `squares >= 1`
  *                (a zero-square pass-id bump emits nothing); `combo` carries
  *                `comboMultiplier - 1` (the streak offset, 0 = no streak) so the
- *                engine's `1 + squares + combo` weight needs no change (B1)
+ *                engine's heat gain (squares + combo) is fed truthfully (B1)
  *  - chain     : `lastChainClear.id` advanced (a chain flood happened); `size`
  *                from the cleared component length (already render-truthful)
+ *  - match     : the render-only `markedSquares` count (= distinct staged 2x2
+ *                squares on the settled grid) ROSE versus the previous frame, on
+ *                ANY frame; `squares` carries the positive delta. NOT gated on
+ *                `lastLock.id` (which a post-clear gravity cascade does not bump),
+ *                so a cascade-formed square dings too. A DECREASE (the sweep erasing
+ *                a square) emits nothing — the clear stays silent (design D6)
  *
  * Pure: construct one Deriver per game, feed it each RenderState, get back the
  * list of events to fire. No Tone import.
@@ -121,6 +127,8 @@ interface Snapshot {
   lockId: number;
   chainId: number;
   hasActive: boolean;
+  /** Distinct staged 2x2 squares on the settled grid this frame (the match signal). */
+  markedSquares: number;
 }
 
 /** Serialise the active piece's 2x2 colour matrix to detect a rotation. */
@@ -142,16 +150,30 @@ export class AudioEventDeriver {
       lockId: lock?.id ?? 0,
       chainId: rs.lastChainClear?.id ?? 0,
       hasActive: rs.active != null,
+      markedSquares: typeof rs.markedSquares === "number" ? rs.markedSquares : 0,
     };
 
     const events: AudioEvent[] = [];
     const prev = this.prev;
 
     if (prev) {
+      // --- match (a 2x2 square newly STAGED — the distinct-square count ROSE) ---
+      // Decoupled from `lastLock.id` (a post-clear gravity cascade forms a square
+      // WITHOUT bumping the lock id, design D6): emit when the render-only
+      // `markedSquares` count rises on ANY frame, carrying the positive delta. A
+      // DECREASE (the sweep erasing a square) emits nothing — the clear stays silent.
+      if (cur.markedSquares > prev.markedSquares) {
+        events.push({
+          type: "match",
+          squares: cur.markedSquares - prev.markedSquares,
+        });
+      }
+
       // --- line clear (real pass-completion id advanced AND squares >= 1) ---
-      // No score read. A zero-square pass-id bump emits nothing (a weight-1
-      // phantom must never feed segmentScore). `combo` = comboMultiplier - 1 so
-      // the engine's `1 + squares + combo` weight is unchanged (1 = no streak → 0).
+      // No score read. A zero-square pass-id bump emits nothing. `combo` =
+      // comboMultiplier - 1 so the engine's heat gain (squares + combo) is fed
+      // truthfully (1 = no streak → 0). The sweep clear is SILENT in tone mode; the
+      // lineClear event still feeds HEAT.
       if (pass && cur.passId > prev.passId && pass.squares >= 1) {
         events.push({
           type: "lineClear",

@@ -6,75 +6,99 @@ import {
 import { routeEvent } from "./sfxRouting";
 
 /**
- * Action SFX routing + velocity contract (audio-truth D4 / action-sfx spec). The
- * pure `routeEvent` map is asserted here; the velocity is computed by the engine's
- * exported helpers (also pure). The "feeds clear-progress" half of the clear-stage
- * requirement is asserted in the engine integration test (it needs the engine
- * state), so this file owns the routing + velocity scaling.
+ * Mode-aware action SFX routing + velocity contract (heat/tone model, design D6).
+ * `routeEvent(ev, mode)` is pure: TONE mode (default) routes only the events that
+ * SOUND a synthesised tone (match / rotate / softDrop / lock); SAMPLE mode keeps the
+ * recorded per-segment path (match → stage, chain → stage + layered drop, lock → drop,
+ * rotate/softDrop → their one-shots). The sweep clear and move are silent in BOTH
+ * modes; the chain is silent in TONE mode only. Velocity helpers are pure too.
  */
 
-describe("action SFX routing (D4)", () => {
-  it("a lineClear routes to the clear `stage` one-shot (no longer silent)", () => {
-    expect(routeEvent({ type: "lineClear", squares: 2, combo: 0 }).sfx).toBe(
-      "stage",
-    );
+describe("action SFX routing (D6) — TONE mode (default)", () => {
+  it("a MATCH sounds (routes non-empty); the sweep CLEAR is silent", () => {
+    expect(routeEvent({ type: "match", squares: 2 }).sfx).toBeDefined();
+    // the sweep clear makes no noise — only forming a match dings.
+    expect(routeEvent({ type: "lineClear", squares: 2, combo: 0 }).sfx).toBeUndefined();
   });
 
-  it("a bigger clear plays `stage` at a higher velocity than a single-square clear", () => {
+  it("a CHAIN is SILENT in tone mode (it is a clear)", () => {
+    expect(routeEvent({ type: "chain", size: 6 }).sfx).toBeUndefined();
+    expect(routeEvent({ type: "chain", size: 6 }).layer).toBeUndefined();
+  });
+
+  it("rotate / softDrop / lock sound; move is silent (tone mode)", () => {
+    expect(routeEvent({ type: "rotate" }).sfx).toBeDefined();
+    expect(routeEvent({ type: "softDrop" }).sfx).toBeDefined();
+    expect(routeEvent({ type: "lock", cause: "hard" }).sfx).toBeDefined();
+    expect(routeEvent({ type: "move" }).sfx).toBeUndefined();
+  });
+
+  it("the default mode (no arg) is tone — the sweep clear + chain are silent", () => {
+    expect(routeEvent({ type: "lineClear", squares: 2, combo: 0 }).sfx).toBeUndefined();
+    expect(routeEvent({ type: "chain", size: 4 }).sfx).toBeUndefined();
+  });
+});
+
+describe("action SFX routing (D6) — SAMPLE mode (recorded path)", () => {
+  it("a MATCH routes to the clear `stage` one-shot", () => {
+    expect(routeEvent({ type: "match", squares: 2 }, "sample").sfx).toBe("stage");
+  });
+
+  it("the sweep CLEAR is silent in sample mode too (clearing makes no noise)", () => {
+    expect(
+      routeEvent({ type: "lineClear", squares: 2, combo: 0 }, "sample").sfx,
+    ).toBeUndefined();
+  });
+
+  it("a CHAIN keeps its distinct recorded routing (hot stage + layered drop)", () => {
+    const chain = routeEvent({ type: "chain", size: 6 }, "sample");
+    expect(chain.sfx).toBe("stage");
+    expect(chain.layer).toBe("drop"); // the extra impact
+    // a plain match has no layered impact.
+    expect(routeEvent({ type: "match", squares: 2 }, "sample").layer).toBeUndefined();
+  });
+
+  it("every settle routes to `drop`; rotate/softDrop keep their one-shots; move silent", () => {
+    expect(routeEvent({ type: "lock", cause: "gravity" }, "sample").sfx).toBe("drop");
+    expect(routeEvent({ type: "lock", cause: "hard" }, "sample").sfx).toBe("drop");
+    expect(routeEvent({ type: "rotate" }, "sample").sfx).toBe("rotate");
+    expect(routeEvent({ type: "softDrop" }, "sample").sfx).toBe("softdrop");
+    expect(routeEvent({ type: "move" }, "sample").sfx).toBeUndefined();
+  });
+
+  it("the SfxName set matches the manifest keys 1:1 (no harddrop quirk)", () => {
+    const names = [
+      routeEvent({ type: "match", squares: 1 }, "sample").sfx,
+      routeEvent({ type: "chain", size: 4 }, "sample").sfx,
+      routeEvent({ type: "chain", size: 4 }, "sample").layer,
+      routeEvent({ type: "lock", cause: "hard" }, "sample").sfx,
+      routeEvent({ type: "rotate" }, "sample").sfx,
+      routeEvent({ type: "softDrop" }, "sample").sfx,
+    ];
+    for (const n of names) {
+      expect(["move", "rotate", "softdrop", "drop", "stage"]).toContain(n);
+    }
+  });
+});
+
+describe("velocity helpers (pure)", () => {
+  it("a bigger match/clear plays `stage` at a higher velocity than a single-square one", () => {
     const small = stageVelocityForSquares(1);
     const big = stageVelocityForSquares(4);
     expect(big).toBeGreaterThan(small);
     expect(small).toBeCloseTo(0.7, 6);
     expect(big).toBeCloseTo(1.0, 6); // clamps at the ceiling
-    // and a huge clear never exceeds the ceiling.
     expect(stageVelocityForSquares(50)).toBe(1.0);
-    // the floor holds for a zero/degenerate count.
-    expect(stageVelocityForSquares(0)).toBe(0.6);
+    expect(stageVelocityForSquares(0)).toBe(0.6); // floor for a degenerate count
   });
 
-  it("a chain is audibly DISTINCT from a plain clear (hot stage + layered drop)", () => {
-    const chain = routeEvent({ type: "chain", size: 6 });
-    const clear = routeEvent({ type: "lineClear", squares: 2, combo: 0 });
-    expect(chain.sfx).toBe("stage");
-    expect(chain.layer).toBe("drop"); // the extra impact
-    expect(clear.layer).toBeUndefined(); // a plain clear has no layer
-  });
-
-  it("every settle routes to `drop`, with velocity scaled by cause", () => {
-    expect(routeEvent({ type: "lock", cause: "gravity" }).sfx).toBe("drop");
-    expect(routeEvent({ type: "lock", cause: "hard" }).sfx).toBe("drop");
-    // hard hits hardest; gravity/soft are softer.
+  it("a settle's drop velocity scales by cause (hard > soft > gravity), absent → floor", () => {
     expect(dropVelocityForCause("hard")).toBe(1.0);
     expect(dropVelocityForCause("soft")).toBe(0.7);
     expect(dropVelocityForCause("gravity")).toBe(0.6);
     expect(dropVelocityForCause("hard")).toBeGreaterThan(
       dropVelocityForCause("gravity"),
     );
-    // an absent cause (neutral lock) degrades to the gravity floor, not silence.
     expect(dropVelocityForCause(undefined)).toBe(0.6);
-  });
-
-  it("move is SILENT by decision (no routing)", () => {
-    expect(routeEvent({ type: "move" }).sfx).toBeUndefined();
-  });
-
-  it("rotate and soft-drop keep their mapped one-shots", () => {
-    expect(routeEvent({ type: "rotate" }).sfx).toBe("rotate");
-    expect(routeEvent({ type: "softDrop" }).sfx).toBe("softdrop");
-  });
-
-  it("the SfxName set matches the manifest keys 1:1 (no harddrop quirk)", () => {
-    const names = [
-      routeEvent({ type: "lineClear", squares: 1, combo: 0 }).sfx,
-      routeEvent({ type: "chain", size: 4 }).sfx,
-      routeEvent({ type: "chain", size: 4 }).layer,
-      routeEvent({ type: "lock", cause: "hard" }).sfx,
-      routeEvent({ type: "rotate" }).sfx,
-      routeEvent({ type: "softDrop" }).sfx,
-    ];
-    // none of the routed names is the old "harddrop" — they are all manifest keys.
-    for (const n of names) {
-      expect(["move", "rotate", "softdrop", "drop", "stage"]).toContain(n);
-    }
   });
 });

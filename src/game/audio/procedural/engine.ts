@@ -1,7 +1,7 @@
 /**
  * Interactive-audio ENGINE for LLMines — manifest-driven, N-tier, loop-quantized,
- * CLEAR-GATED model (FINE5). The player's CLEARS drive the song forward; the song
- * does NOT advance on its own.
+ * HEAT-DRIVEN model. The player's CLEARS build a continuous performance meter (`heat`)
+ * that drives the song; the song does NOT advance on its own clock.
  *
  * ── The model in one paragraph ───────────────────────────────────────────────
  * Each song is a sequence of SEGMENTS. Every segment is pre-rendered at N CUMULATIVE
@@ -12,26 +12,27 @@
  * mechanic: at steady state exactly ONE bed player has non-zero gain (≤2 across a
  * crossfade), so the runtime never sums many stems.
  *
- * Two ORTHOGONAL progressions, both quantized to loop boundaries, BOTH driven by
- * clears (never an autonomous clock):
- *  - HORIZONTAL (segment advance) is CLEAR-GATED, FORWARD-ONLY, ONE-STEP,
- *    IN-FLIGHT-LOCKED. The current segment LOOPS in place (re-plays its bar window)
- *    while the player hasn't earned an advance. Clears accumulate a monotonic
- *    `segmentScore`; when `segmentScore ≥ advanceThreshold` AND no transition is in
- *    flight, the song advances to the NEXT segment on the next bar boundary. One
- *    advance per threshold crossing — a burst can NOT fast-forward multiple segments
- *    (the in-flight lock + per-segment reset enforce this). Never backward. Advancing
- *    PAST the last (TERMINAL) segment fires {@link onSongComplete} (the host swaps to
- *    the other song via switchTrack — a skin switch).
- *  - VERTICAL (cumulative tier reveal) is CLEAR-GATED and STICKY WITHIN A SEGMENT.
- *    As the same monotonic `segmentScore` crosses the per-tier reveal thresholds, the
- *    audible cumulative tier rises (tier0 → tier1 → … , bar-aligned). Once a tier is
- *    revealed it STAYS for that segment — no decay, never sheds (sticky reveal). A
- *    FLOOR is carried into the next segment (entry tier = the tier reached in the
- *    previous segment, clamped to the new segment's tiers) so a section never resets
- *    to bare. Crossfades use a constant-sum (linear) ramp — correct for these
- *    CUMULATIVE renders (the shared bed stays at full through the fade; true
- *    equal-power would +3dB-bump the shared bed).
+ * A single continuous `heat` meter (0..1) — built by clears (scaled by squares +
+ * combo), shed by clear-less loop passes — drives BOTH progressions, quantized to loop
+ * boundaries (never an autonomous clock):
+ *  - VERTICAL (cumulative tier) follows heat UP AND DOWN: the desired audible tier is
+ *    `round(heat * maxTier)`, floored at the ≥2-layer min-audible floor, ceilinged at
+ *    the segment's top. At each loop boundary the audible tier moves at most ONE step
+ *    toward the desired tier (gradual, musical), so more heat reveals layers and a
+ *    sustained drought sheds them. Crossfades use a constant-sum (linear) ramp —
+ *    correct for these CUMULATIVE renders (the shared bed stays at full; true
+ *    equal-power would +3dB-bump it).
+ *  - CARRY-ACROSS: on segment ENTRY the start tier is set DIRECTLY from heat (the same
+ *    `round(heat * maxTier)`, NOT reset, NOT capped at top-1), exempt from the one-step
+ *    cap — so sustained heat keeps vocals playing across a transition (the no-vocal-cut
+ *    fix); fallen heat enters the next segment thinner.
+ *  - HORIZONTAL (segment advance) is HEAT-GATED, FORWARD-ONLY, ONE-STEP, IN-FLIGHT-
+ *    LOCKED. A segment advances ONLY once its TOP tier (all layers) is AUDIBLE AND has
+ *    been held one full loop — there is NO bare-heat threshold, so the song can never
+ *    advance past unheard material. Below that gate the segment LOOPS in place. One
+ *    advance per boundary; never backward. Advancing PAST the last (TERMINAL) segment
+ *    fires {@link onSongComplete} (the host swaps to the other song via switchTrack — a
+ *    skin switch).
  *
  * SSR-safe: nothing touches Tone until {@link InteractiveAudioEngine.unlock} runs on
  * a real user gesture (Start). Every Tone call is guarded so a failure degrades to
@@ -125,46 +126,105 @@ export function dropVelocityForCause(
   }
 }
 
-// ── clear-gated tuning (the named knobs — sized for the FINE cut) ─────────────
+// ── tone SFX (design D6) ─────────────────────────────────────────────────────
+/** The default key applied when a song has no `key` in the manifest (design D6). */
+const DEFAULT_KEY: { root: string; scale: ScaleName } = {
+  root: "A",
+  scale: "minor",
+};
+/** Semitone offsets (from the root) for each supported scale (design D6). */
+const SCALE_DEGREES: Record<ScaleName, number[]> = {
+  major: [0, 2, 4, 5, 7, 9, 11],
+  minor: [0, 2, 3, 5, 7, 8, 10],
+  pentatonicMinor: [0, 3, 5, 7, 10],
+  pentatonicMajor: [0, 2, 4, 7, 9],
+};
+/** Pitch-class semitone for each note letter + accidentals (C = 0). */
+const NOTE_PCS: Record<string, number> = {
+  C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11,
+};
+/** A short subtle envelope for the tone synth (design D6). */
+const TONE_ENVELOPE = { attack: 0.005, decay: 0.08, sustain: 0, release: 0.12 };
+/** Tone-SFX velocities (design D6) — deliberately subtle against the music-led mix. */
+const TONE_VEL_ROTATE = 0.3;
+const TONE_VEL_SOFTDROP = 0.25;
+
+/**
+ * Parse a note name ("A", "C#", "Eb", "F#3") to a MIDI number. A bare letter (no
+ * octave) defaults to octave 3 (a mid register). Returns the MIDI of the root pitch
+ * class at that octave; the scale builder spreads degrees up from it. Defaults to
+ * A3 (57) on any malformed input so the tone path never throws.
+ */
+function noteNameToMidi(name: string): number {
+  const m = /^([A-Ga-g])([#b]?)(-?\d+)?$/.exec(name?.trim() ?? "");
+  if (!m) return 57; // A3 fallback
+  const letter = m[1]!.toUpperCase();
+  const accidental = m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0;
+  const octave = m[3] != null ? parseInt(m[3], 10) : 3;
+  const pc = NOTE_PCS[letter];
+  if (pc == null) return 57;
+  // MIDI: C-1 = 0, so C{oct} = (oct + 1) * 12.
+  return (octave + 1) * 12 + pc + accidental;
+}
+
+/** MIDI number → frequency in Hz (A4 = 69 = 440 Hz). */
+function midiToFreq(midi: number): number {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+/**
+ * Build the in-key note set (MIDI numbers) for a resolved key across ~2 octaves up
+ * from the root (design D6). The first entry is the root; degrees follow in order,
+ * then the same degrees one octave up, so callers can pick "the 5th", "degree 2",
+ * "the root one octave down", etc. by index relative to the per-octave length.
+ */
+function buildScaleMidis(key: { root: string; scale: ScaleName }): number[] {
+  const rootMidi = noteNameToMidi(key.root);
+  const degrees = SCALE_DEGREES[key.scale] ?? SCALE_DEGREES.minor;
+  const midis: number[] = [];
+  for (let oct = 0; oct < 2; oct++) {
+    for (const d of degrees) midis.push(rootMidi + d + 12 * oct);
+  }
+  return midis;
+}
+
+// ── heat-driven tuning (the named knobs — design D1-D4) ──────────────────────
 //
-// The OLD failure was a threshold sized for 5 huge coarse blobs, which stranded the
-// player in one section. There are now MANY small fine segments (song1 = 12,
-// song2 = 10), so these are sized so a competent player walks the WHOLE song at a
-// musical pace: a clear feeds weight = 1 + squares + combo (≈3–5 for a typical
-// clear), so ~3–4 clears reveal one tier and ~6–8 clears earn an advance — roughly
-// one segment every couple of bar windows of steady clearing, never stuck, never
-// skipping.
+// The progression is driven by a continuous `heat` meter (0..1): clearing builds
+// heat, a clear-less loop pass sheds it, and the audible cumulative tier follows heat
+// UP and DOWN (one step per loop boundary). A segment advances only once its TOP tier
+// has been built AND held a full loop — there is NO bare-heat advance threshold, so
+// the song can never advance past unheard material (design D4).
 //
 /**
- * Monotonic per-segment clear-progress (`segmentScore`) needed to advance to the
- * NEXT segment via the CLEAR-PROGRESS path. Reached on the next bar boundary,
- * in-flight-locked, one step per crossing. Reset to 0 on every segment entry, so the
- * burst that earned this advance can't also pre-pay the next one (no fast-forward).
- *
- * Sized ABOVE the top-tier reveal for the fattest song: song2 has 5 tiers, so its top
- * tier (tier4) reveals at 4 × TIER_REVEAL_STEP = 24; 30 sits above that.
- *
- * NB on pacing: with the MANDATORY full-reveal advance ({@link shouldAdvance}), a
- * section in practice advances ONE LOOP AFTER its top tier is revealed (at score
- * = (tierCount−1)·TIER_REVEAL_STEP = 18 for the 4-tier songs, 24 for the 5-tier),
- * which is BELOW this 30. So for the current content the mandatory full-reveal path is
- * the usual trigger and this clear-gate is the higher fallback (it still governs any
- * segment that has no tier above its min-audible floor, where the mandatory path is
- * intentionally disabled — see shouldAdvance gate (a)). A clear feeds weight =
- * `1 + squares + combo` where `combo` is the REAL streak offset (`comboMultiplier - 1`,
- * 0 = no streak) from truthful pass telemetry (audio-truth D2): a typical 2-square
- * no-streak clear = 1+2+0 = 3, a 4-square single-sweep harvest = 1+4+0 = 5 (rewarded,
- * still ≪ 30 = no fast-forward), a 4-square pass on a ×3 streak = 1+4+2 = 7.
+ * Heat gain for a clear, scaled by squares + combo (design D1):
+ *   gain = HEAT_GAIN_BASE + HEAT_GAIN_SQUARE*squares + HEAT_GAIN_COMBO*comboStep
+ * evaluated against the loop-boundary cadence + the manifest content (song1 = 12
+ * segments × 4 tiers, song2 = 10 × 5):
+ *  - a typical no-streak 2-square clear = 0.06 + 0.05 + 0 = 0.11;
+ *  - a strong 4-square single-sweep harvest = 0.06 + 0.10 + 0 = 0.16; on a ×3 streak
+ *    (comboStep 2) = 0.20.
+ * So a steady clearer reaches full layers (heat 1.0 → top tier) in ~9-10 clears; a
+ * strong run in ~5-6. These are Rai's ear-check, not a blocker — easy to retune.
  */
-const ADVANCE_THRESHOLD = 9;
+const HEAT_GAIN_BASE = 0.06;
+/** Heat per square cleared this pass (design D1). */
+const HEAT_GAIN_SQUARE = 0.025;
+/** Heat per combo streak step (`comboMultiplier - 1`) this pass (design D1). */
+const HEAT_GAIN_COMBO = 0.02;
 /**
- * Per-tier reveal step: every `TIER_REVEAL_STEP` of monotonic `segmentScore` reveals
- * the next cumulative tier within the current segment (sticky — never sheds). So
- * tier1 at `segmentScore ≥ 6`, tier2 at `≥ 12`, tier3 at `≥ 18`, tier4 at `≥ 24`
- * (clamped to the segment's tier ceiling). A section fills out over its first several
- * bars of clearing and is FULLY revealed before the advance at 30 is earned.
+ * Heat shed by ONE clear-less loop pass (design D2). Deliberately BELOW a typical
+ * clear gain (0.11, a no-streak 2-square clear — D1) so the alternation
+ * clear→empty-pass→clear nets slightly POSITIVE (+0.11 − 0.08 = +0.03 per cycle) and
+ * does NOT thrash a layer up and down. A layer only sheds under a SUSTAINED drought:
+ * with maxTier = 3 (song1) the tier step is 1/3 ≈ 0.333 of heat (D3), so from topped-
+ * out heat it takes ~5 consecutive clear-less passes to shed one layer; for song2
+ * (maxTier = 4, step 0.25) ~3-4 passes. There is NO `ADVANCE_HEAT` constant — the
+ * advance is gated on the top tier being audible + held a loop, not a heat threshold
+ * (design D4: a heat threshold below 1.0 could fire before the top tier is audible —
+ * song2's top reveals only at heat ≥ 0.875 — and skip unheard vocals).
  */
-const TIER_REVEAL_STEP = 2;
+const HEAT_DECAY_PER_EMPTY_PASS = 0.08;
 /**
  * MINIMUM AUDIBLE LAYERS — the never-drop-below floor, in CUMULATIVE LAYERS (not a
  * tier index). The tiers are cumulative: tier0 = 1 layer (drums+perc), tier1 = 2
@@ -177,14 +237,20 @@ const TIER_REVEAL_STEP = 2;
  */
 const MIN_AUDIBLE_LAYERS = 2;
 /**
- * The sticky-unlock entry FLOOR as a TIER INDEX (= MIN_AUDIBLE_LAYERS - 1): the
- * minimum tier a freshly-entered segment starts at, so the opening bars are never
- * bare (and the very first segment of the song still has bed + bass to hear). On a
- * mid-song advance the carried-forward floor (the tier reached in the previous
- * segment) is honoured on top of this; this is the hard lower bound. 1 = "+bass"
- * (2 cumulative layers), clamped down for any segment with fewer tiers.
+ * The minimum-audible entry FLOOR as a TIER INDEX (= MIN_AUDIBLE_LAYERS - 1): the
+ * lowest tier a freshly-entered (or heat-shed) segment can sit at, so the opening
+ * bars are never bare (and the very first segment of the song still has bed + bass to
+ * hear). On a mid-song advance the carry-across tier (round(heat * maxTier)) is
+ * honoured on top of this; this is the hard lower bound. 1 = "+bass" (2 cumulative
+ * layers), clamped down for any segment with fewer tiers.
  */
 const TIER_ENTRY_FLOOR = MIN_AUDIBLE_LAYERS - 1;
+
+/** Clamp a value to the unit range [0, 1]; a non-finite value maps to 0. */
+function clamp01(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
 
 /** Segment role drives loop-vs-rideout behavior. */
 export type SegmentType = "LOOPER" | "PROGRESSION" | "TERMINAL";
@@ -225,7 +291,14 @@ export type AudioEvent =
   | { type: "softDrop" }
   | { type: "lock"; cause?: "hard" | "soft" | "gravity" }
   | { type: "lineClear"; squares: number; combo: number }
-  | { type: "chain"; size: number };
+  | { type: "chain"; size: number }
+  | { type: "match"; squares: number };
+
+/**
+ * SFX delivery mode (design D6). `"tone"` (default) plays synthesised in-key tones;
+ * `"sample"` plays the existing recorded per-segment one-shots. Switchable at runtime.
+ */
+export type SfxMode = "tone" | "sample";
 
 // ── manifest shape (data contract) ──────────────────────────────────────────
 
@@ -266,6 +339,13 @@ interface ManifestSfx {
   drop?: string;
   stage?: string;
 }
+/** Scales the tone palette is built from (design D6). */
+type ScaleName = "major" | "minor" | "pentatonicMinor" | "pentatonicMajor";
+/** An optional per-song musical key for the in-key tone SFX (design D6). */
+interface ManifestKey {
+  root: string;
+  scale: ScaleName;
+}
 interface ManifestSong {
   id: string;
   title?: string;
@@ -273,6 +353,11 @@ interface ManifestSong {
   barSeconds: number;
   segments: ManifestSegment[];
   sfx?: ManifestSfx;
+  /**
+   * OPTIONAL per-song musical key for the in-key tone SFX (design D6). When absent the
+   * engine applies {@link DEFAULT_KEY}, so the committed manifest works unchanged.
+   */
+  key?: ManifestKey;
 }
 interface AudioManifest {
   version?: string;
@@ -448,10 +533,10 @@ export class InteractiveAudioEngine {
   private segmentIndex = 0;
   private maxSegmentReached = 0;
 
-  // ── VERTICAL (clear-gated, sticky tier reveal) state for the ACTIVE segment ──
+  // ── VERTICAL (heat-driven tier) state for the ACTIVE segment ─────────────────
   /** The currently-audible cumulative tier of the active segment. */
   private tier: Tier = 0;
-  /** The tier armed for the next boundary swap (sticky: never below `tier`). */
+  /** The tier armed for the next boundary swap (one step toward the heat target). */
   private armedTier: Tier = 0;
   /**
    * The tier the active segment SHOULD be audible at (from the last enterSegment). Used
@@ -461,32 +546,47 @@ export class InteractiveAudioEngine {
   private targetTier: Tier = 0;
   /** A tier crossfade is mid-flight (between two tier files of the same segment). */
   private tierFading = false;
-  /**
-   * The sticky floor carried INTO the active segment from the previous one (= the tier
-   * reached before advancing). The reveal never drops below this within the segment, so
-   * a section never resets to bare. Clamped to the segment's tier ceiling on entry.
-   */
-  private entryFloor: Tier = 0;
 
-  // ── HORIZONTAL (clear-gated advance) state ───────────────────────────────────
+  // ── HEAT (the song-level progression quantity, design D1) ────────────────────
   /**
-   * Monotonic clear-progress within the ACTIVE segment (reset to 0 on every entry).
-   * Drives BOTH the sticky tier reveal (crosses TIER_REVEAL_STEP multiples) and the
-   * advance gate (≥ ADVANCE_THRESHOLD). Reset-on-entry is what blocks fast-forward: a
-   * burst that earns one advance leaves the next segment back at 0.
+   * Continuous performance meter (0..1), the single carry-across progression state.
+   * A clear raises it (scaled by squares + combo, design D1); a clear-less loop pass
+   * sheds it (design D2). The audible tier follows heat UP and DOWN (design D3); the
+   * carry-across sets the entry tier directly from heat (design D5). NOT reset per
+   * segment — it is what carries vocals across a transition (the no-vocal-cut fix).
    */
-  private segmentScore = 0;
+  private heat = 0;
+  /**
+   * Whether ANY clear (or chain) arrived since the previous loop boundary. Set true in
+   * {@link onClear}; read + reset at the boundary to decide decay (design D2).
+   */
+  private clearedSinceBoundary = false;
+
+  // ── SFX selector + lazy tone synth (design D6) ───────────────────────────────
+  /** Active SFX mode (default `"tone"`); switchable at runtime via setSfxMode. */
+  private sfxMode: SfxMode = "tone";
+  /**
+   * The lazily-constructed tone synth (a Tone.PolySynth). Built INSIDE the unlock
+   * gesture / on first tone use (never at module-eval — autoplay rule). Undefined until
+   * first use; a build failure leaves it undefined and the tone path degrades to silence.
+   */
+  private toneSynth?: Tone.PolySynth;
+  /** True once we have ATTEMPTED to build the tone synth (so a failure isn't retried hot). */
+  private toneSynthTried = false;
+  /** The in-key note set (MIDI) for the active song, rebuilt per song from its key. */
+  private scaleMidis: number[] = buildScaleMidis(DEFAULT_KEY);
+  /** Degrees-per-octave of the active scale (so callers index degrees, not raw notes). */
+  private scaleDegreeCount = SCALE_DEGREES[DEFAULT_KEY.scale].length;
+
+  // ── HORIZONTAL (heat-gated advance) state ────────────────────────────────────
   /**
    * Per-segment flag (reset on every {@link enterSegment}): the segment's TOP tier
    * has been AUDIBLE for at least one full loop. Set true on the boundary AFTER the
    * one that first makes `this.tier === top`, so the top mix (vocals) is heard for a
-   * whole loop before the mandatory full-reveal advance can arm — see {@link
-   * shouldAdvance} gate (b). This is the B2 fix: it replaces the old
-   * "top reveal earned in-segment (segmentScore ≥ top·STEP)" gate so a segment that
-   * reached the top by ANY path advances after one loop instead of looping vocals
-   * forever. The carried entry floor is capped at `top - 1` (see enterSegment), so
-   * the top is always RE-EARNED in-segment, then held one loop — the rule fires
-   * uniformly with no special case for carries.
+   * whole loop before the advance can fire — see {@link shouldAdvance}. Reset on
+   * entry so the advance gate re-arms per segment (the new segment must reach AND hold
+   * ITS top a loop before it can advance), which is correct: it gates the advance, not
+   * the carry (design D4/D5).
    */
   private topHeldSinceBoundary = false;
   /** A segment hand-off crossfade is mid-flight (the in-flight advance lock). */
@@ -548,6 +648,23 @@ export class InteractiveAudioEngine {
   }
 
   /**
+   * The DESIRED audible tier for a segment from the current heat (design D3/D5):
+   * `round(heat * maxTier)`, bounded below by the min-audible floor and above by the
+   * segment's ceiling. This is the single heat→tier mapping used by both the within-
+   * segment reveal/shed ({@link evaluateTier}, capped to one step per boundary) and the
+   * segment-entry carry ({@link enterSegment}, exempt from the one-step cap). A
+   * non-finite heat maps to the floor (clamp01 in onClear/decay keeps heat finite, this
+   * is belt-and-braces).
+   */
+  private heatTierFor(seg: LoadedSegment | undefined): number {
+    const top = this.maxTier(seg);
+    const floor = this.tierFloorFor(seg);
+    const h = Number.isFinite(this.heat) ? this.heat : 0;
+    const desired = Math.round(h * top);
+    return Math.max(floor, Math.min(top, desired));
+  }
+
+  /**
    * The spill-free whole-bar LOOP length of a segment, in seconds — the length the
    * audio wraps at (and the loop tick fires at), NOT the file duration. Prefer the
    * manifest's `barWindowSeconds`; fall back to `barSeconds * bars`; last resort the
@@ -569,18 +686,19 @@ export class InteractiveAudioEngine {
    * `activeStems` = count of bed tier players at non-zero gain (proves the no-hiss
    * bound). Gains are READ (not targets) so a verification proves ramps moved.
    *
-   * Clear-gated model: `segmentScore` = monotonic per-segment clear-progress (the
-   * quantity gated against ADVANCE_THRESHOLD and the per-tier reveal steps); `tier`
-   * = the currently-audible cumulative tier; `tierCount` = the active segment's N.
-   * `intensity` is retained as a DEPRECATED alias (= segmentScore) for any stray
-   * back-compat consumer.
+   * Heat model: `heat` = the continuous performance meter (0..1) that drives the
+   * audible tier up/down + the carry-across; `tier` = the currently-audible
+   * cumulative tier; `tierCount` = the active segment's N. The old numeric
+   * `segmentScore` is REMOVED (design D7) — a numeric alias would silently back the
+   * replaced contract's zombie assertions. `intensity` stays aliased to `heat` (it
+   * always meant "how hot"). `sfxMode` reports the active SFX selector (design D6).
    */
   getAudioState(): {
     segmentIndex: number;
     maxSegmentReached: number;
     segmentCount: number;
     transitionInFlight: boolean;
-    segmentScore: number;
+    heat: number;
     tier: Tier;
     armedTier: Tier;
     tierCount: number;
@@ -588,7 +706,8 @@ export class InteractiveAudioEngine {
     activeStems: number;
     trackId: string;
     bpm: number;
-    /** @deprecated back-compat alias: = segmentScore (clear-progress). */
+    sfxMode: SfxMode;
+    /** @deprecated back-compat alias: = heat (the performance meter). */
     intensity: number;
     /** @deprecated back-compat with the old probe consumers. */
     activeRole: string | null;
@@ -626,7 +745,7 @@ export class InteractiveAudioEngine {
       maxSegmentReached: this.maxSegmentReached,
       segmentCount: this.segments.length,
       transitionInFlight: this.transitionInFlight,
-      segmentScore: this.segmentScore,
+      heat: this.heat,
       tier: this.tier,
       armedTier: this.armedTier,
       tierCount: count,
@@ -634,7 +753,8 @@ export class InteractiveAudioEngine {
       activeStems,
       trackId: this.currentTrack.id,
       bpm: this.bpm,
-      intensity: this.segmentScore,
+      sfxMode: this.sfxMode,
+      intensity: this.heat,
       activeRole: a?.meta.type ?? null,
       recordedBedActive: this.bedReady,
       voxUnlocked: this.tier >= top && count > 0,
@@ -661,6 +781,9 @@ export class InteractiveAudioEngine {
       await resumed;
       await Tone.start();
       this.master = new Tone.Gain(this.volume).toDestination();
+      // Build the tone synth INSIDE this gesture (autoplay-safe). It is also lazily
+      // built on first tone use (ensureToneSynth) as a belt-and-braces fallback.
+      this.ensureToneSynth();
       const t = Tone.getTransport();
       t.bpm.value = this.bpm;
       t.swing = 0;
@@ -850,9 +973,10 @@ export class InteractiveAudioEngine {
     this.segments = built;
     this.segmentIndex = 0;
     this.maxSegmentReached = 0;
-    this.segmentScore = 0;
-    this.entryFloor = 0;
+    this.heat = 0;
+    this.clearedSinceBoundary = false;
     this.applyTempo(song);
+    this.applyKey(song);
 
     // Initial load = intro tiers only (lazy per-segment).
     await this.loadSegment(0);
@@ -878,6 +1002,20 @@ export class InteractiveAudioEngine {
     }
   }
 
+  /**
+   * Resolve the song's tone key (design D6): its manifest `key` if present + valid,
+   * else {@link DEFAULT_KEY}. Rebuilds the in-key note set + degree count so tones play
+   * in the right key. Called when a song becomes active (loadSong / switchTrack).
+   */
+  private applyKey(song: ManifestSong): void {
+    const k = song.key;
+    const scale: ScaleName =
+      k && k.scale in SCALE_DEGREES ? k.scale : DEFAULT_KEY.scale;
+    const root = k && typeof k.root === "string" && k.root ? k.root : DEFAULT_KEY.root;
+    this.scaleMidis = buildScaleMidis({ root, scale });
+    this.scaleDegreeCount = SCALE_DEGREES[scale].length;
+  }
+
   /** Prefetch (lazy-load) a segment's tiers + SFX ahead of reaching it. Best-effort. */
   private async prefetch(index: number): Promise<void> {
     if (index < 0 || index >= this.segments.length) return;
@@ -888,13 +1026,15 @@ export class InteractiveAudioEngine {
   // ── segment entry + tier state ──────────────────────────────────────────────
 
   /**
-   * Enter segment `index`. Resets the per-segment clear-progress (`segmentScore = 0`,
-   * so the new segment re-earns its reveals + advance from scratch — the no-fast-forward
-   * guarantee) and seeds the STICKY entry FLOOR: the start tier is the carried-forward
-   * `entryFloor` (the tier reached in the previous segment) raised to at least
-   * {@link TIER_ENTRY_FLOOR}, clamped to this segment's available tiers, so a section is
-   * never bare on entry but never resets all the way to the bed either. Gains up exactly
-   * the start tier.
+   * Enter segment `index`. CARRY-ACROSS (design D5): the start tier is set DIRECTLY
+   * from the current `heat` — `round(heat * maxTier)`, clamped to the min-audible floor
+   * and the segment's ceiling — NOT reset and NOT capped at `top - 1`. This is the
+   * no-vocal-cut fix: a player at sustained high heat enters the next segment AT its top
+   * tier (vocals continue seamlessly); a player whose heat has fallen enters thinner.
+   * This entry instantiation is EXEMPT from the one-step-per-boundary cap (D3) — it MAY
+   * be a multi-step jump (e.g. straight to the top tier when heat ≈ 1.0). Gains up
+   * exactly the start tier; resets the per-segment top-held latch so the advance gate
+   * re-arms (this segment must reach AND hold ITS own top a loop before it can advance).
    */
   private enterSegment(
     index: number,
@@ -905,36 +1045,27 @@ export class InteractiveAudioEngine {
     if (!seg) return;
 
     const top = this.maxTier(seg);
-    // The sticky floor carried in from the previous segment (0 on a fresh first entry),
-    // raised to the hard min-audible floor (tierFloorFor → ≥2 layers) so EVERY entry —
-    // the opening included — always has at least drums + bass, never a bare ≈1 layer.
-    let startTier = Math.max(this.entryFloor, this.tierFloorFor(seg));
-    // B2 FIX (D3): CAP the carried floor below this segment's TOP so vocals are
-    // RE-EARNED per segment. A fully-revealed previous segment would otherwise carry
-    // its top tier in and the section would enter AT vocals with segmentScore 0 —
-    // either looping vocals forever (old gate (b)) or, if gate (b) accepted carries,
-    // auto-advancing every post-climax segment with zero clears (autonomous timeline
-    // by the back door). Capping at `max(tierFloorFor, top - 1)` forces the player's
-    // clears to re-reveal the top in THIS segment, keeping clears in the loop while
-    // still guaranteeing the top never loops forever. The ≥2-layer min-audible floor
-    // still wins for a low-tier segment (tierFloorFor ≥ top - 1 there).
-    startTier = Math.min(startTier, Math.max(this.tierFloorFor(seg), top - 1));
-    // Clamp to this segment's ceiling (a 4-tier seg can't show tier4) + a loaded tier.
-    startTier = Math.max(0, Math.min(top, startTier));
-    startTier = this.nearestAvailableAtOrBelow(seg, startTier);
+    // CARRY: the heat-derived tier, clamped to the hard min-audible floor (tierFloorFor
+    // → ≥2 layers, so EVERY entry has at least drums + bass, never a bare ≈1 layer) and
+    // the segment's ceiling. No reset, no top-1 cap — sustained heat keeps vocals across
+    // the hand-off; fallen heat enters thinner (the carry follows heat both ways). This
+    // DESIRED tier is the carry target; the AUDIBLE tier is then demoted to whatever
+    // loaded (a destination advanced-into before its players arrive starts lower and is
+    // lifted to the desired tier by reconcileActiveGain when the load resolves).
+    const desiredTier = Math.max(0, Math.min(top, this.heatTierFor(seg)));
+    const startTier = this.nearestAvailableAtOrBelow(seg, desiredTier);
 
     this.tier = startTier;
     this.armedTier = startTier;
     this.tierFading = false;
-    this.segmentScore = 0;
-    // Reset the full-reveal-held flag: the top must be re-earned + heard a full loop
-    // in THIS segment before the mandatory advance can arm (no cascade across entries).
+    // Reset the top-held flag: the top must be re-reached + heard a full loop in THIS
+    // segment before the advance can arm (gates the advance, not the carry — D5).
     this.topHeldSinceBoundary = false;
-    // The floor THIS segment will hold to (sticky reveal never drops below it).
-    this.entryFloor = startTier;
-    // Record what this segment SHOULD sound at, so a tier whose player loads AFTER
-    // entry (advance-into-unloaded) can be reconciled up to target when it arrives.
-    this.targetTier = startTier;
+    // Record the (un-demoted) carry target so a tier whose player loads AFTER entry
+    // (advance-into-unloaded) is reconciled UP to the full carried tier — NOT just to the
+    // floored value that happened to be loaded at entry (the no-vocal-cut carry must
+    // survive an async load).
+    this.targetTier = desiredTier;
 
     // Gain up exactly the start tier; everything else hard-zero, anchored at the same
     // boundary the caller faded the old segment OUT (so the cross is symmetric).
@@ -1070,72 +1201,82 @@ export class InteractiveAudioEngine {
 
   /**
    * Fired at the active segment's loop boundary — the ONLY place a tier swaps or a
-   * segment advances. CLEAR-GATED model (clears, never a clock, drive everything):
-   *  1) VERTICAL FIRST: evaluate the sticky cumulative tier from the accumulated
-   *     clear-progress and crossfade UP to it on this boundary (forward-only — never
-   *     sheds within the segment). This runs BEFORE the advance check so a single hot
-   *     bar that banks both the top-tier reveal AND the advance gate is FULLY REVEALED
-   *     before it moves on — and the freshly-revealed tier is the one carried forward
-   *     as the next segment's sticky floor (the "fully revealed before it advances"
-   *     invariant; otherwise the section's upper tiers would never be heard).
-   *  2) HORIZONTAL: if the player has earned an advance ({@link shouldAdvance}: enough
-   *     clear-progress AND no transition in flight), advance ONE segment forward now.
-   *     Otherwise the segment LOOPS in place (the players keep re-playing their bar
-   *     window) at the tier revealed in step 1.
+   * segment advances. HEAT model (heat, built by clears, drives everything):
+   *  0) DECAY: a clear-less pass sheds heat (design D2); a pass that saw a clear does
+   *     not. Evaluated only here (loop-boundary cadence, never a wall clock).
+   *  1) VERTICAL: move the audible tier ONE step toward the heat-derived target
+   *     ({@link evaluateTier}: `round(heat * maxTier)`), UP or DOWN, and crossfade to it
+   *     on this boundary. Runs BEFORE the advance check so the top tier, once reached, is
+   *     heard a full loop before the segment moves on.
+   *  2) HORIZONTAL: if the advance gate is met ({@link shouldAdvance}: top tier audible
+   *     AND held one loop AND no transition in flight), advance ONE segment forward now;
+   *     the next segment carries the tier across from heat (design D5). Otherwise the
+   *     segment LOOPS in place at the tier set in step 1.
    * `time` is the boundary's audio-clock time.
    */
   private onLoopBoundary(time: number): void {
     const seg = this.active();
     if (!seg) return;
 
-    // The audible tier AS WE ENTER this boundary, BEFORE step 1's reveal. The mandatory
-    // full-reveal advance keys off THIS (not the post-reveal tier) so the top tier is
-    // never revealed and advanced-away on the SAME boundary — vocals always sound for at
-    // least one full loop before the section moves on (and the reveal ramp isn't
-    // immediately cancelled by the advance's fade-out).
+    // 0) DECAY FIRST (design D2): a clear-less loop pass sheds heat; a pass that saw at
+    // least one clear does not. Reset the flag for the next pass. The heat-derived tier
+    // (step 1) then reflects the post-decay heat, so a sustained drought thins the mix.
+    if (!this.clearedSinceBoundary) {
+      this.heat = clamp01(this.heat - HEAT_DECAY_PER_EMPTY_PASS);
+    }
+    this.clearedSinceBoundary = false;
+
+    // The audible tier AS WE ENTER this boundary, BEFORE step 1's move. The advance gate
+    // keys off THIS (not the post-move tier) so the top tier is never revealed and
+    // advanced-away on the SAME boundary — vocals always sound for at least one full loop
+    // before the segment moves on (and the reveal ramp isn't cancelled by the fade-out).
     const tierBefore = this.tier;
 
-    // TOP-HELD latch (D3 gate (b)): if the top tier was ALREADY audible coming INTO
-    // this boundary (it was revealed on a PRIOR boundary and has now played a full
-    // loop), mark it held. This is set on the boundary AFTER the one that first put
-    // `this.tier === top` — so the top mix is heard for one whole loop before the
-    // mandatory advance can arm. Reset to false on every enterSegment (no cascade).
+    // TOP-HELD latch (design D4): if the top tier was ALREADY audible coming INTO this
+    // boundary (it was reached on a PRIOR boundary and has now played a full loop), mark
+    // it held. Set on the boundary AFTER the one that first put `this.tier === top` — so
+    // the top mix is heard for one whole loop before the advance can arm. Reset to false
+    // on every enterSegment (the advance gate re-arms per segment).
     if (tierBefore >= this.maxTier(seg)) {
       this.topHeldSinceBoundary = true;
     }
 
-    // 1) VERTICAL FIRST: reveal the sticky cumulative tier earned so far and crossfade
-    //    up to it on this boundary. Updating `this.tier` here means an advance committed
-    //    in step 2 carries the JUST-REVEALED tier forward as the next segment's floor.
+    // 1) VERTICAL: move the audible tier one step toward the heat target (UP or DOWN)
+    //    and crossfade to it on this boundary.
     this.evaluateTier(seg);
     if (this.armedTier !== this.tier) {
       this.swapTier(seg, this.armedTier, time);
     }
 
-    // 2) HORIZONTAL: clears earned an advance → step forward ONE segment (advancing
-    //    re-enters the next segment + reschedules its loop tick, carrying the floor).
+    // 2) HORIZONTAL: if the top tier is audible + held, step forward ONE segment
+    //    (advancing re-enters the next segment + reschedules its loop tick, carrying the
+    //    tier across from heat). Otherwise the segment loops in place.
     if (this.shouldAdvance(seg, tierBefore)) {
       this.advanceSegment(time);
     }
   }
 
-  // ── vertical: sticky clear-gated tier reveal (in place, forward-only) ────────
+  // ── vertical: heat-driven tier move (one step per boundary, up and down) ─────
 
   /**
-   * Arm the cumulative tier for the upcoming boundary swap from the monotonic
-   * `segmentScore`: every {@link TIER_REVEAL_STEP} of clear-progress reveals the next
-   * tier. STICKY — the armed tier never drops below the currently-audible tier (no
-   * shed within a segment), is bounded below by the sticky `entryFloor`, and bounded
-   * above by the segment's tier ceiling. Never arms a tier whose file failed to load.
+   * Arm the cumulative tier for the upcoming boundary swap from the current `heat`
+   * (design D3): the desired tier is `round(heat * maxTier)` ({@link heatTierFor},
+   * floored at the min-audible ≥2-layer floor, ceilinged at the segment's top). The
+   * armed tier moves AT MOST ONE STEP toward the desired tier — UP when heat rose, DOWN
+   * when heat fell (the heat model sheds layers, unlike the old sticky-up-only reveal).
+   * One step per boundary keeps the build/shed musical (no multi-tier jumps mid-segment;
+   * the carry-across multi-step jump is at ENTRY only, exempt). Never arms a tier whose
+   * file failed to load (demoted to the nearest loaded tier at or below).
    */
   private evaluateTier(seg: LoadedSegment): void {
     if (this.tierFading) return; // don't re-arm mid-fade
-    const top = this.maxTier(seg);
-    const revealed = Math.floor(this.segmentScore / TIER_REVEAL_STEP);
-    // sticky: at least the hard min-audible floor (≥2 layers), at least the carried
-    // entry floor, at least the current tier, never above the ceiling.
-    let want = Math.max(this.tierFloorFor(seg), this.entryFloor, this.tier, revealed);
-    want = Math.max(0, Math.min(top, want));
+    const desired = this.heatTierFor(seg);
+    // one step toward the desired tier in EITHER direction (the floor is already baked
+    // into `desired`, so a down-step can never breach the min-audible floor).
+    let want = this.tier;
+    if (desired > this.tier) want = this.tier + 1;
+    else if (desired < this.tier) want = this.tier - 1;
+    want = Math.max(0, Math.min(this.maxTier(seg), want));
     // demote to the highest LOADED tier at or below `want` (a missing file never silences).
     want = this.nearestAvailableAtOrBelow(seg, want);
     this.armedTier = want;
@@ -1160,59 +1301,46 @@ export class InteractiveAudioEngine {
   // ── horizontal: clear-gated forward-only advance ─────────────────────────────
 
   /**
-   * Advance gate, evaluated in {@link onLoopBoundary} AFTER this boundary's tier reveal.
-   * The section advances when EITHER:
-   *  - CLEAR-PROGRESS: `segmentScore ≥ ADVANCE_THRESHOLD` (the normal earned advance), OR
-   *  - FULL REVEAL (MANDATORY): the section has been BUILT UP to its TOP tier (vocals)
-   *    by EARNED reveal and has ALREADY been heard at full mix for a loop. A
-   *    fully-revealed section MUST move on — it can't keep looping at full mix. This is
-   *    INDEPENDENT of ADVANCE_THRESHOLD, so it can fire below the clear-gate; it just
-   *    guarantees a section advances no LATER than one loop after full reveal.
+   * Advance gate, evaluated in {@link onLoopBoundary} AFTER this boundary's tier move.
+   * The HEAT model has a SINGLE advance rule (design D4 — there is NO bare-heat path,
+   * no `ADVANCE_HEAT` threshold): a segment advances forward by exactly one IF AND ONLY
+   * IF all of:
+   *   - no transition is in flight (`!transitionInFlight`);
+   *   - this boundary is NOT the one that just revealed the top tier
+   *     (`!(tierBefore < top && this.tier >= top)`) — step 1 of onLoopBoundary started
+   *     the top tier's gain ramp at `time`; advancing now would fade it back out at the
+   *     same `time` and cancel the ramp, so the vocals would never sound. The freshly-
+   *     revealed top is heard for a full loop first, then the segment moves on;
+   *   - the audible tier has REACHED the segment's top tier (`this.tier >= maxTier` —
+   *     ALL layers built); and
+   *   - that top tier has been audible for a full loop (`topHeldSinceBoundary`, set on
+   *     the boundary AFTER the one that first put `this.tier === top`).
    *
-   * The mandatory path is gated by THREE conditions so it neither cascades nor cuts the
-   * vocals off the bar they appear:
-   *   (a) the segment has HEADROOM above the min-audible floor (`maxTier > tierFloorFor`)
-   *       — a segment whose top IS the entry floor (e.g. a 1/2-tier segment that the
-   *       ≥2-layer floor parks at its ceiling) has nothing to "earn", so it never
-   *       mandatorily advances (it can still advance via the clear-gate). This is what
-   *       prevents a low-tier segment from auto-advancing every bar with zero clears.
-   *   (b) the top tier has been AUDIBLE for a full loop (`topHeldSinceBoundary`) — set
-   *       on the boundary AFTER the one that first revealed the top (B2/D3). The carried
-   *       entry floor is capped at `top - 1` (see enterSegment), so the top is always
-   *       RE-EARNED in THIS segment by clears and then held one loop; the rule fires
-   *       uniformly whether the top was earned from the floor or from bare, with no
-   *       special case for carries. A carried-in top is impossible (the cap), so this
-   *       never fires on a zero-clear segment that merely inherited a high floor.
-   *   (c) the top tier was ALREADY audible coming INTO this boundary (`tierBefore ≥ top`)
-   *       — so a boundary that JUST revealed the top tier does not also advance off it on
-   *       the same boundary (which would cancel the reveal ramp and the vocals would
-   *       never sound). Vocals play for a full loop, then the section moves on.
+   * Why NO bare-heat path (design D4): a `heat >= ADVANCE_HEAT` clause below 1.0 could
+   * fire BEFORE the top tier is audible — song2 has maxTier 4, so its top reveals only
+   * at `round(heat*4) = 4`, i.e. heat ≥ 0.875; at heat 0.85 the audible tier is still 3
+   * (no vocals) and a bare-heat advance would SKIP unheard vocal material. Gating on the
+   * top tier being AUDIBLE + HELD guarantees the song can never advance past a tier the
+   * player has not heard. Below this gate the segment LOOPS in place.
    *
-   * Both paths respect the in-flight lock. Returns true even on the TERMINAL/last
-   * segment: an earned advance there means "past the end of the song", which
-   * {@link advanceSegment} turns into the end-of-song song switch instead of a step.
+   * Returns true even on the TERMINAL/last segment: an earned advance there means "past
+   * the end of the song", which {@link advanceSegment} turns into the end-of-song song
+   * switch instead of a step.
    *
    * @param seg the active segment at this boundary.
-   * @param tierBefore the audible tier as the boundary was entered (pre-reveal).
+   * @param tierBefore the audible tier as the boundary was entered (pre-move).
    */
   private shouldAdvance(seg: LoadedSegment, tierBefore: Tier): boolean {
     if (this.transitionInFlight) return false;
     if (this.segments.length === 0) return false;
     const top = this.maxTier(seg);
-    // NEVER advance on the SAME boundary the top tier was just revealed — on ANY path
-    // (clear-gate OR mandatory). step 1 of onLoopBoundary started the top tier's gain
-    // ramp at `time`; advancing now would fade that exact gain back out at the same
-    // `time` and cancel the ramp, so the vocals would never sound. A hot bar that banks
-    // BOTH the top reveal AND the clear-gate must therefore wait one loop (the top is
-    // heard, then the section moves on next boundary). Only blocks the freshly-revealed
-    // top; a section already at top coming in is unaffected.
+    // never advance on the SAME boundary the top tier was just revealed (don't cut the
+    // vocals off the bar they appear — they play a full loop first).
     if (tierBefore < top && this.tier >= top) return false;
-    // CLEAR-PROGRESS path: enough banked clears to advance.
-    if (this.segmentScore >= ADVANCE_THRESHOLD) return true;
-    // MANDATORY full-reveal advance — see the three gates (a)/(b)/(c) above.
-    if (top <= this.tierFloorFor(seg)) return false; // (a) no headroom above the floor
-    if (!this.topHeldSinceBoundary) return false; // (b) top not yet audible a full loop
-    if (tierBefore < top) return false; // (c) top wasn't audible yet (don't cut vocals)
+    // the top tier (ALL layers) must be AUDIBLE...
+    if (this.tier < top) return false;
+    // ...AND must have been held one full loop.
+    if (!this.topHeldSinceBoundary) return false;
     return true;
   }
 
@@ -1232,11 +1360,12 @@ export class InteractiveAudioEngine {
     const from = this.active();
 
     // End of song: an earned advance off the last segment → switch to the other song
-    // (skin switch via onSongComplete). Lock the in-flight gate + reset the per-segment
-    // progress so the terminal segment keeps looping (no re-fire) until the host swaps.
+    // (skin switch via onSongComplete). Lock the in-flight gate + clear the top-held
+    // latch so the terminal segment keeps looping (it must re-hold its top to re-fire,
+    // and complete() is idempotent anyway) until the host swaps.
     if (this.segmentIndex >= count - 1) {
       this.transitionInFlight = true;
-      this.segmentScore = 0;
+      this.topHeldSinceBoundary = false;
       this.complete();
       // release the lock shortly after; if the host swapped tracks, switchTrack already
       // rebuilt + invalidated this transition, so the token guard makes this a no-op.
@@ -1254,8 +1383,8 @@ export class InteractiveAudioEngine {
 
     this.transitionInFlight = true;
     const token = ++this.transitionToken;
-    // The tier reached in THIS segment becomes the next segment's sticky floor.
-    this.entryFloor = this.tier;
+    // The carry-across is via HEAT (design D5): enterSegment(index) sets the next
+    // segment's start tier directly from the current heat — no entryFloor hand-off.
 
     // If the next segment hasn't finished loading, advance still happens (silent until
     // its players arrive); kick a load just in case.
@@ -1264,7 +1393,7 @@ export class InteractiveAudioEngine {
     // Fade the current active tier out.
     this.rampGain(from?.tierGains[this.tier], 0, XFADE_S, at);
 
-    // Enter the destination phase-correct (sets tier/armedTier from the carried floor +
+    // Enter the destination phase-correct (sets tier/armedTier from the heat carry +
     // gains the start tier up over the crossfade). Pass the boundary time `at` so the
     // in-fade starts where the out-fade did (symmetric).
     this.segmentIndex = index;
@@ -1308,32 +1437,54 @@ export class InteractiveAudioEngine {
   }
 
   /**
-   * Route an event. Clears (lineClear/chain) BOTH feed the monotonic `segmentScore`
-   * (the progression — sticky tier reveal + segment advance) AND fire the clear-stage
-   * one-shot (B3 — clears are no longer silent). Every other action fires its mapped
-   * one-shot at a cause-/size-scaled velocity. `move` is silent (no routing entry).
+   * Route an event (design D6). Clears (lineClear/chain) feed HEAT (the progression —
+   * tier up/down + segment advance) but make NO sound in tone mode (the sweep clear AND
+   * chain are silent; only forming a MATCH dings); sample mode keeps the recorded
+   * clear-stage one-shot. `match` (a 2x2 square newly formed) is the audible reward: an
+   * in-key ding (tone mode) or the recorded `stage` (sample mode). rotate / softDrop /
+   * lock route to subtle in-key tones (tone mode) or their recorded one-shots (sample
+   * mode). `move` is always silent.
    */
   private play(ev: AudioEvent, time: number): void {
-    // Clears drive progression first (unchanged weight: 1 + squares + combo, where
-    // combo is the real streak offset; chain: 2 + min(8, size)). The early `return`
-    // that suppressed their SFX is gone — they now ALSO route the clear-stage sound.
+    // Clears + chains feed HEAT and (in tone mode) make NO sound.
     if (ev.type === "lineClear") {
-      this.onScore(1 + ev.squares + ev.combo);
-      const route = routeEvent(ev);
-      if (route.sfx) {
-        this.playSfx(route.sfx, time, stageVelocityForSquares(ev.squares));
+      this.onClear(ev.squares, ev.combo);
+      if (this.sfxMode === "sample") {
+        const route = routeEvent(ev, "sample");
+        if (route.sfx) {
+          this.playSfx(route.sfx, time, stageVelocityForSquares(ev.squares));
+        }
       }
       return;
     }
     if (ev.type === "chain") {
-      this.onScore(2 + Math.min(8, ev.size));
-      const route = routeEvent(ev);
-      // A chain is audibly DISTINCT: a hot `stage` plus a layered `drop` impact (D4a).
-      if (route.sfx) this.playSfx(route.sfx, time, SFX_CHAIN_VELOCITY);
-      if (route.layer) this.playSfx(route.layer, time, SFX_CHAIN_VELOCITY);
+      this.onChain(ev.size);
+      if (this.sfxMode === "sample") {
+        const route = routeEvent(ev, "sample");
+        if (route.sfx) this.playSfx(route.sfx, time, SFX_CHAIN_VELOCITY);
+        if (route.layer) this.playSfx(route.layer, time, SFX_CHAIN_VELOCITY);
+      }
       return;
     }
-    const route = routeEvent(ev);
+    // match: the audible reward for forming a square. Heat is NOT fed here (the
+    // lineClear/chain that erases the square feeds heat); match only dings.
+    if (ev.type === "match") {
+      if (this.sfxMode === "tone") {
+        this.playToneMatch(ev.squares, time);
+      } else {
+        const route = routeEvent(ev, "sample");
+        if (route.sfx) {
+          this.playSfx(route.sfx, time, stageVelocityForSquares(ev.squares));
+        }
+      }
+      return;
+    }
+    // rotate / softDrop / lock (move is silent).
+    if (this.sfxMode === "tone") {
+      this.playToneAction(ev, time);
+      return;
+    }
+    const route = routeEvent(ev, "sample");
     if (!route.sfx) return; // move (and any unmapped action) is silent
     // A lock thuds on EVERY settle, scaled by cause (hard hardest); other actions use
     // the default action velocity.
@@ -1344,61 +1495,239 @@ export class InteractiveAudioEngine {
     this.playSfx(route.sfx, time, velocity);
   }
 
+  // ── tone SFX (design D6) ──────────────────────────────────────────────────────
+
+  /** Switch the SFX delivery mode at runtime (design D6). */
+  setSfxMode(mode: SfxMode): void {
+    this.sfxMode = mode;
+    if (mode === "tone") this.ensureToneSynth();
+  }
+
   /**
-   * Feed the monotonic per-segment clear-progress (`segmentScore`). The next loop
-   * boundary reads it to reveal the sticky tier (every TIER_REVEAL_STEP) and to gate
-   * the advance (≥ ADVANCE_THRESHOLD). Clearing makes the song FULLER then moves it
-   * FORWARD; it never moves backward.
-   *
-   * Backlog cap: one huge chain banks at most one extra advance's worth of progress
-   * beyond the gate, so a burst can't pre-load multiple advances (no fast-forward —
-   * the in-flight lock + per-segment reset are the other half of that guarantee).
-   *
-   * Defends against a non-finite weight (an upstream bug feeding NaN/Infinity squares,
-   * combo, or size): NaN would poison `segmentScore` and corrupt every downstream
-   * threshold compare. A non-finite weight is ignored; `segmentScore` is re-clamped to
-   * a finite value defensively.
+   * Lazily construct the tone synth (a Tone.PolySynth) INSIDE a gesture / on first tone
+   * use — NEVER at module-eval (autoplay rule, design D6). Routed through `this.master`.
+   * A real build attempt (master + Tone present) is made at most once: a failure leaves
+   * the synth undefined and the tone path degrades to silence (never throws). If called
+   * BEFORE unlock (no master/Tone yet — e.g. `setSfxMode("tone")` pre-gesture) it is a
+   * no-op that does NOT mark "tried", so unlock()'s later call still builds it.
    */
-  private onScore(weight: number): void {
+  private ensureToneSynth(): void {
+    if (this.toneSynth || this.toneSynthTried) return;
+    const master = this.master;
+    const T = ToneRT;
+    if (!master || !T) return; // pre-unlock: retry later (don't burn the one attempt)
+    this.toneSynthTried = true;
+    try {
+      const synth = new T.PolySynth(T.Synth);
+      // a short subtle envelope + a soft triangle wave for an unobtrusive ding.
+      try {
+        synth.set({
+          envelope: TONE_ENVELOPE,
+          oscillator: { type: "triangle" },
+        });
+      } catch {
+        // older Tone / degraded synth — defaults are fine, keep the synth
+      }
+      synth.connect(master);
+      this.toneSynth = synth;
+    } catch {
+      this.toneSynth = undefined; // degrade to silence
+    }
+  }
+
+  /**
+   * The MIDI note for scale degree `degree` (0-based) at octave shift `octave` (in
+   * octaves, may be negative), clamped to the built scale set. Degree wraps within the
+   * scale; octave shift moves whole octaves. Returns a finite MIDI or undefined if the
+   * scale set is empty.
+   */
+  private scaleNote(degree: number, octave = 0): number | undefined {
+    const set = this.scaleMidis;
+    if (set.length === 0) return undefined;
+    const n = this.scaleDegreeCount > 0 ? this.scaleDegreeCount : set.length;
+    const d = ((degree % n) + n) % n;
+    const base = set[d] ?? set[0]!;
+    return base + 12 * octave;
+  }
+
+  /** Play a single in-key tone (design D6). Degrades to silence on any failure. */
+  private playTone(
+    midi: number | undefined,
+    velocity: number,
+    duration: string,
+    time: number,
+  ): void {
+    if (midi == null || !Number.isFinite(midi)) return;
+    this.ensureToneSynth();
+    const synth = this.toneSynth;
+    if (!synth) return;
+    try {
+      const freq = midiToFreq(midi);
+      const v = Math.max(0.0001, Math.min(1, velocity));
+      const at = Math.max(time, this.toneNow() + SFX_RETRIGGER_EPSILON);
+      synth.triggerAttackRelease(freq, duration, at, v);
+    } catch {
+      // dropped tone never surfaces to the game
+    }
+  }
+
+  /**
+   * The match ding (design D6): scale degree 5 (or the 3rd for a pentatonic scale) —
+   * a clear consonant high note — pitched up slightly per square (more squares =
+   * brighter), velocity 0.5..0.7 by squares. `squares` is the positive count delta.
+   */
+  private playToneMatch(squares: number, time: number): void {
+    const s = Number.isFinite(squares) ? Math.max(1, squares) : 1;
+    // degree 5 for a 7-note scale; the 3rd (index 2) for a 5-note pentatonic.
+    const degree = this.scaleDegreeCount <= 5 ? 2 : 4;
+    // brighter for a bigger square: nudge UP one octave once 2+ squares form at once.
+    const octave = s >= 2 ? 2 : 1;
+    const velocity = Math.max(0.5, Math.min(0.7, 0.5 + 0.1 * (s - 1)));
+    this.playTone(this.scaleNote(degree, octave), velocity, "16n", time);
+  }
+
+  /**
+   * A subtle in-key tone for rotate / soft-drop / lock (design D6). move is silent.
+   *  - rotate   → root (degree 1), mid register, vel 0.30, 32n
+   *  - softDrop → degree 2, low-mid, vel 0.25, 32n
+   *  - lock     → root one octave DOWN, vel by settle cause, 16n
+   */
+  private playToneAction(ev: AudioEvent, time: number): void {
+    switch (ev.type) {
+      case "rotate":
+        this.playTone(this.scaleNote(0, 1), TONE_VEL_ROTATE, "32n", time);
+        return;
+      case "softDrop":
+        this.playTone(this.scaleNote(1, 0), TONE_VEL_SOFTDROP, "32n", time);
+        return;
+      case "lock":
+        this.playTone(
+          this.scaleNote(0, 0),
+          dropVelocityForCause(ev.cause),
+          "16n",
+          time,
+        );
+        return;
+      default:
+        return; // move (and anything unmapped) is silent
+    }
+  }
+
+  /**
+   * Feed the continuous `heat` meter on a CLEAR, scaled by the real squares + combo
+   * (design D1): `gain = HEAT_GAIN_BASE + HEAT_GAIN_SQUARE*squares + HEAT_GAIN_COMBO*
+   * comboStep`, clamped to 0..1. On a VALID clear it also marks `clearedSinceBoundary`
+   * so the next loop boundary does NOT decay (design D2). Clearing makes the song hotter
+   * (more layers, eventually an advance); heat never moves backward on a clear.
+   *
+   * Defends against a non-finite contribution (an upstream bug feeding NaN/Infinity
+   * squares or combo): the WHOLE contribution is ignored — `heat` is left unchanged
+   * (re-clamped to a finite 0..1 defensively) AND `clearedSinceBoundary` is NOT set, so
+   * a poisoned event is treated as "no real clear" and cannot suppress the next
+   * clear-less pass's decay.
+   */
+  private onClear(squares: number, comboStep: number): void {
     if (this.segments.length === 0) return;
-    if (!Number.isFinite(weight)) return; // ignore a poisoned weight
-    const cap = ADVANCE_THRESHOLD * 2;
-    const next = this.segmentScore + weight;
-    this.segmentScore = Number.isFinite(next)
-      ? Math.max(0, Math.min(cap, next))
-      : Math.max(0, Math.min(cap, this.segmentScore));
+    // A non-finite squares OR combo (an upstream bug) means the WHOLE contribution is
+    // untrustworthy — ignore it ENTIRELY: heat unchanged AND the no-decay flag is NOT
+    // set (a poisoned event is treated as "no real clear", so it must not suppress the
+    // next clear-less pass's decay). Don't sanitise to 0 and bank the base gain.
+    if (!Number.isFinite(squares) || !Number.isFinite(comboStep)) {
+      this.heat = clamp01(this.heat); // re-clamp defensively, no change
+      return;
+    }
+    this.clearedSinceBoundary = true;
+    const s = Math.max(0, squares);
+    const c = Math.max(0, comboStep);
+    const gain = HEAT_GAIN_BASE + HEAT_GAIN_SQUARE * s + HEAT_GAIN_COMBO * c;
+    if (!Number.isFinite(gain)) {
+      this.heat = clamp01(this.heat); // re-clamp defensively, no change
+      return;
+    }
+    this.heat = clamp01(this.heat + gain);
+  }
+
+  /**
+   * Feed heat on a CHAIN (a gem flood — a hot clear), bounded so a big flood is
+   * rewarding but not runaway (design D1): `gain = HEAT_GAIN_BASE + HEAT_GAIN_SQUARE *
+   * min(8, size)`. Marks `clearedSinceBoundary` (a chain is a clear — no decay this
+   * pass). Non-finite size ignored.
+   */
+  private onChain(size: number): void {
+    if (this.segments.length === 0) return;
+    if (!Number.isFinite(size)) {
+      // ignore a poisoned size ENTIRELY (heat unchanged, no-decay flag NOT set).
+      this.heat = clamp01(this.heat);
+      return;
+    }
+    this.clearedSinceBoundary = true;
+    const sz = Math.max(0, Math.min(8, size));
+    const gain = HEAT_GAIN_BASE + HEAT_GAIN_SQUARE * sz;
+    if (!Number.isFinite(gain)) {
+      this.heat = clamp01(this.heat);
+      return;
+    }
+    this.heat = clamp01(this.heat + gain);
   }
 
   // ── test-only dev hooks (behind ?audiodev=1) ────────────────────────────────
 
   /**
-   * TEST-ONLY: synchronously bank `count` typical clears' worth of clear-progress (each
-   * weight 4 = a 2-square / combo-1 clear), bypassing the `@16n` transport schedule of
-   * {@link fire} so a headless e2e can drive the CLEAR-GATED model deterministically
-   * (no real-time waits). Exposed only via the `?audiodev=1` engine handle.
+   * TEST-ONLY (UP path): synchronously bank `count` typical clears' worth of HEAT (each
+   * = a 2-square / combo-0 clear, gain 0.11 — design D1), bypassing the `@16n` transport
+   * schedule of {@link fire} so a headless e2e can drive the heat model deterministically
+   * (no real-time waits). Each injected clear also marks `clearedSinceBoundary` so the
+   * next `__stepBoundary` does NOT decay (an injected clear IS a clear this pass).
+   * Exposed only via the `?audiodev=1` engine handle.
    */
   __injectClears(count = 1): void {
-    for (let i = 0; i < Math.max(0, count); i++) this.onScore(4);
+    for (let i = 0; i < Math.max(0, count); i++) this.onClear(2, 0);
   }
 
   /**
    * TEST-ONLY: run the active segment's NEXT loop boundary RIGHT NOW (exactly what the
-   * loop tick does on a real bar wrap) — reveal the sticky tier and, if enough clears
-   * are banked, advance ONE segment forward. Lets the headless e2e step the clear-gated
-   * timeline bar-by-bar without waiting the real bar window OR the async fade-settle.
+   * loop tick does on a real bar wrap) — apply decay if no clear was injected since the
+   * prior boundary, move the audible tier one step toward the heat target, and, if the
+   * top tier has been built + held, advance ONE segment forward. Lets the headless e2e
+   * step the heat timeline bar-by-bar without waiting the real bar window OR the async
+   * fade-settle.
    *
    * The previous advance's audio crossfade settles asynchronously (releasing the
    * in-flight lock after the fade). When a test steps boundaries back-to-back with no
-   * real time elapsing, that settle hasn't run yet, so this first force-releases a
-   * stale in-flight lock — the no-fast-forward guarantee still holds because the
-   * per-segment `segmentScore` was reset to 0 on the prior advance (a fresh advance must
-   * be RE-EARNED). Exercises the REAL boundary path (NOT a clock). Exposed only via the
-   * `?audiodev=1` engine handle.
+   * real time elapsing, that settle hasn't run yet, so this first force-releases a stale
+   * in-flight lock — the no-fast-forward guarantee still holds because the new segment
+   * must independently build AND hold ITS top tier before it can advance (design D4).
+   * Exercises the REAL boundary path (NOT a clock). Exposed only via `?audiodev=1`.
    */
   __stepBoundary(): void {
     if (!this.started || this.segments.length === 0) return;
     this.transitionInFlight = false; // release any not-yet-settled prior advance lock
+    // release a not-yet-settled prior tier crossfade too: a crossfade clears
+    // `tierFading` in an afterSettle on the REAL transport, which doesn't fire when a
+    // test steps boundaries synchronously (no wall-clock time elapses). Without this,
+    // evaluateTier would early-return on the second synchronous step and the tier would
+    // freeze. (Production is unaffected — real boundaries are seconds apart.)
+    this.tierFading = false;
     this.onLoopBoundary(this.nextBar());
+  }
+
+  /**
+   * TEST-ONLY (DOWN path, DISTINCT from {@link __stepBoundary}): step `n` loop
+   * boundaries each of which is GUARANTEED to be a clear-less pass — it forces
+   * `clearedSinceBoundary = false` before each boundary so EVERY one of the `n` steps
+   * decays heat (design D2/D7). This is the deterministic heat-shed driver for the e2e
+   * (build heat with `__injectClears` + `__stepBoundary`, then shed it with
+   * `__decayPasses`), kept SEPARATE from the UP path so the two can never be conflated.
+   * Exposed only via the `?audiodev=1` engine handle.
+   */
+  __decayPasses(n = 1): void {
+    if (!this.started || this.segments.length === 0) return;
+    for (let i = 0; i < Math.max(0, n); i++) {
+      this.transitionInFlight = false;
+      this.tierFading = false; // release a not-yet-settled fade (see __stepBoundary)
+      this.clearedSinceBoundary = false; // force a guaranteed clear-less pass
+      this.onLoopBoundary(this.nextBar());
+    }
   }
 
   // ── Layer-4 SFX — PER-SEGMENT voice pools, hot-swapped on segment entry (D5) ──
@@ -1668,9 +1997,10 @@ export class InteractiveAudioEngine {
       this.songCompleted = false;
       this.segmentIndex = 0;
       this.maxSegmentReached = 0;
-      this.segmentScore = 0;
-      this.entryFloor = 0;
+      this.heat = 0;
+      this.clearedSinceBoundary = false;
       this.applyTempo(song);
+      this.applyKey(song);
       await this.loadSegment(0);
       // Superseded during the intro load (a reset/dispose/another switch bumped loadGen,
       // or a later switch changed the track). Dispose the nodes THIS switch built and the
@@ -1747,8 +2077,8 @@ export class InteractiveAudioEngine {
    * begins at the CURRENT song's OPENING (segment 0, floor tiers) rather than wherever
    * the previous game left the song. Wired from the GameShell game-over transition.
    *
-   * Resets every progression field — `segmentIndex → 0`, `segmentScore → 0`,
-   * `tier`/`armedTier` → the segment's entry floor, `entryFloor → 0` (default),
+   * Resets every progression field — `segmentIndex → 0`, `heat → 0`,
+   * `tier`/`armedTier` → 0 (re-seeded to the floor by loadSong's enterSegment),
    * `transitionInFlight → false`, `maxSegmentReached → 0` — invalidates any in-flight
    * transition (token bump), cancels the scheduled loop tick + pending settle callbacks,
    * silences + disposes the old segment players, then RELOADS the current track from its
@@ -1787,12 +2117,12 @@ export class InteractiveAudioEngine {
       this.segments = [];
       this.segmentIndex = 0;
       this.maxSegmentReached = 0;
-      this.segmentScore = 0;
+      this.heat = 0;
+      this.clearedSinceBoundary = false;
       this.tier = 0;
       this.armedTier = 0;
       this.targetTier = 0;
       this.tierFading = false;
-      this.entryFloor = 0;
       this.topHeldSinceBoundary = false;
       this.bedReady = false;
 
@@ -1945,6 +2275,13 @@ export class InteractiveAudioEngine {
     }
     this.disposeAll(); // disposes tier players AND every segment's SFX pools
     try {
+      this.toneSynth?.dispose();
+    } catch {
+      // ignore
+    }
+    this.toneSynth = undefined;
+    this.toneSynthTried = false;
+    try {
       this.master?.dispose();
     } catch {
       // ignore
@@ -1961,9 +2298,9 @@ export class InteractiveAudioEngine {
     this.armedTier = 0;
     this.targetTier = 0;
     this.tierFading = false;
-    this.entryFloor = 0;
     this.topHeldSinceBoundary = false;
-    this.segmentScore = 0;
+    this.heat = 0;
+    this.clearedSinceBoundary = false;
     this.settleEvents = [];
     this.settleTimeouts = [];
     this.pendingRetire = [];

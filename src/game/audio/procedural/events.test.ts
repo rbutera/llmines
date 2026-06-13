@@ -53,6 +53,7 @@ function rs(over: Partial<RenderState> & Telemetry = {}): RenderState {
     softDropping: false,
     softDropPulses: 0,
     floodPreview: [],
+    markedSquares: 0,
     ...over,
   };
   return base as RenderState;
@@ -180,6 +181,39 @@ describe("AudioEventDeriver — truthful telemetry (no score inference)", () => 
       }),
     );
     expect(ev.filter((e) => e.type === "lock").length).toBe(1);
+  });
+
+  // ── match: the staged-square count rising (design D6) ──────────────────────
+
+  it("emits a `match` when the markedSquares count RISES, carrying the positive delta", () => {
+    const d = new AudioEventDeriver();
+    d.derive(rs({ markedSquares: 0 }));
+    const ev = d.derive(rs({ markedSquares: 1 }));
+    expect(ev).toContainEqual({ type: "match", squares: 1 });
+  });
+
+  it("a BIGGER rise carries a bigger squares delta (brighter ding)", () => {
+    const d = new AudioEventDeriver();
+    d.derive(rs({ markedSquares: 1 }));
+    const ev = d.derive(rs({ markedSquares: 4 }));
+    expect(ev).toContainEqual({ type: "match", squares: 3 });
+  });
+
+  it("a square formed by a post-clear CASCADE (no lock-id advance) still dings", () => {
+    const d = new AudioEventDeriver();
+    // the lock id is held CONSTANT (no piece settle) — a gravity cascade lined up a new
+    // square, so only markedSquares rises. The match must still fire (not lock-gated).
+    d.derive(rs({ markedSquares: 0, lastLock: { id: 5, cause: "gravity" } }));
+    const ev = d.derive(rs({ markedSquares: 1, lastLock: { id: 5, cause: "gravity" } }));
+    expect(ev).toContainEqual({ type: "match", squares: 1 });
+    expect(ev.some((e) => e.type === "lock")).toBe(false); // no new lock
+  });
+
+  it("a DECREASE in markedSquares (the sweep erasing a square) emits NO match (clear silent)", () => {
+    const d = new AudioEventDeriver();
+    d.derive(rs({ markedSquares: 3 }));
+    const ev = d.derive(rs({ markedSquares: 0 }));
+    expect(ev.some((e) => e.type === "match")).toBe(false);
   });
 
   // ── chain stays render-truthful ────────────────────────────────────────────
