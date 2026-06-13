@@ -308,3 +308,35 @@ pnpm cf:deploy                    # build + deploy to Cloudflare (llmines.e8n.de
 
 node scripts/repro-autoplay.mjs http://localhost:3201   # strict-autoplay audio gate
 ```
+
+---
+
+## Known issues
+
+Reported by Rai from playtesting the live build (2026-06-13). **None are fixed yet** — captured verbatim for a future pass. Do not assume any are resolved.
+
+### Gameplay / mechanics
+- Gem chaining logic is bad / flawed — often a gem is placed and not enough matching blocks are staged to clear.
+- Gems sometimes disappear when placed.
+- Game over often happens unexpectedly and prematurely.
+- No replay system / game-state record for reproducing issues.
+
+### Audio
+- Vocals playing should mean the next segment is auto-queued, but in actual fact the vocals have been heard looping many times — i.e. the intended "vocals revealed → mandatory advance" rule is **not actually advancing** in play.
+- "sfx are really really bad and not tied to" — (Rai's note trails off here; SFX quality + the action→SFX mapping both need rework).
+- The combined/layered stem doesn't sound like the live mix of the song. The **full-mix master** (source of truth) lives at:
+  - song1: `/Users/rai/dev/llmines-audio-build/audio-src/song1/0 Especifico Primero.wav`
+  - song2: `/Users/rai/dev/llmines-audio-build/audio-src/song2/0 pipeline male phonk.wav`
+  - (also inside `~/Downloads/for florence - skin 1.zip` and `for florence - skin 2.zip` as the `0 *.wav` track; gitignored, not in this repo)
+
+### Skins / progression
+- Restarting the game shouldn't restart the current skin — it should start from the **base skin**.
+- There's a "toggle skin" button that shouldn't be there / shouldn't work.
+
+### UI
+- Score is hidden at the top of the UI.
+- Pointless UI element at the bottom of the screen — unclear what the bar is for.
+- Pointless "title" button — remove.
+
+### Auth / infra
+- Login via Google just doesn't work.
