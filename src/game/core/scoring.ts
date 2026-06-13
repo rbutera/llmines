@@ -1,33 +1,50 @@
 import {
   ALL_CLEAR_BONUS,
-  COMBO_CURVE,
+  BIG_CLEAR_BASE,
+  BIG_CLEAR_STEP,
+  BIG_CLEAR_THRESHOLD,
   COMBO_MIN_SQUARES,
   COLS,
   ROWS,
   SINGLE_COLOUR_BONUS,
   SQUARE_BASE_SCORE,
+  STREAK_CURVE,
 } from "./constants";
 import type { Cell, Grid } from "./types";
 
 /**
- * Faithful Lumines pass score. Replaces the prior `deletedCount * distinctSquares`
- * rule.
+ * The faithful single-pass package for `squares` distinct squares cleared this
+ * pass (README §3b item 5, audit A7/D1). 1-3 squares = 40 each (40 / 80 / 120);
+ * 4+ squares = the big-clear package 640 + 160 per square beyond 4 (4 = 640,
+ * 5 = 800, 6 = 960). This package — NOT a linear per-square value — is the base
+ * the streak multiplier multiplies. Integer-only.
+ */
+export function passPackage(squares: number): number {
+  if (squares <= 0) return 0;
+  if (squares < BIG_CLEAR_THRESHOLD) return squares * SQUARE_BASE_SCORE;
+  return BIG_CLEAR_BASE + (squares - BIG_CLEAR_THRESHOLD) * BIG_CLEAR_STEP;
+}
+
+/**
+ * Faithful Lumines pass score (design D3): the faithful {@link passPackage}
+ * multiplied by the cross-pass STREAK multiplier (a documented Lumines II+ house
+ * mechanic) when the pass qualifies (>= COMBO_MIN_SQUARES squares):
  *
- *   score = squares * 40 * multiplier
+ *   score = passPackage(squares) * (qualifies ? STREAK_CURVE[min(combo, 3)] : 1)
  *
- * where `squares` is the count of distinct snapshot squares actually cleared
- * this pass (NOT incidental flood-fill chain extras), and `multiplier` is 1
- * unless the pass cleared >= 4 squares, in which case it is read from the combo
- * curve indexed by the consecutive-qualifying-pass count, capped at the final
- * entry. Integer-only: every term (40, the curve values) is an integer, so no
- * float ever enters the score.
+ * `squares` is the count of distinct squares actually cleared this pass (NOT
+ * incidental flood-fill chain extras). Because the big-clear package already
+ * contains the single-sweep x4, the streak curve is `[1,2,3,4]`, so a FIRST
+ * qualifying pass with no streak pays the bare package (4 squares -> 640, not
+ * 2560); consecutive 4-square passes pay 640 -> 1280 -> 1920 -> 2560. Integer-
+ * only: every term is an integer, so no float ever enters the score.
  */
 export function passScore(squares: number, combo: number): number {
   if (squares <= 0) return 0;
-  const base = squares * SQUARE_BASE_SCORE;
-  if (squares < COMBO_MIN_SQUARES) return base;
-  const idx = Math.min(combo, COMBO_CURVE.length - 1);
-  return base * COMBO_CURVE[idx]!;
+  const pkg = passPackage(squares);
+  if (squares < COMBO_MIN_SQUARES) return pkg;
+  const idx = Math.min(combo, STREAK_CURVE.length - 1);
+  return pkg * STREAK_CURVE[idx]!;
 }
 
 /** Next combo count after a pass clearing `squares`: bump on >= 4, else reset. */

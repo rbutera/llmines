@@ -55,17 +55,17 @@
 
 ## 3. Wave 3 — Faithful scoring + single-sweep ×4 package
 
-- [ ] 3.1 `src/game/core/constants.ts`: add `BIG_CLEAR_THRESHOLD = 4`, `BIG_CLEAR_BASE = 640`,
+- [x] 3.1 `src/game/core/constants.ts`: add `BIG_CLEAR_THRESHOLD = 4`, `BIG_CLEAR_BASE = 640`,
   `BIG_CLEAR_STEP = 160`; REPLACE `COMBO_CURVE = [4,8,12,16]` with `STREAK_CURVE = [1,2,3,4]` (the
   package already contains the ×4; the old curve double-counts). Keep `SQUARE_BASE_SCORE = 40`,
   `COMBO_MIN_SQUARES = 4`.
-- [ ] 3.2 `src/game/core/scoring.ts` `passScore`: 1-3 squares → `squares*40`; ≥4 → `640 + (squares-4)*160`;
+- [x] 3.2 `src/game/core/scoring.ts` `passScore`: 1-3 squares → `squares*40`; ≥4 → `640 + (squares-4)*160`;
   then multiply the WHOLE package by `qualifies ? STREAK_CURVE[min(combo, 3)] : 1`. Integer-only.
   Verify: 4→640, 5→800, 6→960; FIRST qualifying pass with no streak → 640 (not 2560); 4 squares at
   streak entry ×2 → 1280 (challenge-scoring).
-- [ ] 3.3 Confirm `nextCombo`, soft-drop bank-on-lock, and `boardStateBonus` (house) are unchanged and
+- [x] 3.3 Confirm `nextCombo`, soft-drop bank-on-lock, and `boardStateBonus` (house) are unchanged and
   still gated on a clear-happened pass. Verify: board-state bonus only on clearing passes.
-- [ ] 3.4 Run gates. Rewrite `scoring.test.ts`: add big-clear package cases, multiplier-on-package
+- [x] 3.4 Run gates. Rewrite `scoring.test.ts`: add big-clear package cases, multiplier-on-package
   cases; keep board-state bonus + soft-drop cases. Verify: all gates green.
 
 ## 4. Wave 4 — Spawn staging above the field + top-out game over

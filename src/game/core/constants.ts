@@ -54,17 +54,35 @@ export const BACKING_TRACK_URL = "/backing-track.mp3";
 
 // --- V2 depth: scoring / specials / preview / progression ------------------
 
-/** Base points per distinct square cleared in a pass. */
+/** Base points per distinct square cleared in a pass (1-3 squares). */
 export const SQUARE_BASE_SCORE = 40;
 
 /**
- * Cross-pass combo multiplier curve. A pass clearing >= 4 squares applies a
- * multiplier indexed by the consecutive-qualifying-pass count (`combo`), capped
- * at the final entry. A pass clearing < 4 squares applies x1 and resets combo.
+ * Single-sweep big-clear package (faithful Lumines, README §3b item 5; audit
+ * A7/D1). A pass clearing >= `BIG_CLEAR_THRESHOLD` distinct squares scores
+ * `BIG_CLEAR_BASE + (squares - THRESHOLD) * BIG_CLEAR_STEP`, i.e. 4 = 640,
+ * 5 = 800, 6 = 960. This package (NOT a linear per-square value) is the base any
+ * house multiplier multiplies.
  */
-export const COMBO_CURVE = [4, 8, 12, 16] as const;
+export const BIG_CLEAR_THRESHOLD = 4;
+export const BIG_CLEAR_BASE = 640;
+export const BIG_CLEAR_STEP = 160;
 
-/** Minimum squares in one pass to trigger the combo multiplier. */
+/**
+ * Cross-pass STREAK multiplier curve (Lumines II+ house mechanic, design D3).
+ * Applied to the WHOLE faithful pass package, indexed by the consecutive-
+ * qualifying-pass count (`combo`), capped at the final entry. A pass clearing
+ * < BIG_CLEAR_THRESHOLD squares applies x1 and resets the streak.
+ *
+ * The big-clear package ALREADY contains the single-sweep x4 (640 + 160(n-4) ≡
+ * 40n × 4 for n >= 4), so this curve is `[1, 2, 3, 4]` — NOT the legacy
+ * `[4, 8, 12, 16]`, which would double-count the x4 and pay a first qualifying
+ * pass 2560 instead of 640. Consecutive 4-square passes therefore pay
+ * 640 → 1280 → 1920 → 2560.
+ */
+export const STREAK_CURVE = [1, 2, 3, 4] as const;
+
+/** Minimum squares in one pass to trigger the streak multiplier / big-clear. */
 export const COMBO_MIN_SQUARES = 4;
 
 /** Flat bonus when the settled field is reduced to a single colour. */

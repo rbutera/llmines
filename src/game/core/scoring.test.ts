@@ -6,7 +6,7 @@ import {
   SINGLE_COLOUR_BONUS,
 } from "./constants";
 import { createGame } from "./grid";
-import { boardStateBonus, nextCombo, passScore } from "./scoring";
+import { boardStateBonus, nextCombo, passPackage, passScore } from "./scoring";
 import { advanceSweep } from "./sweep";
 import type { GameState, Grid } from "./types";
 
@@ -25,32 +25,59 @@ function bandOfSquares(squares: number, color: 0 | 1 = 0): GameState {
   return base;
 }
 
-describe("passScore (faithful rule: squares x 40 x combo-curve)", () => {
-  it("one square scores 40 with no combo", () => {
+describe("passPackage (faithful base: 40/square then the 640 big-clear package)", () => {
+  it("1-3 squares score 40 each (40 / 80 / 120)", () => {
+    expect(passPackage(1)).toBe(40);
+    expect(passPackage(2)).toBe(80);
+    expect(passPackage(3)).toBe(120);
+  });
+
+  it("4 squares score the 640 package (not 4 x 40)", () => {
+    expect(passPackage(4)).toBe(640);
+  });
+
+  it("5 and 6 squares add 160 each (800, 960)", () => {
+    expect(passPackage(5)).toBe(800);
+    expect(passPackage(6)).toBe(960);
+  });
+
+  it("0 squares score 0", () => {
+    expect(passPackage(0)).toBe(0);
+  });
+});
+
+describe("passScore (faithful package x streak multiplier [1,2,3,4])", () => {
+  it("one square scores 40 with no streak", () => {
     expect(passScore(1, 0)).toBe(40);
   });
 
-  it("three squares score 120 (no 4+ multiplier)", () => {
+  it("three squares score 120 (sub-4: never multiplied)", () => {
     expect(passScore(3, 0)).toBe(120);
+    // 3 squares never gets a multiplier even with a high streak count.
+    expect(passScore(3, 5)).toBe(120);
   });
 
-  it("four squares trigger the first multiplier (x4)", () => {
-    expect(passScore(4, 0)).toBe(4 * 40 * 4);
+  it("FIRST qualifying pass (4 squares, no streak) pays the bare package 640, NOT 2560", () => {
+    expect(passScore(4, 0)).toBe(640);
+    expect(passScore(4, 0)).not.toBe(2560);
   });
 
-  it("the combo curve escalates 4,8,12,16 and caps at 16", () => {
-    expect(passScore(4, 0)).toBe(4 * 40 * 4);
-    expect(passScore(4, 1)).toBe(4 * 40 * 8);
-    expect(passScore(4, 2)).toBe(4 * 40 * 12);
-    expect(passScore(4, 3)).toBe(4 * 40 * 16);
+  it("the multiplier applies to the PACKAGE, not per square (4 squares at x2 = 1280)", () => {
+    expect(passScore(4, 1)).toBe(640 * 2);
+  });
+
+  it("the streak curve escalates x1,x2,x3,x4 over the package and caps at x4", () => {
+    expect(passScore(4, 0)).toBe(640 * 1); // 640
+    expect(passScore(4, 1)).toBe(640 * 2); // 1280
+    expect(passScore(4, 2)).toBe(640 * 3); // 1920
+    expect(passScore(4, 3)).toBe(640 * 4); // 2560
     // capped beyond the curve length
-    expect(passScore(4, 4)).toBe(4 * 40 * 16);
-    expect(passScore(4, 99)).toBe(4 * 40 * 16);
+    expect(passScore(4, 4)).toBe(640 * 4);
+    expect(passScore(4, 99)).toBe(640 * 4);
   });
 
-  it("the multiplier only applies at >= 4 squares", () => {
-    // 3 squares never gets a multiplier even with a high combo count.
-    expect(passScore(3, 5)).toBe(3 * 40);
+  it("a big-clear package times the streak (6 squares at x3 = 960 x 3)", () => {
+    expect(passScore(6, 2)).toBe(960 * 3);
   });
 
   it("is always an integer (no floats)", () => {
@@ -113,8 +140,9 @@ describe("combo across consecutive sweeps (integration)", () => {
     // be complex; instead drive two independent 4-square boards sharing combo.
     let s = bandOfSquares(4); // 4 squares of colour 0
     s = advanceSweep(s, COLS);
-    // 4 x 40 x 4 = 640, board emptied -> + all-clear bonus.
-    const firstDelta = 4 * 40 * 4 + ALL_CLEAR_BONUS;
+    // FIRST qualifying pass: package(4)=640 x streak x1 = 640, board emptied ->
+    // + all-clear bonus. (No double-counted x4: the package IS the x4.)
+    const firstDelta = 640 + ALL_CLEAR_BONUS;
     expect(s.score).toBe(firstDelta);
     expect(s.combo).toBe(1);
 
@@ -128,9 +156,25 @@ describe("combo across consecutive sweeps (integration)", () => {
     }
     const refilled: GameState = { ...s, grid: grid2, sweepPass: null, sweepX: 0 };
     const s2 = advanceSweep(refilled, COLS);
-    // combo was 1 -> multiplier x8 = 4 * 40 * 8 = 1280, board emptied again.
-    expect(s2.score).toBe(firstDelta + 4 * 40 * 8 + ALL_CLEAR_BONUS);
+    // streak was 1 -> x2 over the package: 640 x 2 = 1280, board emptied again.
+    expect(s2.score).toBe(firstDelta + 640 * 2 + ALL_CLEAR_BONUS);
     expect(s2.combo).toBe(2);
+  });
+
+  it("a 6-square pass banks the 960 package end-to-end (no prior streak)", () => {
+    // A mono 1x7 band = 6 distinct squares; first qualifying pass -> 960 x x1.
+    let s = bandOfSquares(6, 0);
+    s = advanceSweep(s, COLS);
+    expect(s.score).toBe(960 + ALL_CLEAR_BONUS);
+    expect(s.combo).toBe(1);
+  });
+
+  it("no board-state bonus on a pass that cleared nothing (single-colour board)", () => {
+    // A lone single-colour cell, no square -> nothing clears -> no bonus.
+    const base = createGame();
+    base.grid[ROWS - 1]![0] = 1;
+    const s = advanceSweep(base, COLS);
+    expect(s.score).toBe(0);
   });
 
   it("a sub-4 pass resets the combo to x1", () => {
@@ -161,6 +205,7 @@ describe("combo across consecutive sweeps (integration)", () => {
     const four: GameState = { ...s2, grid: grid4, sweepPass: null, sweepX: 0 };
     const before = s2.score;
     const s3 = advanceSweep(four, COLS);
-    expect(s3.score - before).toBe(4 * 40 * 4 + ALL_CLEAR_BONUS);
+    // streak restarted -> package(4)=640 x x1 = 640, board emptied -> all-clear.
+    expect(s3.score - before).toBe(640 + ALL_CLEAR_BONUS);
   });
 });
