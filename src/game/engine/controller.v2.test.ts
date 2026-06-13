@@ -320,6 +320,37 @@ describe("Production clock→dt path: suspended + re-suspend", () => {
 
     c.stop();
   });
+
+  it("a pending tempo latches across the FIRST wrap after a re-suspend mid-pass", () => {
+    const SEC_PER_EIGHTH = 60 / BPM / 2;
+    const clock = new ScriptedClock();
+    const c = new GameController({ testMode: false, seed: 1, clock });
+    c.setTempo(BPM); // run at the grid tempo so the column math lines up
+    // Baseline + advance ~15 columns so the bar parks near the wrap.
+    clock.value = 1;
+    c.testProductionFrame();
+    clock.value = 1 + 15 * SEC_PER_EIGHTH;
+    c.testProductionFrame();
+    expect(c.getRenderState().sweepX).toBeGreaterThan(14);
+    expect(c.getRenderState().bpm).toBe(BPM);
+
+    // Push a faster tempo while parked mid-pass near the wrap.
+    c.setTempo(165);
+    // Re-suspend (now() -> 0): re-anchors the baseline + zeroes the consumed
+    // counter, but the bar stays parked near the wrap.
+    clock.value = 0;
+    c.testProductionFrame();
+    // Resume: a baseline frame (dt=0), then a small advance that CROSSES the wrap.
+    clock.value = 2;
+    c.testProductionFrame();
+    clock.value = 2 + 2 * SEC_PER_EIGHTH; // ~2 columns: crosses the wrap from ~15
+    c.testProductionFrame();
+    // The new tempo must have latched on that wrap-crossing frame, even though the
+    // consumed counter was re-zeroed by the re-suspend.
+    expect(c.getRenderState().bpm).toBe(165);
+
+    c.stop();
+  });
 });
 
 describe("Tempo-driven sweep progression (9.x)", () => {

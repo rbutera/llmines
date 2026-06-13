@@ -518,20 +518,21 @@ export class GameController {
     const bpm = this.currentSweepBpm();
     const delta = dtSeconds * (bpm / 60) * COLS_PER_BEAT;
     if (delta > 0) {
-      const consumedBefore = this.sweepColumnsConsumed;
+      // The bar's phase BEFORE the advance (0..COLS). A wrap occurs this frame
+      // iff phase + delta reaches/exceeds COLS. Computed from the live sweep
+      // PHASE (not the absolute consumed counter, which is re-zeroed on a
+      // suspend/resume re-anchor and would lose phase), so the latch is correct
+      // even right after a re-suspend mid-pass.
+      const phaseBefore = this.state.sweepX;
       this.sweepColumnsConsumed += delta;
       this.advanceSweepColumns(delta);
       // Latch the pending tempo when this frame CROSSED at least one pass
-      // boundary. The wrap happens inside advanceSweep, so a frame rarely starts
-      // exactly at sweepX === 0; detecting the boundary crossing from the ABSOLUTE
-      // consumed-columns counter (a multiple of COLS was passed) reliably latches
-      // even when a frame's net sweepX ends HIGHER than it started (a frame longer
-      // than one pass) — `sweepX < beforeX` would miss that case. The CURRENT
-      // frame kept the old tempo through the wrap, so there is no mid-pass jump.
-      if (
-        Math.floor(this.sweepColumnsConsumed / COLS) >
-        Math.floor(consumedBefore / COLS)
-      ) {
+      // boundary. The wrap happens inside advanceSweep (sweepX -> 0..), so a frame
+      // rarely starts exactly at sweepX === 0; this phase-based crossing test
+      // reliably latches even when a frame's net sweepX ends HIGHER than it
+      // started (a frame longer than one pass). The CURRENT frame kept the old
+      // tempo through the wrap, so there is no mid-pass jump.
+      if (phaseBefore + delta >= COLS) {
         this.activeBpm = this.pendingTempoBpm;
       }
     }
