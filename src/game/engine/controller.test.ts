@@ -293,6 +293,29 @@ describe("testEndGame (deterministic game-over for the account submit path)", ()
   });
 });
 
+describe("seed exposure (A4/D6): render-state + public-state carry the seed", () => {
+  it("render-state exposes the current game's seed", () => {
+    const c = new GameController({ testMode: true, seed: 13579 });
+    expect(c.getRenderState().seed).toBe(13579);
+  });
+
+  it("public-state exposes the seed, and it is available on game over", () => {
+    const c = new GameController({ testMode: true, seed: 24680 });
+    expect(c.testState().seed).toBe(24680);
+    c.testEndGame(100);
+    // After game over the seed is still available (so the screen can show it).
+    expect(c.testState().gameOver).toBe(true);
+    expect(c.testState().seed).toBe(24680);
+    expect(c.getRenderState().seed).toBe(24680);
+  });
+
+  it("restart with no seed reseeds randomly (not back to the same seed)", () => {
+    const c = new GameController({ testMode: true, seed: 1 });
+    c.restart(); // no argument -> fresh random seed
+    expect(c.testState().seed).not.toBe(1);
+  });
+});
+
 describe("top-out game over (A5/D4): no auto-spawn after a topping-out lock", () => {
   it("a lock that fills the spawn columns ends the game and does not auto-spawn", () => {
     const c = new GameController({ testMode: true });

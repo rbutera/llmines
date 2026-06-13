@@ -122,12 +122,12 @@
 
 ## 7. Wave 7 — Full-suite sweep + final gates
 
-- [ ] 7.1 Audit remaining stale tests (`determinism.test.ts`, `purity.test.ts`, `preview.test.ts`,
+- [x] 7.1 Audit remaining stale tests (`determinism.test.ts`, `purity.test.ts`, `preview.test.ts`,
   `softdrop.test.ts`, `skins.test.ts`, `controller.test.ts`, `controller.v2.test.ts`) for assumptions
   the new semantics break; rewrite to the new behaviour (not skip). Verify: no skipped/xfail tests.
-- [ ] 7.2 Cross-check every spec scenario across the four capabilities has a backing test. Verify: each
+- [x] 7.2 Cross-check every spec scenario across the four capabilities has a backing test. Verify: each
   `#### Scenario` maps to an assertion.
-- [ ] 7.3 Final full gates: `pnpm test` · `pnpm typecheck` · `pnpm lint` · `pnpm build` all green.
+- [x] 7.3 Final full gates: `pnpm test` · `pnpm typecheck` · `pnpm lint` · `pnpm build` all green.
   Verify: clean run, no regressions.
 - [ ] 7.4 Smoke the production-start audio probe is unbroken (telemetry is additive): `pnpm
   test:e2e:production-start`. Verify: passes (this change does not touch audio, only emits fields).
