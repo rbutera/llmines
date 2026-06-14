@@ -63,6 +63,15 @@ export const SOFT_DROP_INTERVAL_MS = 60;
  */
 export const HOLD_MS = SECONDS_PER_BEAT * 1000; // 500ms (one beat)
 
+/**
+ * TOP-OUT GRACE window (ms): when a piece spawns over a column that is blocked to the
+ * top (it can't descend at all), it stages with THIS longer hold instead of the normal
+ * one-beat {@link HOLD_MS}, giving the player a generous window to slide it left/right
+ * to an open column before gravity tops it out. The grace is a TIME window, not a
+ * "fill the whole top" rule — if you don't use it, the piece tops out normally.
+ */
+export const TOPOUT_GRACE_MS = HOLD_MS * 3; // ~1.5s to move a stuck spawn to safety
+
 /** Backing track URL (served from public/). */
 export const BACKING_TRACK_URL = "/backing-track.mp3";
 

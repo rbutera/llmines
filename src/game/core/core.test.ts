@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COLS, HOLD_MS, ROWS } from "./constants";
+import { COLS, HOLD_MS, ROWS, TOPOUT_GRACE_MS } from "./constants";
 import { computeMarked } from "./detect";
 import {
   createGame,
@@ -977,10 +977,11 @@ describe("sweep-clear-mechanics: per-group batch erase + cascades (D1/D2)", () =
 });
 
 describe("game over (7.x): spawn-above / move-grace / top-out (A5/D4)", () => {
-  it("a blocked spawn column ALONE does NOT end the game — the piece stages, grace to move", () => {
+  it("a blocked spawn column ALONE does NOT end the game — it stages with a longer GRACE hold to move", () => {
     const base = createGame();
     // Fill the spawn columns (7-8) to the top. Other columns are wide open, so a new
-    // piece must NOT instantly top out: it stages above and the player can slide it.
+    // piece must NOT instantly top out: it stages above with the longer top-out grace
+    // window so the player can slide it left/right to an open column.
     for (let r = 0; r < ROWS; r++) {
       base.grid[r]![7] = 1;
       base.grid[r]![8] = 1;
@@ -989,6 +990,8 @@ describe("game over (7.x): spawn-above / move-grace / top-out (A5/D4)", () => {
     expect(s.gameOver).toBe(false);
     expect(s.active).not.toBe(null);
     expect(s.active?.pos.row).toBe(-2); // staged above the field
+    // the blocked spawn column earns the longer grace hold (not the one-beat HOLD_MS).
+    expect(s.hold.remainingMs).toBe(TOPOUT_GRACE_MS);
   });
 
   it("the board FULL ACROSS THE TOP (no column can accept) ends the game on spawn", () => {
@@ -1029,23 +1032,16 @@ describe("game over (7.x): spawn-above / move-grace / top-out (A5/D4)", () => {
     expect(s.active).not.toBe(null);
   });
 
-  it("a staged piece stuck over a full column RE-HOLDS (grace) instead of locking, then descends once moved to an open column", () => {
-    // Full-height column at col 6, everything else open. Spawn, shift LEFT over col 6.
+  it("the GRACE window lets a stuck spawn be moved to an open column and descend safely", () => {
+    // Full-height column at col 6, everything else open. Spawn over the open centre, shift
+    // LEFT onto col 6 (stuck), then back RIGHT onto the open columns: it descends + locks
+    // in the field, no game over — the player used the grace to escape.
     const base = createGame();
     for (let r = 0; r < ROWS; r++) base.grid[r]![6] = 1; // col 6 full
     let s = spawnPiece(base, MONO_A); // staged at cols 7-8, row -2
-    s = moveLeft(s); // now over cols 6-7 (col 6 is the full one)
+    s = moveLeft(s); // over cols 6-7 (col 6 full) — stuck above
     expect(s.active?.pos.col).toBe(6);
-    // Gravity while stuck above a full column with OTHER columns open: re-holds — it
-    // does NOT lock and does NOT end the game (the player keeps grace to move it).
-    const stuck = gravityStep(s);
-    expect(stuck.locked).toBe(false);
-    expect(stuck.state.gameOver).toBe(false);
-    expect(stuck.state.active).not.toBe(null);
-    expect(stuck.state.hold.active).toBe(true); // grace re-armed
-    // Move back over the open spawn columns and let it fall: it descends and locks
-    // IN the field — never a game over.
-    s = moveRight(stuck.state); // back to cols 7-8 (open)
+    s = moveRight(s); // back over the open spawn columns 7-8
     let locked = false;
     for (let i = 0; i < ROWS + 6; i++) {
       const r = gravityStep(s);
@@ -1059,22 +1055,17 @@ describe("game over (7.x): spawn-above / move-grace / top-out (A5/D4)", () => {
     expect(s.gameOver).toBe(false); // landed safely, no top-out
   });
 
-  it("true top-out: a staged piece locks above the field only when the board is full across the top", () => {
-    // Construct a staged piece over a board that is full across the top (no column can
-    // accept), then drive gravity: it cannot descend, no column is open to re-hold for,
-    // so it locks above the field -> game over (cells above row 0 are not silently lost).
+  it("tops out WITHOUT the whole top being full: a stuck staged piece that isn't moved off a blocked column locks above the field", () => {
+    // Only col 6 is full (every other column is wide open). A piece shoved onto col 6 and
+    // left there tops out once gravity runs after the grace — game over does NOT require
+    // the board to be full across the top (Rai: "not necessarily full across top").
     const base = createGame();
-    for (let c = 0; c < COLS; c++) {
-      base.grid[0]![c] = 1;
-      base.grid[1]![c] = 1;
-    }
-    // Manually stage an active piece above the full board (spawn() would have already
-    // topped out; this exercises the gravityStep lock-above path directly).
-    let s: GameState = {
-      ...base,
-      active: { cells: MONO_A, pos: { row: -2, col: 7 } },
-      hold: { active: false, remainingMs: 0 },
-    };
+    for (let r = 0; r < ROWS; r++) base.grid[r]![6] = 1; // ONLY col 6 full
+    let s = spawnPiece(base, MONO_A); // staged cols 7-8, row -2
+    s = moveLeft(s); // over cols 6-7 (col 6 full) and left there (no move to safety)
+    expect(s.active?.pos.col).toBe(6);
+    // Gravity (after the grace hold has lapsed) finds it stuck entirely above the field
+    // and tops out — even though columns 0-5 and 8-15 are completely empty.
     let locked = false;
     for (let i = 0; i < ROWS + 6; i++) {
       const r = gravityStep(s);

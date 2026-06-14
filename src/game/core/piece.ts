@@ -5,6 +5,7 @@ import {
   SPAWN_COL,
   SPAWN_ROW,
   SPECIAL_RATE,
+  TOPOUT_GRACE_MS,
 } from "./constants";
 import { cloneGrid, inBounds, pieceCells } from "./grid";
 import { nextBit, nextFloat } from "./rng";
@@ -160,10 +161,11 @@ export function spawnGeneratedPiece(
   gp: GeneratedPiece,
 ): GameState {
   const pos: PiecePos = { row: SPAWN_ROW, col: SPAWN_COL };
-  // Game over only when the piece cannot enter the field at ANY column (the board is
-  // full across the top) — NOT merely because the centre spawn column is blocked. A
-  // staged piece can be slid to an open column (see gravityStep's re-hold grace), so
-  // a blocked spawn column alone must never be an instant game-over (A5/D4).
+  // Game over at spawn only when the piece cannot enter at ANY column (the board is
+  // already full across the top, so there is nowhere to slide it). A blocked CENTRE
+  // spawn column alone is NOT game over — the piece stages and gets a grace window to
+  // be moved (and if the grace lapses while it is still stuck, gravity tops it out via
+  // lockPiece, so the game can still end without the whole top being full) (A5/D4).
   if (!canEnterAnyColumn(state.grid, gp.cells)) {
     return {
       ...state,
@@ -172,17 +174,31 @@ export function spawnGeneratedPiece(
       hold: { active: false, remainingMs: 0 },
     };
   }
-  // A freshly spawned piece holds at the top for one beat before gravity
-  // resumes (brownfield new-block hold). The controller drives the timer /
-  // release. Arming it here means the queue-based production spawn path keeps
-  // the hold behaviour that brownfield's spawnPiece established.
+  // A freshly spawned piece holds at the top before gravity resumes (the controller
+  // drives the timer). A piece over a blocked spawn column gets the longer TOP-OUT
+  // GRACE window to be slid left/right to an open column; an unobstructed spawn gets
+  // the normal one-beat hold.
   return {
     ...state,
     active: { cells: gp.cells, pos, special: gp.special },
-    hold: { active: true, remainingMs: HOLD_MS },
+    hold: { active: true, remainingMs: spawnHoldMs(state.grid, gp.cells, pos) },
     // A fresh piece starts with no pending soft-drop bonus.
     softDropBonus: 0,
   };
+}
+
+/**
+ * The staging hold for a freshly spawned piece: the longer {@link TOPOUT_GRACE_MS}
+ * window when the spawn column is blocked (the piece cannot descend from spawn — the
+ * player needs time to slide it to an open column), else the normal one-beat
+ * {@link HOLD_MS}.
+ */
+function spawnHoldMs(grid: Grid, cells: Piece, pos: PiecePos): number {
+  const canDescendFromSpawn = canPlace(grid, cells, {
+    row: pos.row + 1,
+    col: pos.col,
+  });
+  return canDescendFromSpawn ? HOLD_MS : TOPOUT_GRACE_MS;
 }
 
 /** Can a piece with these cells legally occupy this top-left position? */
@@ -213,12 +229,12 @@ export function spawnPiece(state: GameState, cells: Piece): GameState {
       hold: { active: false, remainingMs: 0 },
     };
   }
-  // A freshly spawned piece holds at the top for one beat before gravity
-  // resumes (see HOLD_MS). The controller drives the timer / release.
+  // A freshly spawned piece holds at the top before gravity resumes; a piece over a
+  // blocked spawn column gets the longer top-out grace to be moved (see spawnHoldMs).
   return {
     ...state,
     active: { cells, pos },
-    hold: { active: true, remainingMs: HOLD_MS },
+    hold: { active: true, remainingMs: spawnHoldMs(state.grid, cells, pos) },
     // A fresh piece starts with no pending soft-drop bonus.
     softDropBonus: 0,
   };
@@ -424,21 +440,12 @@ export function gravityStep(
       locked: false,
     };
   }
-  // The piece cannot descend. If it is still ENTIRELY above the visible field (no
-  // cell has reached row 0 — it is stuck over a full-height column) do NOT lock it
-  // into a top-out yet: as long as SOME column could still accept it, re-arm the
-  // spawn hold so the player keeps getting time to slide it left/right to an open
-  // column (Rai's requested grace — a blocked spawn column must not be instant death).
-  // Only when EVERY column is blocked (the board is full across the top) does it lock
-  // and top the game out. A piece whose bottom row has entered the field locks
-  // normally below.
-  const entirelyAboveField = !pieceCells(state.active).some(({ row }) => row >= 0);
-  if (entirelyAboveField && canEnterAnyColumn(state.grid, state.active.cells)) {
-    return {
-      state: { ...state, hold: { active: true, remainingMs: HOLD_MS } },
-      locked: false,
-    };
-  }
+  // The piece cannot descend -> lock it. If it is still entirely above the field this
+  // tops the game out (see lockPiece). The GRACE to avoid that is supplied earlier: a
+  // staged piece over a blocked spawn column spawns with a longer hold (TOPOUT_GRACE_MS)
+  // during which the player can slide it left/right to an open column. Once that hold
+  // lapses and gravity finds it still stuck, it tops out — the game can end without the
+  // whole top being full (the grace is a time window, not a "fill everything" rule).
   return { state: lockPiece(state, cause), locked: true };
 }
 
