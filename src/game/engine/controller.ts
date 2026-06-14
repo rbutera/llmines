@@ -182,6 +182,20 @@ export interface RenderState {
    */
   lastLock?: { id: number; cause: "gravity" | "soft" | "hard" };
   /**
+   * Additive (render-only): the most recent board-state BONUS event, copied
+   * straight from the core's RECORD-ONLY `state.lastBonusClear`. Carries a
+   * monotonic `id` (fire once per new id), the bonus `kind` ("singleColour" |
+   * "allClear"), and the `cells` (`row * COLS + col`) the celebratory animation
+   * should wash over. The renderer fires an OBVIOUS per-kind animation once per
+   * new `id`. Pure projection — no logic change. `undefined` until the first
+   * board-state bonus.
+   */
+  lastBonusClear?: {
+    id: number;
+    kind: "singleColour" | "allClear";
+    cells: number[];
+  };
+  /**
    * Additive (render-only): the count of DISTINCT completed 2x2 squares currently
    * staged for clear on the settled grid this frame, copied straight from
    * `computeMarked(state.grid).distinctSquares` (the same value `PublicState` exposes).
@@ -910,6 +924,15 @@ export class GameController {
         : undefined,
       lastLock: this.state.lastLock
         ? { id: this.state.lastLock.id, cause: this.state.lastLock.cause }
+        : undefined,
+      // Render-only board-state bonus event passthrough. COPIED (not aliased) so
+      // a subscriber can never mutate the core's internal `cells` array.
+      lastBonusClear: this.state.lastBonusClear
+        ? {
+            id: this.state.lastBonusClear.id,
+            kind: this.state.lastBonusClear.kind,
+            cells: this.state.lastBonusClear.cells.slice(),
+          }
         : undefined,
     };
   }

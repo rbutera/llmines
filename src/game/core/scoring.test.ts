@@ -7,7 +7,7 @@ import {
 } from "./constants";
 import { createGame } from "./grid";
 import { boardStateBonus, nextCombo, passPackage, passScore } from "./scoring";
-import { advanceSweep } from "./sweep";
+import { advanceSweep, runFullSweep } from "./sweep";
 import type { GameState, Grid } from "./types";
 
 /**
@@ -177,6 +177,81 @@ describe("combo across consecutive sweeps (integration)", () => {
     expect(s.score).toBe(0);
   });
 
+});
+
+describe("lastBonusClear (render-only board-state bonus event)", () => {
+  it("a clear that EMPTIES the board bumps lastBonusClear kind allClear exactly once and awards ALL_CLEAR_BONUS once (no double count)", () => {
+    // A mono 1x5 band of colour 0 = 4 distinct squares; the sweep clears all of
+    // them and empties the board.
+    const s = advanceSweep(bandOfSquares(4, 0), COLS);
+    // Score: package(4)=640 x streak x1 + the all-clear bonus, counted ONCE.
+    expect(s.score).toBe(640 + ALL_CLEAR_BONUS);
+    // Event fired exactly once (id 1), kind allClear, with cells to wash over.
+    expect(s.lastBonusClear).toBeDefined();
+    expect(s.lastBonusClear!.kind).toBe("allClear");
+    expect(s.lastBonusClear!.id).toBe(1);
+    expect(s.lastBonusClear!.cells.length).toBeGreaterThan(0);
+  });
+
+  it("a clear leaving a SINGLE-COLOUR board bumps kind singleColour once and awards SINGLE_COLOUR_BONUS once", () => {
+    const base = createGame();
+    // A clearable mono 2x2 of colour 0 at cols 0-1 (clears this pass)...
+    base.grid[ROWS - 1]![0] = 0;
+    base.grid[ROWS - 1]![1] = 0;
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    // ...plus an isolated colour-0 cell that does NOT form a square (survives),
+    // so the post-clear board is non-empty and entirely colour 0.
+    base.grid[ROWS - 1]![COLS - 1] = 0;
+    const s = advanceSweep(base, COLS);
+    // 1 square cleared -> package(1)=40 (sub-4, no multiplier) + single-colour.
+    expect(s.score).toBe(40 + SINGLE_COLOUR_BONUS);
+    expect(s.lastBonusClear).toBeDefined();
+    expect(s.lastBonusClear!.kind).toBe("singleColour");
+    expect(s.lastBonusClear!.id).toBe(1);
+    // The wash targets the surviving single-colour cell.
+    expect(s.lastBonusClear!.cells).toContain((ROWS - 1) * COLS + (COLS - 1));
+  });
+
+  it("a normal clear leaving a MIXED board does NOT bump lastBonusClear and awards no board bonus", () => {
+    const base = createGame();
+    // A clearable mono 2x2 of colour 0 at cols 0-1 (clears)...
+    base.grid[ROWS - 1]![0] = 0;
+    base.grid[ROWS - 1]![1] = 0;
+    base.grid[ROWS - 2]![0] = 0;
+    base.grid[ROWS - 2]![1] = 0;
+    // ...plus surviving isolated cells of BOTH colours (no square), so the board
+    // is non-empty and multi-colour after the clear.
+    base.grid[ROWS - 1]![COLS - 1] = 0;
+    base.grid[ROWS - 1]![COLS - 2] = 1;
+    const s = advanceSweep(base, COLS);
+    // 1 square cleared -> 40, no board-state bonus (two colours remain).
+    expect(s.score).toBe(40);
+    expect(s.lastBonusClear).toBeUndefined();
+  });
+
+  it("carries the prior event forward unchanged on a pass with no bonus (monotonic id, no re-fire)", () => {
+    // Fire an all-clear first.
+    const first = advanceSweep(bandOfSquares(4, 0), COLS);
+    expect(first.lastBonusClear!.id).toBe(1);
+    // A second pass on an empty board (no clear) must not touch the record.
+    const second = advanceSweep(
+      { ...first, sweepPass: null, sweepX: 0 },
+      COLS,
+    );
+    expect(second.lastBonusClear!.id).toBe(1);
+    expect(second.lastBonusClear!.kind).toBe("allClear");
+  });
+
+  it("runFullSweep emits the same all-clear bonus event", () => {
+    const s = runFullSweep(bandOfSquares(4, 0));
+    expect(s.score).toBe(640 + ALL_CLEAR_BONUS);
+    expect(s.lastBonusClear!.kind).toBe("allClear");
+    expect(s.lastBonusClear!.id).toBe(1);
+  });
+});
+
+describe("combo across consecutive sweeps (sub-4 reset, cont.)", () => {
   it("a sub-4 pass resets the combo to x1", () => {
     let s = bandOfSquares(4); // 4 squares -> qualifies
     s = advanceSweep(s, COLS);

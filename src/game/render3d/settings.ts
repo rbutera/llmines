@@ -115,6 +115,14 @@ export interface VisualSettings {
    * Default ON.
    */
   shockwaveEnabled: boolean;
+  /**
+   * Board-state BONUS celebration animations (render-only). When a pass reduces
+   * the field to a single colour (single-colour bonus) or empties it (all-clear
+   * bonus), an OBVIOUS wavefront-style flash washes the affected cells — a warm
+   * colour-wash for single-colour, a full-board white bloom + shockwave for the
+   * all-clear (the biggest payoff). Reuses the chain wavefront engine. Default ON.
+   */
+  bonusEnabled: boolean;
 
   // --- PART 3: soft / fast drop feedback (render-only, tunable) -------------
   /** Soft-drop motion-smear + speed-line trail on the descending piece. Default ON. */
@@ -204,6 +212,9 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   chainSpeed: 90,
   chainIntensity: 3.2,
   shockwaveEnabled: true,
+  // Board-state bonus celebrations ON: single-colour = warm colour-wash pulse,
+  // all-clear = full-board white bloom + shockwave (the biggest moment).
+  bonusEnabled: true,
 
   // Drop feedback (item 8): reworked so soft and hard read distinctly. Soft-drop
   // is a clear sustained warm trail (it now glides continuously while held — see

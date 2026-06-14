@@ -223,4 +223,27 @@ export interface GameState {
    * `undefined` until the first lock.
    */
   lastLock?: { id: number; cause: "gravity" | "soft" | "hard" };
+  /**
+   * RECORD-ONLY (render-only), additive: the most recent board-state BONUS
+   * earned at a pass completion — the single-colour bonus (the field reduced to
+   * one colour) or the all-clear bonus (the field emptied). Carries the bonus
+   * `kind`, a monotonic `id` so the renderer fires the celebratory animation
+   * exactly once per event, and the `cells` (`row * COLS + col`) the animation
+   * should wash over:
+   *   - `singleColour`: every remaining settled (non-null) cell of the post-
+   *     sweep grid (the surviving single colour).
+   *   - `allClear`: the cells erased on THIS pass (their positions), since the
+   *     board is now empty — so the bloom flashes where the last blocks were.
+   * Set by the sweep at pass completion alongside the score bonus (derived from
+   * the SAME `boardStateBonus` value, so the score is never double-counted) and
+   * carried forward unchanged otherwise (the monotonic id means an unchanged
+   * value never re-fires), exactly like `lastChainClear`. Never read by
+   * gameplay/scoring/timing — additive and record-only. `undefined` until the
+   * first board-state bonus of the game.
+   */
+  lastBonusClear?: {
+    id: number;
+    kind: "singleColour" | "allClear";
+    cells: number[];
+  };
 }

@@ -53,6 +53,38 @@ export const ELECTRIC_PLASMA: SurgeStyle = {
 };
 
 /**
+ * SINGLE-COLOUR bonus surge: a saturated COLOUR-WASH pulse. Warm gold/amber
+ * core with an orange corona and a gold shock ring, distinct from the cyan/
+ * magenta gem cascade so the player reads "single-colour bonus" at a glance.
+ */
+export const SINGLE_COLOUR_SURGE: SurgeStyle = {
+  // hot gold-white core
+  core: [3.2, 2.7, 1.2],
+  // saturated amber corona
+  corona: [3.0, 1.8, 0.4],
+  // deeper orange alternate
+  coronaAlt: [3.0, 1.1, 0.2],
+  // gold shock ring
+  shock: [2.8, 2.2, 0.8],
+};
+
+/**
+ * ALL-CLEAR bonus surge: the biggest, most celebratory look — a full-board WHITE
+ * BLOOM. Pure over-driven white core + corona so the whole field flares, with a
+ * white shock ring (the shockwave is forced on + sized for the all-clear).
+ */
+export const ALL_CLEAR_SURGE: SurgeStyle = {
+  // pure blinding white core
+  core: [4.0, 4.0, 4.0],
+  // white corona (the bloom)
+  corona: [3.6, 3.6, 3.8],
+  // faint icy-blue alternate for a touch of depth in the bloom
+  coronaAlt: [3.0, 3.4, 4.0],
+  // white shock ring
+  shock: [3.4, 3.4, 3.6],
+};
+
+/**
  * Surge styles keyed by skin id. Skins without an explicit entry fall back to
  * {@link ELECTRIC_PLASMA}. Keeping this keyed by id (not index) means reordering
  * skins never silently repaints a cascade.

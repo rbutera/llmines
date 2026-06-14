@@ -126,6 +126,7 @@ export function useVisualSettings(): VisualSettings {
       chainSpeed: { value: initial.chainSpeed, min: 10, max: 300, step: 5 },
       chainIntensity: { value: initial.chainIntensity, min: 0, max: 5, step: 0.05 },
       shockwaveEnabled: { value: initial.shockwaveEnabled },
+      bonusEnabled: { value: initial.bonusEnabled },
     }),
     "Drop feedback": folder({
       dropTrailEnabled: { value: initial.dropTrailEnabled },
@@ -183,6 +184,7 @@ export function useVisualSettings(): VisualSettings {
     chainSpeed: values.chainSpeed ?? DEFAULT_SETTINGS.chainSpeed,
     chainIntensity: values.chainIntensity ?? DEFAULT_SETTINGS.chainIntensity,
     shockwaveEnabled: values.shockwaveEnabled ?? DEFAULT_SETTINGS.shockwaveEnabled,
+    bonusEnabled: values.bonusEnabled ?? DEFAULT_SETTINGS.bonusEnabled,
     dropTrailEnabled: values.dropTrailEnabled ?? DEFAULT_SETTINGS.dropTrailEnabled,
     dropTrailIntensity:
       values.dropTrailIntensity ?? DEFAULT_SETTINGS.dropTrailIntensity,

@@ -1,9 +1,9 @@
 import { chainFlood, type ChainClearRecord } from "./chain-clear";
-import { COLS, ROWS, SWEEP_WRAP_EPSILON } from "./constants";
 import { isSquareAt } from "./detect";
 import { cloneGrid, settleColumnWithMarksAndSpecials } from "./grid";
+import { ALL_CLEAR_BONUS, COLS, ROWS, SWEEP_WRAP_EPSILON } from "./constants";
 import { boardStateBonus, nextCombo, passPackage, passScore } from "./scoring";
-import type { GameState, Grid, SweepPass } from "./types";
+import type { GameState, Grid, GroupErase, SweepPass } from "./types";
 
 /** A fresh ROWS x COLS boolean grid of `false`. */
 function emptyMarks(): boolean[][] {
@@ -240,6 +240,9 @@ export function advanceSweep(state: GameState, columns: number): GameState {
   // RECORD-ONLY (D8): the latest pass-completion event this call, if any pass
   // completed; carried forward from the prior state otherwise.
   let lastPassComplete = state.lastPassComplete;
+  // RECORD-ONLY (render-only): the latest board-state bonus event this call, if a
+  // bonus fired; carried forward from the prior state otherwise.
+  let lastBonusClear = state.lastBonusClear;
   let pass: SweepPass = state.sweepPass
     ? clonePass(state.sweepPass)
     : startPass();
@@ -292,8 +295,17 @@ export function advanceSweep(state: GameState, columns: number): GameState {
       if (squares > 0) {
         // Board-state bonuses are only assessed when a clear actually happened
         // this pass (a clear reduced the field) — not awarded passively every
-        // pass a single-colour/empty board sits there.
-        score += boardStateBonus(grid);
+        // pass a single-colour/empty board sits there. Compute the value ONCE,
+        // add it to the score ONCE, and derive the render-only event from the
+        // SAME value so the bonus is never double-counted.
+        const bonus = boardStateBonus(grid);
+        score += bonus;
+        lastBonusClear = nextBonusClear(
+          lastBonusClear,
+          bonus,
+          grid,
+          pass.groupErases,
+        );
       }
       sweepX = 0;
       pass = startPass();
@@ -310,7 +322,58 @@ export function advanceSweep(state: GameState, columns: number): GameState {
     sweepPass: pass,
     lastChainClear: nextChainClear(state.lastChainClear, chainRecords),
     lastPassComplete,
+    lastBonusClear,
   };
+}
+
+/**
+ * Coordinates (`row * COLS + col`) of every settled (non-null) cell on `grid`.
+ * Used as the wash-target for the single-colour bonus animation (the surviving
+ * single colour).
+ */
+function settledCells(grid: Grid): number[] {
+  const out: number[] = [];
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      if ((grid[row]![col] ?? null) !== null) out.push(row * COLS + col);
+    }
+  }
+  return out;
+}
+
+/**
+ * RECORD-ONLY (render-only): derive the board-state BONUS event for a completed
+ * pass from the ALREADY-COMPUTED `boardStateBonus` value (so the score, added by
+ * the caller from that SAME value, is never double-counted). `bonus` is the
+ * value `boardStateBonus(grid)` returned for the post-sweep grid this pass:
+ *   - `ALL_CLEAR_BONUS` -> kind `allClear`; the board is now empty, so the wash
+ *     targets the cells ERASED this pass (their positions, gathered from the
+ *     pass's `groupErases`). If — defensively — no erased coords are available,
+ *     fall back to the FULL board so the celebratory flash still covers it.
+ *   - any other non-zero (the single-colour bonus) -> kind `singleColour`; the
+ *     wash targets the surviving settled cells of the post-sweep grid.
+ *   - 0 -> no event; the prior value is carried forward unchanged (the monotonic
+ *     `id` means an unchanged value never re-fires).
+ * The `id` bumps exactly once per event, mirroring `nextChainClear`. Pure.
+ */
+function nextBonusClear(
+  prev: GameState["lastBonusClear"],
+  bonus: number,
+  grid: Grid,
+  groupErases: GroupErase[],
+): GameState["lastBonusClear"] {
+  if (bonus === 0) return prev;
+  const id = (prev?.id ?? 0) + 1;
+  if (bonus === ALL_CLEAR_BONUS) {
+    const erased: number[] = [];
+    for (const g of groupErases) erased.push(...g.cells);
+    const cells =
+      erased.length > 0
+        ? Array.from(new Set(erased))
+        : Array.from({ length: ROWS * COLS }, (_unused, i) => i);
+    return { id, kind: "allClear", cells };
+  }
+  return { id, kind: "singleColour", cells: settledCells(grid) };
 }
 
 /**
@@ -364,9 +427,20 @@ export function runFullSweep(state: GameState): GameState {
     groupErases: pass.groupErases,
   };
   const combo = nextCombo(state.combo, squares);
+  // RECORD-ONLY (render-only): the board-state bonus event, derived from the SAME
+  // bonus value added to the score so it is never double-counted.
+  let lastBonusClear = state.lastBonusClear;
   if (squares > 0) {
-    // Bonuses only when a clear happened this sweep (see advanceSweep).
-    score += boardStateBonus(grid);
+    // Bonuses only when a clear happened this sweep (see advanceSweep). Compute
+    // once, add once, derive the event from the same value.
+    const bonus = boardStateBonus(grid);
+    score += bonus;
+    lastBonusClear = nextBonusClear(
+      lastBonusClear,
+      bonus,
+      grid,
+      pass.groupErases,
+    );
   }
   return {
     ...state,
@@ -378,5 +452,6 @@ export function runFullSweep(state: GameState): GameState {
     sweepPass: null,
     lastChainClear: nextChainClear(state.lastChainClear, chainRecords),
     lastPassComplete,
+    lastBonusClear,
   };
 }

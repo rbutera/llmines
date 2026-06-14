@@ -18,7 +18,11 @@ import { Bursts, type BurstHandle } from "./Bursts";
 import { ChainWavefront, type ChainWavefrontHandle } from "./ChainWavefront";
 import { PreviewDock } from "./PreviewDock";
 import { DropShell, type DropShellHandle } from "./DropShell";
-import { surgeStyleForSkin } from "./surgeStyles";
+import {
+  ALL_CLEAR_SURGE,
+  SINGLE_COLOUR_SURGE,
+  surgeStyleForSkin,
+} from "./surgeStyles";
 import { CELL, cellX, cellY } from "./layout";
 
 /**
@@ -124,6 +128,22 @@ export function Scene3D({
       origin: [number, number, number];
     }[]
   >([]);
+  // Board-state BONUS celebration: the last bonus id we already fired for, and a
+  // queue of bonus washes to flush on the next R3F frame (mirrors the chain
+  // wavefront path, but with a per-kind style + a radial ripple from the board /
+  // cluster centre so the bonus reads as a board-wide WASH, not a point cascade).
+  const lastBonusIdRef = useRef<number>(-1);
+  const pendingBonusesRef = useRef<
+    {
+      kind: "singleColour" | "allClear";
+      cells: {
+        position: [number, number, number];
+        dist: number;
+        colour: readonly [number, number, number];
+      }[];
+      origin: [number, number, number];
+    }[]
+  >([]);
   // Hard-drop slam: the last hard-drop id we already fired a slam for, and a
   // queue of slams to flush on the next frame. Screen-shake amplitude + decay
   // ride a ref read in useFrame against the camera/group.
@@ -217,6 +237,58 @@ export function Scene3D({
           pendingWavefrontsRef.current.push({
             cells,
             origin: [cellX(originCol), cellY(originRow), 0],
+          });
+        }
+      }
+
+      // --- Board-state BONUS: queue a celebratory wash on each NEW bonus event
+      // (keyed by the core's monotonic id so it fires exactly once). The cells +
+      // kind come from the record-only lastBonusClear payload. Each cell's `dist`
+      // is its RADIAL ring from the cluster/board centre so the wavefront engine
+      // washes the cells outward as one pulse (a board-wide flash, not a point-to-
+      // point cascade). singleColour cells take their own colour for the corona;
+      // all-clear cells use the prev grid's colour (the board is now empty). ---
+      const bonus = rs.lastBonusClear;
+      if (bonus && bonus.id !== lastBonusIdRef.current) {
+        lastBonusIdRef.current = bonus.id;
+        if (bonus.cells.length > 0) {
+          // Centroid (in grid space) -> world origin; ring distance = Chebyshev
+          // grid distance from the centroid so concentric rings light together.
+          let sumRow = 0;
+          let sumCol = 0;
+          for (const coord of bonus.cells) {
+            sumRow += Math.floor(coord / COLS);
+            sumCol += coord % COLS;
+          }
+          const cRow = sumRow / bonus.cells.length;
+          const cCol = sumCol / bonus.cells.length;
+          const cells = bonus.cells.map((coord) => {
+            const row = Math.floor(coord / COLS);
+            const col = coord % COLS;
+            const dist = Math.round(
+              Math.max(Math.abs(row - cRow), Math.abs(col - cCol)),
+            );
+            // single-colour: tint by the surviving cell's own colour; all-clear:
+            // the cell is gone, so fall back to a bright white-ish corona (the
+            // bloom). Prefer the live grid, then the pre-clear grid.
+            const liveColour = rs.grid[row]?.[col] ?? null;
+            const wasColour = liveColour ?? prevGrid?.[row]?.[col] ?? null;
+            const colour =
+              bonus.kind === "allClear"
+                ? ([3.4, 3.4, 3.6] as const)
+                : wasColour === null
+                  ? cellCoronaRgb(0)
+                  : cellCoronaRgb(wasColour);
+            return {
+              position: [cellX(col), cellY(row), 0] as [number, number, number],
+              dist,
+              colour,
+            };
+          });
+          pendingBonusesRef.current.push({
+            kind: bonus.kind,
+            cells,
+            origin: [cellX(cCol), cellY(cRow), 0],
           });
         }
       }
@@ -342,6 +414,46 @@ export function Scene3D({
       }
     }
     pendingWavefrontsRef.current.length = 0;
+
+    // Flush any queued board-state BONUS washes. Reuses the chain wavefront
+    // engine, but each kind gets its OWN surge style + intensity so the two
+    // bonuses are visually DISTINCT and clearly bigger than a normal clear:
+    //   - singleColour: a saturated warm GOLD/amber colour-wash pulse over the
+    //     surviving single-colour cells (boosted intensity, ~1.3x chain).
+    //   - allClear: the biggest, most celebratory moment — a full-board WHITE
+    //     bloom + a forced shockwave (intensity ~1.6x chain). The radial `dist`
+    //     ripple makes the bloom expand from the board centre.
+    // No strobe: this rides the same gentle ignite->rise->fade envelope as the
+    // chain cascade (a11y — single swell per event, not a flicker). ---
+    if (settings.bonusEnabled && wavefrontRef.current) {
+      for (const b of pendingBonusesRef.current) {
+        const style =
+          b.kind === "allClear" ? ALL_CLEAR_SURGE : SINGLE_COLOUR_SURGE;
+        const intensity =
+          (b.kind === "allClear" ? 1.6 : 1.3) * settings.chainIntensity;
+        wavefrontRef.current.seed({
+          cells: b.cells,
+          origin: b.origin,
+          msPerRing: settings.chainSpeed,
+          intensity,
+          style,
+          // all-clear ALWAYS gets the climax shockwave (it's the big payoff);
+          // single-colour follows the user's shockwave setting.
+          shockwave: b.kind === "allClear" ? true : settings.shockwaveEnabled,
+        });
+        // Per-cell sparkle via the shared burst pool so the wash also throws
+        // particles (coverage preserved, budget capped — same model as chains).
+        if (settings.burstEnabled && burstsRef.current && b.cells.length > 0) {
+          const positions = b.cells.map((c) => c.position);
+          const budget = Math.min(
+            settings.burstCap,
+            Math.max(settings.burstPerCell, Math.round(b.cells.length * 3)),
+          );
+          burstsRef.current.spawn(positions, budget);
+        }
+      }
+    }
+    pendingBonusesRef.current.length = 0;
 
     // Flush any queued hard-drop SLAMS (PART 3). A spark/dust puff at the impact
     // row (reusing the burst pool) plus a screen-shake kick that decays. The
@@ -567,8 +679,12 @@ export function Scene3D({
       )}
 
       {/* Chain-clear travelling wavefront (Phase 3; pooled; fires once per
-          new lastChainClear.id, radiating outward by BFS distance). */}
-      {settings.chainEnabled && <ChainWavefront ref={wavefrontRef} />}
+          new lastChainClear.id, radiating outward by BFS distance). Also drives
+          the board-state BONUS washes (single-colour / all-clear), so it mounts
+          when EITHER the chain cascade or the bonus celebration is enabled. */}
+      {(settings.chainEnabled || settings.bonusEnabled) && (
+        <ChainWavefront ref={wavefrontRef} />
+      )}
 
       {/* In-canvas next-piece preview dock (top-left gutter). */}
       {settings.previewEnabled && <PreviewDock queue={queue} settings={settings} />}
