@@ -14,10 +14,15 @@ import type { BoardPalette } from "../skins/skins";
 export function GameCanvas({
   controller,
   palette,
+  skinId,
 }: {
   controller: GameController;
   /** Active skin's board palette, forwarded to the renderer for skin recolour. */
   palette?: BoardPalette;
+  /** Active skin id, forwarded so the renderer can pick the per-skin cell shape. */
+  skinId?: string;
 }) {
-  return <ThreeRenderer controller={controller} palette={palette} />;
+  return (
+    <ThreeRenderer controller={controller} palette={palette} skinId={skinId} />
+  );
 }

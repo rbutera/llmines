@@ -116,10 +116,14 @@ function AutoFitCamera({
 export function ThreeRenderer({
   controller,
   palette = SKIN_NEON.board,
+  skinId = SKIN_NEON.id,
 }: {
   controller: GameController;
   /** Active skin's board palette (canvas bg + cell colours). Defaults to neon. */
   palette?: BoardPalette;
+  /** Active skin id — drives the per-skin cell SHAPE motif (sphere/X vs skin2's
+      distinct shapes). Defaults to neon so existing callers/tests are unaffected. */
+  skinId?: string;
 }) {
   const settings = useVisualSettings();
   const [panelOpen, setPanelOpen] = useState(false);
@@ -219,6 +223,7 @@ export function ThreeRenderer({
           settings={settings}
           beatPhaseRef={beatPhaseRef}
           palette={palette}
+          skinId={skinId}
         />
 
         {/* Bloom EffectComposer DISABLED: a postprocessing composer writes an

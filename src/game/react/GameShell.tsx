@@ -553,6 +553,7 @@ export function GameShell() {
                 <GameCanvas
                   controller={controller}
                   palette={skinSwitch.board}
+                  skinId={skinSwitch.skin.id}
                 />
                 {phase === "playing" && <ScoreFx score={score} />}
               </div>

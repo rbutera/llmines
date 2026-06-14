@@ -52,6 +52,15 @@ export interface CascadeSeed {
   style: SurgeStyle;
   /** Whether to spawn the climax shockwave ring. */
   shockwave: boolean;
+  /**
+   * Optional lifetime multiplier on each cell's RISE+FADE (and the shockwave
+   * life), so a board-state BONUS lingers longer + reads as a bigger, slower
+   * celebratory swell than a normal per-cell chain shatter. Default 1 (the chain
+   * cascade's snappy timing). Clamped to >= 1 so it can only lengthen, never
+   * strobe-shorten (a11y). The dist-ring delay is unaffected, so the wavefront
+   * still travels at `msPerRing`; only the per-cell glow holds longer.
+   */
+  lifeScale?: number;
 }
 
 export interface ChainWavefrontHandle {
@@ -83,6 +92,8 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
       const elapsed = new Float32Array(MAX_FLASHES); // s since seeded
       const total = new Float32Array(MAX_FLASHES); // lifetime (0 = idle)
       const peak = new Float32Array(MAX_FLASHES); // intensity scale
+      const rise = new Float32Array(MAX_FLASHES); // per-slot RISE seconds
+      const fade = new Float32Array(MAX_FLASHES); // per-slot FADE seconds
       const px = new Float32Array(MAX_FLASHES);
       const py = new Float32Array(MAX_FLASHES);
       const pz = new Float32Array(MAX_FLASHES);
@@ -94,7 +105,23 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
       const kr = new Float32Array(MAX_FLASHES);
       const kg = new Float32Array(MAX_FLASHES);
       const kb = new Float32Array(MAX_FLASHES);
-      return { delay, elapsed, total, peak, px, py, pz, cr, cg, cb, kr, kg, kb };
+      return {
+        delay,
+        elapsed,
+        total,
+        peak,
+        rise,
+        fade,
+        px,
+        py,
+        pz,
+        cr,
+        cg,
+        cb,
+        kr,
+        kg,
+        kb,
+      };
     }, []);
 
     // Shockwave ring state.
@@ -123,6 +150,11 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
         seed(s) {
           if (s.cells.length === 0) return;
           const ring = Math.max(0, s.msPerRing) / 1000; // seconds per dist ring
+          // Lifetime multiplier (>= 1): a board-state bonus lingers longer than a
+          // snappy chain shatter. Clamped so it can only lengthen (a11y).
+          const life = Math.max(1, s.lifeScale ?? 1);
+          const rise = RISE * life;
+          const fade = FADE * life;
           let maxDist = 0;
           for (const c of s.cells) {
             const i = nextSlot.current;
@@ -131,8 +163,10 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
             // ignite window so the origin reads as winding up then bursting.
             fx.delay[i] = IGNITE + c.dist * ring;
             fx.elapsed[i] = 0;
-            fx.total[i] = IGNITE + c.dist * ring + RISE + FADE;
+            fx.total[i] = IGNITE + c.dist * ring + rise + fade;
             fx.peak[i] = s.intensity;
+            fx.rise[i] = rise;
+            fx.fade[i] = fade;
             fx.px[i] = c.position[0];
             fx.py[i] = c.position[1];
             fx.pz[i] = c.position[2] + CELL * 0.06;
@@ -156,7 +190,7 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
             // by an absurd amount (still clearly bigger for bigger clears).
             const reach = Math.min(maxDist, 14);
             sw.elapsed[i] = -(IGNITE + maxDist * ring); // negative => waits
-            sw.total[i] = SHOCK_LIFE;
+            sw.total[i] = SHOCK_LIFE * life;
             sw.maxR[i] = CELL * (3 + reach * 1.6);
             sw.px[i] = s.origin[0];
             sw.py[i] = s.origin[1];
@@ -206,6 +240,10 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
         }
         const delay = fx.delay[i]!;
         const since = e - delay;
+        // Per-slot RISE/FADE (seeded; a bonus stretches them via lifeScale). Fall
+        // back to the module defaults only if a slot somehow lacks them.
+        const riseI = fx.rise[i]! > 0 ? fx.rise[i]! : RISE;
+        const fadeI = fx.fade[i]! > 0 ? fx.fade[i]! : FADE;
         // Brightness envelope: 0 before the front arrives, fast RISE to a
         // white-hot peak, then a longer super-saturated FADE (the shatter glow).
         let level: number;
@@ -230,11 +268,11 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
             color.setRGB(b * fx.kr[i]!, b * fx.kg[i]!, b * fx.kb[i]!),
           );
           continue;
-        } else if (since < RISE) {
-          level = since / RISE;
+        } else if (since < riseI) {
+          level = since / riseI;
           hot = 1; // white-hot at the leading edge
         } else {
-          const f = (since - RISE) / FADE; // 0..1 over the fade
+          const f = (since - riseI) / fadeI; // 0..1 over the fade
           level = Math.max(0, 1 - f * f); // ease-out (lingers bright then drops)
           hot = Math.max(0, 1 - f * 2.2); // cools to the corona colour fast
         }
