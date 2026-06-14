@@ -140,6 +140,15 @@ export function useVisualSettings(): VisualSettings {
       slamIntensity: { value: initial.slamIntensity, min: 0, max: 4, step: 0.05 },
       slamShake: { value: initial.slamShake, min: 0, max: 0.6, step: 0.01 },
     }),
+    "Column highlight": folder({
+      columnHighlightEnabled: { value: initial.columnHighlightEnabled },
+      columnHighlightOpacity: {
+        value: initial.columnHighlightOpacity,
+        min: 0,
+        max: 0.5,
+        step: 0.01,
+      },
+    }),
     Audio: folder({
       musicVolume: { value: initial.musicVolume, min: 0, max: 1, step: 0.01 },
     }),
@@ -191,6 +200,10 @@ export function useVisualSettings(): VisualSettings {
     slamEnabled: values.slamEnabled ?? DEFAULT_SETTINGS.slamEnabled,
     slamIntensity: values.slamIntensity ?? DEFAULT_SETTINGS.slamIntensity,
     slamShake: values.slamShake ?? DEFAULT_SETTINGS.slamShake,
+    columnHighlightEnabled:
+      values.columnHighlightEnabled ?? DEFAULT_SETTINGS.columnHighlightEnabled,
+    columnHighlightOpacity:
+      values.columnHighlightOpacity ?? DEFAULT_SETTINGS.columnHighlightOpacity,
     musicVolume: values.musicVolume ?? DEFAULT_SETTINGS.musicVolume,
   };
 
@@ -238,6 +251,8 @@ export function useVisualSettings(): VisualSettings {
     settings.slamEnabled,
     settings.slamIntensity,
     settings.slamShake,
+    settings.columnHighlightEnabled,
+    settings.columnHighlightOpacity,
     settings.musicVolume,
   ]);
 

@@ -22,6 +22,7 @@ import { hudHueForSkin } from "../theme/tokens";
 import { GameCanvas } from "./GameCanvas";
 import { VideoBackdrop } from "./VideoBackdrop";
 import { ScoreFx } from "./ScoreFx";
+import { BonusText } from "./BonusText";
 import { GameOverView, PauseOverlay, ControlsOverlay } from "./hud/overlays";
 import { PlayHud, StartView } from "./hud/screens";
 import { LeaderboardOverlay, UsernameSelect } from "./hud/account-screens";
@@ -556,6 +557,10 @@ export function GameShell() {
                   skinId={skinSwitch.skin.id}
                 />
                 {phase === "playing" && <ScoreFx score={score} />}
+                {/* BONUS TEXT — "SINGLE COLOUR!" / "ALL CLEAR!" celebration banner,
+                    fired once per board-state bonus event. Subscribes to the
+                    controller itself (keeps the shell edit minimal). */}
+                {phase === "playing" && <BonusText controller={controller} />}
               </div>
             </div>
           </div>

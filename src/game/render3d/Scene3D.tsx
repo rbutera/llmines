@@ -16,6 +16,7 @@ import { SweepBar } from "./SweepBar";
 import { BackgroundField } from "./BackgroundField";
 import { Bursts, type BurstHandle } from "./Bursts";
 import { ChainWavefront, type ChainWavefrontHandle } from "./ChainWavefront";
+import { ColumnHighlight } from "./ColumnHighlight";
 import { PreviewDock } from "./PreviewDock";
 import { DropShell, type DropShellHandle } from "./DropShell";
 import {
@@ -637,6 +638,18 @@ export function Scene3D({
           alpha. (Lumines Arise: board floats on the video.) */}
 
       <CellGrid opacity={settings.gridOpacity} color={palette?.darkEdge} />
+
+      {/* CURRENT-COLUMN HIGHLIGHT: a soft full-height wash behind the two columns
+          the active piece occupies (a landing indicator). Driven from the live
+          snapshot in its own useFrame; off when no active piece / game over. Sits
+          behind the cubes so the blocks render on top. */}
+      {settings.columnHighlightEnabled && (
+        <ColumnHighlight
+          snapRef={snapRef}
+          opacity={settings.columnHighlightOpacity}
+          color={palette?.gem}
+        />
+      )}
 
       {/* Settled stack. Calm/inert by default; cells the sweep is about to clear
           (c.marked) get the bright pulse so the to-clear read is unmistakable. */}

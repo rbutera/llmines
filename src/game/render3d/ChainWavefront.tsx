@@ -94,6 +94,7 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
       const peak = new Float32Array(MAX_FLASHES); // intensity scale
       const rise = new Float32Array(MAX_FLASHES); // per-slot RISE seconds
       const fade = new Float32Array(MAX_FLASHES); // per-slot FADE seconds
+      const dist = new Float32Array(MAX_FLASHES); // BFS ring (0 = origin gem)
       const px = new Float32Array(MAX_FLASHES);
       const py = new Float32Array(MAX_FLASHES);
       const pz = new Float32Array(MAX_FLASHES);
@@ -112,6 +113,7 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
         peak,
         rise,
         fade,
+        dist,
         px,
         py,
         pz,
@@ -167,6 +169,7 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
             fx.peak[i] = s.intensity;
             fx.rise[i] = rise;
             fx.fade[i] = fade;
+            fx.dist[i] = c.dist;
             fx.px[i] = c.position[0];
             fx.py[i] = c.position[1];
             fx.pz[i] = c.position[2] + CELL * 0.06;
@@ -184,20 +187,32 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
           // peak radius + the global swell with the component reach so a big gem
           // feels huge. Delayed to coincide with the furthest cell's shatter.
           if (s.shockwave) {
-            const i = nextShock.current;
-            nextShock.current = (nextShock.current + 1) % MAX_SHOCKS;
-            // radius grows with reach but is capped so it never exceeds the well
-            // by an absurd amount (still clearly bigger for bigger clears).
             const reach = Math.min(maxDist, 14);
-            sw.elapsed[i] = -(IGNITE + maxDist * ring); // negative => waits
-            sw.total[i] = SHOCK_LIFE * life;
-            sw.maxR[i] = CELL * (3 + reach * 1.6);
-            sw.px[i] = s.origin[0];
-            sw.py[i] = s.origin[1];
-            sw.pz[i] = s.origin[2] + CELL * 0.04;
-            sw.r[i] = s.style.shock[0];
-            sw.g[i] = s.style.shock[1];
-            sw.b[i] = s.style.shock[2];
+            // Spawn one shockwave ring in the next free slot.
+            const ringAt = (
+              waitFor: number,
+              radius: number,
+              lifeMul: number,
+            ): void => {
+              const i = nextShock.current;
+              nextShock.current = (nextShock.current + 1) % MAX_SHOCKS;
+              sw.elapsed[i] = -waitFor; // negative => waits before expanding
+              sw.total[i] = SHOCK_LIFE * life * lifeMul;
+              sw.maxR[i] = radius;
+              sw.px[i] = s.origin[0];
+              sw.py[i] = s.origin[1];
+              sw.pz[i] = s.origin[2] + CELL * 0.04;
+              sw.r[i] = s.style.shock[0];
+              sw.g[i] = s.style.shock[1];
+              sw.b[i] = s.style.shock[2];
+            };
+            // IGNITION ring: a fast, tight ring at the gem the instant the surge
+            // releases — the chain reaction visibly "kicks off" from the source.
+            ringAt(IGNITE, CELL * (1.4 + reach * 0.25), 0.55);
+            // CLIMAX ring: the big pressure wave, timed to the furthest cell's
+            // shatter — radius + life grow with the flood's reach so a long chain
+            // pays off with a bigger, statelier final ring.
+            ringAt(IGNITE + maxDist * ring, CELL * (3 + reach * 1.6), 1);
           }
           // Stage a global bloom-swell sized by the clear (read by the host).
           // Bigger reach => bigger swell; capped at 1.
@@ -248,16 +263,27 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
         // white-hot peak, then a longer super-saturated FADE (the shatter glow).
         let level: number;
         let hot: number; // 0..1 "how white-hot" — peaks at the leading edge
+        // Origin EMPHASIS: the gem cell (dist 0) is the source of the chain
+        // reaction — it ignites hardest + pops biggest so the flood clearly
+        // ERUPTS from the gem rather than every cell lighting evenly. Drives a
+        // brighter charge, a bigger burst, and a hotter core on the origin.
+        const cellDist = fx.dist[i] ?? 0;
+        const isOrigin = cellDist === 0;
         if (since <= 0) {
-          // IGNITE anticipation: the origin (dist 0) charges before release.
-          // Only dist-0 cells are in this window (others arrive later); give a
-          // faint inward pre-glow so the gem reads as winding up.
+          // IGNITE anticipation: the origin (dist 0) charges before release —
+          // an unmistakable wind-up FLARE at the gem so the eye is drawn to the
+          // source the instant before the front rips outward.
           const charge = Math.max(0, 1 + since / IGNITE); // 0..1 across ignite
-          level = charge * 0.35;
+          // Brighter charge than before (was *0.35), and the origin charges even
+          // harder so the gem reads as overloading right before it bursts.
+          level = charge * (isOrigin ? 0.85 : 0.45);
           hot = charge;
-          // a slight inward PULL: scale dips below 1 as it charges
-          const pull = 0.85 + 0.15 * (1 - charge);
-          const sc = (CELL - 0.06) * pull * (0.4 + 0.4 * level);
+          // a slight inward PULL: scale dips below 1 as it charges, then the
+          // origin swells UP toward release (winding up + about to detonate).
+          const pull = isOrigin
+            ? 0.8 + 0.6 * charge
+            : 0.85 + 0.15 * (1 - charge);
+          const sc = (CELL - 0.06) * pull * (0.4 + 0.6 * level);
           dummy.position.set(fx.px[i]!, fx.py[i]!, fx.pz[i]!);
           dummy.scale.setScalar(level <= 0.001 ? 0.0001 : sc);
           dummy.updateMatrix();
@@ -277,10 +303,24 @@ export const ChainWavefront = forwardRef<ChainWavefrontHandle>(
           hot = Math.max(0, 1 - f * 2.2); // cools to the corona colour fast
         }
         const peak = fx.peak[i]!;
-        const b = level * peak;
+        // LEADING-EDGE comet head: cells flash EXTRA bright in the brief window
+        // right as the surge front arrives (the rise + the first sliver of the
+        // fade), so the travelling front reads as a hot wave racing along the
+        // flooded region rather than each cell popping in isolation. The boost
+        // tapers off fast, leaving the cooler corona trail behind the front.
+        const sinceArrive = Math.max(0, since);
+        const edgeWindow = riseI + fadeI * 0.28;
+        const edge =
+          sinceArrive < edgeWindow ? 1 - sinceArrive / edgeWindow : 0;
+        const edgeBoost = 1 + edge * edge * 0.9;
+        // Origin core stays hotter + brighter through its whole life.
+        const originBoost = isOrigin ? 1.5 : 1;
+        const b = level * peak * edgeBoost * originBoost;
         // Scale-pop: snaps up past 1 at the leading edge then settles as it fades
-        // (the per-cell "shatter" pop).
-        const pop = 0.6 + 1.05 * level + 0.35 * hot;
+        // (the per-cell "shatter" pop). The travelling edge + the origin pop
+        // bigger so the wave has a visible crest.
+        const pop =
+          0.6 + 1.05 * level + 0.35 * hot + 0.5 * edge + (isOrigin ? 0.4 : 0);
         const scale = (CELL - 0.06) * pop;
         dummy.position.set(fx.px[i]!, fx.py[i]!, fx.pz[i]!);
         dummy.scale.setScalar(level <= 0.001 ? 0.0001 : scale);
