@@ -136,6 +136,15 @@ export interface VisualSettings {
   /** Peak screen-shake amplitude (world units) on a hard-drop landing. */
   slamShake: number;
 
+  // --- Current-column highlight (render-only position indicator) ------------
+  /**
+   * Lighten the column(s) the active piece occupies as a soft vertical wash, so
+   * the player can read where the piece will land. Default ON.
+   */
+  columnHighlightEnabled: boolean;
+  /** Peak opacity (0..1) of the current-column wash. Subtle by default. */
+  columnHighlightOpacity: number;
+
   // --- Audio --------------------------------------------------------------
   /**
    * Music volume (0..1) for the backing track, wired to the `<audio>` element's
@@ -228,6 +237,12 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   // up so the landing punches instead of sprinkling faint dust.
   slamIntensity: 2.6,
   slamShake: 0.5,
+
+  // Current-column highlight: a subtle full-height wash behind the two columns
+  // the active piece occupies, so where it'll land reads at a glance. Calm + low
+  // opacity so it never competes with the blocks (a11y: a slow breathe, no flash).
+  columnHighlightEnabled: true,
+  columnHighlightOpacity: 0.16,
 
   // Audio — backing-track loudness. Half volume by default.
   musicVolume: 0.5,
