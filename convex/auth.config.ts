@@ -23,8 +23,15 @@ export default {
   providers: [
     {
       type: "customJwt" as const,
-      applicationID: process.env.CONVEX_AUTH_APPLICATION_ID ?? "convex",
-      issuer: process.env.CONVEX_AUTH_ISSUER_DOMAIN ?? "https://llmines.e8n.dev",
+      // Pinned to the exact values the Worker signer mints (see
+      // src/server/convex-token-constants.ts CONVEX_TOKEN_AUDIENCE / _ISSUER) and
+      // the locked Convex deployment env (CONVEX_AUTH_APPLICATION_ID=convex,
+      // CONVEX_AUTH_ISSUER_DOMAIN=https://llmines.e8n.dev). Literal, not
+      // env-with-fallback: an env-driven value here could drift from the signer's
+      // hard-coded aud/iss and fail validation silently. If these ever change,
+      // change them in BOTH places (and the deployment env) together.
+      applicationID: "convex",
+      issuer: "https://llmines.e8n.dev",
       jwks: JWKS_DATA_URI,
       algorithm: "RS256" as const,
     },
