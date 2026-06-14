@@ -22,6 +22,22 @@ function isBright(cell: 0 | 1): boolean {
   return cell === 0;
 }
 
+/**
+ * FIX A regression seam: the bright/dark verdict for a preview SLOT, by its local
+ * row/col within the 2x2 piece (r=0 top, r=1 bottom; c=0 left, c=1 right). This is
+ * the EXACT mapping the dock renders (`cells[r][c]`), exported pure so a test can
+ * lock it to the board's active-piece mapping (Scene3D `setActive` reads
+ * `cells[r][c]` for the same r,c) and guarantee no per-slot colour swap — every
+ * preview slot shows the TRUE colour of its queued piece's cell at that position.
+ */
+export function previewSlotIsBright(
+  cells: GeneratedPiece["cells"],
+  r: 0 | 1,
+  c: 0 | 1,
+): boolean {
+  return isBright(cells[r][c]);
+}
+
 /** World-space gutter geometry (to the LEFT of the well). */
 export const PREVIEW_SCALE = 0.42; // mini-cube size relative to a board cell
 const PREVIEW_CELL = CELL * PREVIEW_SCALE;
@@ -39,9 +55,13 @@ const PREVIEW_STEP_Y = PREVIEW_CELL * 2 + CELL * 0.45;
 export function PreviewDock({
   queue,
   settings,
+  skinId,
 }: {
   queue: GeneratedPiece[];
   settings: VisualSettings;
+  /** Active skin id — so the preview's cell shapes match the board's per-skin
+      motif (sphere/X for skin1, diamond/ring for skin2). */
+  skinId?: string;
 }) {
   // Show the next PREVIEW_DEPTH pieces (the queue head spawns next).
   const shown = queue.slice(0, PREVIEW_DEPTH);
@@ -61,7 +81,6 @@ export function PreviewDock({
         return (
           <group key={`preview-${idx}`} scale={[PREVIEW_SCALE, PREVIEW_SCALE, PREVIEW_SCALE]}>
             {slots.map(({ r, c }) => {
-              const cell = cells[r][c];
               const x = PREVIEW_X / PREVIEW_SCALE + (c === 0 ? -CELL / 2 : CELL / 2);
               const y = baseY / PREVIEW_SCALE + (r === 0 ? CELL / 2 : -CELL / 2);
               return (
@@ -70,12 +89,18 @@ export function PreviewDock({
                   position={[x, y, 0]}
                   col={c}
                   cols={2}
-                  bright={isBright(cell)}
+                  bright={previewSlotIsBright(cells, r, c)}
                   settings={settings}
+                  // Match the board's per-skin cell shape so the preview reads as
+                  // the same world (sphere/X for skin1, diamond/ring for skin2).
+                  skinId={skinId}
                   // No beat breathe / heat on previews — keep them calm reference.
                   noBeat
                   // Flat 2D: previews are plain squares, no per-column shear/tilt.
                   flat
+                  // Boost the bright read so colour-0 reads light (not faint/dark)
+                  // in the calm preview — fixes the "preview colours look inverted".
+                  preview
                 />
               );
             })}

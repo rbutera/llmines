@@ -8,6 +8,7 @@ import { beatBreathe } from "../fx/beatFx";
 import type { VisualSettings } from "./settings";
 import { CELL, GAP } from "./layout";
 import { type BoardPalette, SKIN_NEON } from "../skins/skins";
+import { cellShapeForSkin } from "./cellShapes";
 
 /**
  * A single board cell rendered as a sheared 3D cube — the "Lumines Arise" 2.5D
@@ -75,6 +76,24 @@ export interface CubeProps {
    * to the neon (skin 1) palette so existing callers/tests are unaffected.
    */
   palette?: BoardPalette;
+  /**
+   * The active skin id — selects the per-cell SHAPE motif (see cellShapes.ts):
+   * skin 1 = glowing orb / inner X; skin 2 = faceted diamond / hollow ring. So
+   * the two skins read as visually distinct WORLDS, not just a recolour. Defaults
+   * to the neon (skin 1) orb/X motif so existing callers/tests are unaffected.
+   */
+  skinId?: string;
+  /**
+   * Preview-dock mode: render the cell so its TRUE colour reads unmistakably even
+   * without the board's bloom + beat emphasis. A bright (colour-0) cell on the
+   * board pops via bloom; in the calm flat preview the same cell would otherwise
+   * sit as a faint translucent box and could be misread as the DARK colour (the
+   * "preview colours look inverted" report). In preview mode the bright inner
+   * shape is driven brighter and the glass box made less transparent, so colour-0
+   * always reads light and colour-1 dark — faithful to the piece that spawns.
+   * Default false.
+   */
+  preview?: boolean;
 }
 
 /**
@@ -109,12 +128,19 @@ export function Cube({
   noBeat = false,
   flat = false,
   palette = SKIN_NEON.board,
+  skinId = SKIN_NEON.id,
+  preview = false,
 }: CubeProps) {
+  const motif = cellShapeForSkin(skinId);
   const leftRef = useRef<THREE.MeshStandardMaterial>(null);
   const rightRef = useRef<THREE.MeshStandardMaterial>(null);
   const coreRef = useRef<THREE.MeshStandardMaterial>(null);
   const gemRef = useRef<THREE.Mesh>(null);
   const gemMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  // Skin-2 inner-shape refs: the faceted bright DIAMOND (gently rotates) + its
+  // material (shares the bright emissive envelope with the orb path), and the
+  // dark RING material (shares the dark-core envelope with the inner-X bars).
+  const diamondRef = useRef<THREE.Mesh>(null);
 
   const size = CELL - GAP;
 
@@ -185,20 +211,33 @@ export function Cube({
         ? settings.markedPulse * (0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 7)))
         : 0;
 
+    // Preview cells render without the board's bloom + beat lift, so a bright
+    // (colour-0) cell would otherwise read faint and could be mistaken for the
+    // DARK colour. Lift the bright inner-shape + side-face emissive in preview so
+    // colour-0 unmistakably reads light (FIX A: "preview colours look inverted").
+    const previewFaceBoost = preview ? 0.55 : 0;
+    const previewCoreBoost = preview ? 0.9 : 0;
+
     if (bright) {
       const faceI =
         settings.brightFaceIntensity * breathe * settledScale +
         heat +
         gemBoost +
-        markedAdd;
+        markedAdd +
+        previewFaceBoost;
       if (leftRef.current) leftRef.current.emissiveIntensity = faceI;
       if (rightRef.current) rightRef.current.emissiveIntensity = faceI;
+      // The bright inner SHAPE (orb on skin 1, diamond on skin 2) shares this
+      // emissive envelope via coreRef, so swapping the mesh keeps the lighting.
       if (coreRef.current)
         coreRef.current.emissiveIntensity =
           settings.innerLightIntensity * breathe * settledScale +
           heat +
           gemBoost +
-          markedAdd;
+          markedAdd +
+          previewCoreBoost;
+      // Skin-2 diamond: a slow facet rotation so it reads as a gem, not a blob.
+      if (diamondRef.current) diamondRef.current.rotation.y = t * 0.6;
     } else {
       const faceI =
         settings.darkFaceIntensity * breathe * settledScale +
@@ -258,6 +297,14 @@ export function Cube({
 
   const coreR = size * 0.3;
 
+  // FIX A: in the preview, make the bright cell's glass body LESS transparent so
+  // colour-0 reads as a solid light block rather than a near-empty frame (which
+  // looked like the dark colour, the "inverted preview" report). On the board the
+  // translucent glass is kept (bloom + the orb carry the bright read there).
+  const glassOpacity = preview
+    ? Math.min(1, settings.glassOpacity + 0.45)
+    : settings.glassOpacity;
+
   return (
     <group position={position}>
       <mesh geometry={geom}>
@@ -290,7 +337,7 @@ export function Cube({
               attach="material-2"
               color="#cdeafe"
               transparent
-              opacity={settings.glassOpacity}
+              opacity={glassOpacity}
               depthWrite={false}
               metalness={0.6}
               roughness={0.15}
@@ -300,7 +347,7 @@ export function Cube({
               attach="material-3"
               color="#cdeafe"
               transparent
-              opacity={settings.glassOpacity}
+              opacity={glassOpacity}
               depthWrite={false}
               metalness={0.6}
               roughness={0.15}
@@ -310,7 +357,7 @@ export function Cube({
               attach="material-4"
               color="#d6f0ff"
               transparent
-              opacity={settings.glassOpacity}
+              opacity={glassOpacity}
               depthWrite={false}
               metalness={0.6}
               roughness={0.12}
@@ -320,7 +367,7 @@ export function Cube({
               attach="material-5"
               color="#cdeafe"
               transparent
-              opacity={settings.glassOpacity}
+              opacity={glassOpacity}
               depthWrite={false}
               metalness={0.6}
               roughness={0.15}
@@ -392,8 +439,10 @@ export function Cube({
         <Edges color={bright ? "#ffffff" : palette.darkEdge} />
       </mesh>
 
-      {/* Inner light orb — bright cells only. Axis-aligned, cell centre. */}
-      {bright && (
+      {/* Bright inner shape — skin 1 = glowing ORB (sphere); skin 2 = faceted
+          DIAMOND (octahedron, slowly rotating in useFrame). Both share `coreRef`
+          so the emissive breathe/heat/preview-boost envelope drives either one. */}
+      {bright && motif.bright === "orb" && (
         <mesh position={[0, 0, -size / 2]}>
           <sphereGeometry args={[coreR, 20, 20]} />
           <meshStandardMaterial
@@ -405,9 +454,25 @@ export function Cube({
           />
         </mesh>
       )}
+      {bright && motif.bright === "diamond" && (
+        <mesh ref={diamondRef} position={[0, 0, -size / 2]}>
+          <octahedronGeometry args={[size * 0.42, 0]} />
+          <meshStandardMaterial
+            ref={coreRef}
+            color="#f4fbff"
+            emissive="#f4fbff"
+            emissiveIntensity={settings.innerLightIntensity}
+            toneMapped={false}
+            metalness={0.45}
+            roughness={0.18}
+          />
+        </mesh>
+      )}
 
-      {/* Inner X — dark cells only. Two crossed thin bars at the cell centre. */}
-      {!bright && (
+      {/* Dark inner shape — skin 1 = inner X (two crossed bars); skin 2 = a hollow
+          RING (torus). Both use `darkCoreMat` so the dark-core emissive envelope
+          is shared. The ring's flat silhouette reads clearly distinct from the X. */}
+      {!bright && motif.dark === "x" && (
         <group position={[0, 0, -size / 2]}>
           <mesh material={darkCoreMat} rotation={[0, 0, Math.PI / 4]}>
             <boxGeometry args={[size * 0.6, size * 0.12, size * 0.12]} />
@@ -416,6 +481,11 @@ export function Cube({
             <boxGeometry args={[size * 0.6, size * 0.12, size * 0.12]} />
           </mesh>
         </group>
+      )}
+      {!bright && motif.dark === "ring" && (
+        <mesh material={darkCoreMat} position={[0, 0, -size / 2]}>
+          <torusGeometry args={[size * 0.26, size * 0.075, 12, 28]} />
+        </mesh>
       )}
 
       {/* Gem marker — special cells only (item 4). A SMALL diamond inlaid just in

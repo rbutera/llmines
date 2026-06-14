@@ -92,6 +92,7 @@ export function Scene3D({
   settings,
   beatPhaseRef,
   palette,
+  skinId,
 }: {
   controller: GameController;
   settings: VisualSettings;
@@ -100,6 +101,9 @@ export function Scene3D({
   /** Active skin's board palette (drives dark-cell + gem colours). Optional so
       existing callers/tests fall back to neon via Cube's default. */
   palette?: BoardPalette;
+  /** Active skin id — selects the per-skin cell SHAPE motif (sphere/X for skin1,
+      a distinct shape pair for skin2). Defaults to neon. */
+  skinId?: string;
 }) {
   const [settled, setSettled] = useState<SettledCellData[]>([]);
   const [active, setActive] = useState<ActiveCellData[]>([]);
@@ -427,33 +431,50 @@ export function Scene3D({
     // chain cascade (a11y — single swell per event, not a flicker). ---
     if (settings.bonusEnabled && wavefrontRef.current) {
       for (const b of pendingBonusesRef.current) {
-        const style =
-          b.kind === "allClear" ? ALL_CLEAR_SURGE : SINGLE_COLOUR_SURGE;
+        const isAllClear = b.kind === "allClear";
+        const style = isAllClear ? ALL_CLEAR_SURGE : SINGLE_COLOUR_SURGE;
+        // FIX B (perceptibility): board-state bonuses are RARE + the big payoff,
+        // so make them unmistakable — much brighter than a chain, a slower ring
+        // so the wave reads as a deliberate board-wide WASH, and a longer per-cell
+        // glow (lifeScale) so it lingers. All-clear is the biggest moment of all.
         const intensity =
-          (b.kind === "allClear" ? 1.6 : 1.3) * settings.chainIntensity;
+          (isAllClear ? 3.0 : 2.1) * settings.chainIntensity;
         wavefrontRef.current.seed({
           cells: b.cells,
           origin: b.origin,
-          msPerRing: settings.chainSpeed,
+          // Slower than a chain (longer, statelier sweep across the board).
+          msPerRing: settings.chainSpeed * (isAllClear ? 1.8 : 1.4),
           intensity,
           style,
+          // Linger: all-clear holds longest (the celebration), single-colour a
+          // touch longer than a chain. Only lengthens — never a strobe (a11y).
+          lifeScale: isAllClear ? 3.2 : 2.0,
           // all-clear ALWAYS gets the climax shockwave (it's the big payoff);
-          // single-colour follows the user's shockwave setting.
-          shockwave: b.kind === "allClear" ? true : settings.shockwaveEnabled,
+          // single-colour ALSO forces one so the bonus always reads as a board
+          // event, not just a recolour. (Was gated on the user shockwave toggle.)
+          shockwave: true,
         });
         // Per-cell sparkle via the shared burst pool so the wash also throws
-        // particles (coverage preserved, budget capped — same model as chains).
+        // particles. Bonuses get a FATTER budget than a chain (more particles per
+        // cell) so the celebration visibly showers the board.
         if (settings.burstEnabled && burstsRef.current && b.cells.length > 0) {
           const positions = b.cells.map((c) => c.position);
+          const perCell = isAllClear ? 6 : 4;
           const budget = Math.min(
             settings.burstCap,
-            Math.max(settings.burstPerCell, Math.round(b.cells.length * 3)),
+            Math.max(settings.burstPerCell, Math.round(b.cells.length * perCell)),
           );
           burstsRef.current.spawn(positions, budget);
         }
       }
+      // Only clear the queue once we actually had a wavefront to flush into, so a
+      // bonus queued on a frame before the wavefront mounted can't be silently
+      // swallowed (it stays pending until the next frame seeds it). When the bonus
+      // celebration is disabled, drop the queue (the user opted out).
+      pendingBonusesRef.current.length = 0;
+    } else if (!settings.bonusEnabled) {
+      pendingBonusesRef.current.length = 0;
     }
-    pendingBonusesRef.current.length = 0;
 
     // Flush any queued hard-drop SLAMS (PART 3). A spark/dust puff at the impact
     // row (reusing the burst pool) plus a screen-shake kick that decays. The
@@ -631,6 +652,7 @@ export function Scene3D({
           isGem={c.gem}
           marked={c.marked}
           palette={palette}
+          skinId={skinId}
         />
       ))}
 
@@ -652,6 +674,7 @@ export function Scene3D({
             isGem={c.gem}
             marked={false}
             palette={palette}
+            skinId={skinId}
           />
         ))}
       </group>
@@ -687,7 +710,9 @@ export function Scene3D({
       )}
 
       {/* In-canvas next-piece preview dock (top-left gutter). */}
-      {settings.previewEnabled && <PreviewDock queue={queue} settings={settings} />}
+      {settings.previewEnabled && (
+        <PreviewDock queue={queue} settings={settings} skinId={skinId} />
+      )}
     </group>
   );
 }
