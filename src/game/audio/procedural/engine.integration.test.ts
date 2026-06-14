@@ -1112,6 +1112,173 @@ describe("switchTrack (skin swap) on the manifest model", () => {
     expect(song1Tiers.every((p) => p.disposed)).toBe(true); // tier players freed — no leak
     expect(song1Sfx.every((p) => p.disposed)).toBe(true); // SFX voices freed — no leak
   });
+
+  it("WRAP STALL guard: switchTrack from a mid tier-crossfade resets tierFading synchronously (the new song's tier can build)", async () => {
+    // A switch can fire (onSongComplete -> switchTrack) while the OUTGOING song is mid
+    // tier-crossfade (tierFading=true). switchTrack must clear that latch SYNCHRONOUSLY,
+    // not lean on the post-`await` enterSegment — otherwise tierFading stays set across
+    // the whole async load window, and tierFading gates evaluateTier, so any boundary in
+    // that window freezes the new song's tier at the floor and it stalls on its intro.
+    const MIXED = {
+      version: "test-mixed",
+      songs: [
+        nTierManifest("song1", 4).songs[0]!,
+        nTierManifest("song2", 4).songs[0]!,
+      ],
+    };
+    const e = await freshEngineWith(MIXED);
+
+    // Put song1 INTO a tier crossfade: inject heat so the next boundary's evaluateTier
+    // jumps the tier up via swapTier (sets tierFading=true + schedules its FUTURE clear).
+    // Fire the boundary but stop the mock clock BEFORE that clear so tierFading stays
+    // TRUE — exactly the mid-fade state at the instant a terminal boundary swaps tracks.
+    e.__injectClears(12); // pin heat to 1.0 -> desired tier = top
+    const tb = Math.min(...mockState.pending.map((p) => p.time));
+    runDueUpTo(tb + 0.1); // run the boundary, NOT the swapTier clear (≈ tb + 0.42)
+    expect(e.getAudioState().tierFading).toBe(true); // mid tier crossfade
+
+    // Kick the switch; tierFading must be cleared SYNCHRONOUSLY (before the async load).
+    const switching = e.switchTrack({ id: "song2", base: "/audio/song2" });
+    expect(e.getAudioState().tierFading).toBe(false);
+    await switching;
+    await settle();
+
+    expect(e.getAudioState().tierFading).toBe(false);
+    expect(e.getAudioState().trackId).toBe("song2");
+    // and the new song advances (its tier builds + holds + steps forward).
+    const before = e.getAudioState().segmentIndex;
+    await earnAdvance(e);
+    expect(e.getAudioState().segmentIndex).toBeGreaterThan(before);
+  });
+
+  it("WRAP STALL: a wrapped song1 (song1->song2->song1) is FIELD-FOR-FIELD equivalent to a fresh song1, so it advances identically", async () => {
+    // The playtest stall is "after wrapping back to song1 it won't progress past the
+    // intro, though a FRESH song1 does". This compares the engine's progression-relevant
+    // state field-for-field between a fresh song1 and a wrapped song1 (driven via the real
+    // onSongComplete -> switchTrack re-entrancy). Any leaked/stale field that survives the
+    // wrap would show as a divergence here — and would be exactly what blocks the advance.
+    const TWO_SONG = {
+      version: "test-wrap-eq",
+      songs: [
+        nTierManifest("song1", 4).songs[0]!,
+        nTierManifest("song2", 4).songs[0]!,
+      ],
+    };
+    const trackFor = (id: string) => ({ id, base: `/audio/${id}` });
+
+    // The progression-relevant slice of getAudioState (gains depend on async ramps; the
+    // CONTROL fields below are what gate the advance).
+    type Ctl = {
+      segmentIndex: number;
+      tier: number;
+      tierCount: number;
+      transitionInFlight: boolean;
+      tierFading: boolean;
+      heat: number;
+    };
+    const ctl = (e: InteractiveAudioEngine): Ctl => {
+      const s = e.getAudioState();
+      return {
+        segmentIndex: s.segmentIndex,
+        tier: s.tier,
+        tierCount: s.tierCount,
+        transitionInFlight: s.transitionInFlight,
+        tierFading: s.tierFading,
+        heat: s.heat,
+      };
+    };
+
+    // (1) FRESH song1: capture the control state at the opening (heat reset).
+    const fresh = await freshEngineWith(TWO_SONG);
+    fresh.__decayPasses(2); // cool to the opening baseline
+    await settle();
+    const freshState = ctl(fresh);
+
+    // (2) WRAPPED song1: drive song1 -> song2 -> back to song1 via the real wiring.
+    const e = await freshEngineWith(TWO_SONG);
+    let next = "song2";
+    e.onSongComplete = () => {
+      const target = next;
+      next = target === "song1" ? "song2" : "song1";
+      void e.switchTrack(trackFor(target));
+    };
+    const completeSong = async (from: string) => {
+      for (let k = 0; k < 40; k++) {
+        await earnAdvance(e);
+        await settle();
+        if (e.getAudioState().trackId !== from) return;
+      }
+      throw new Error(`song ${from} never completed/swapped`);
+    };
+    await completeSong("song1");
+    await completeSong("song2");
+    expect(e.getAudioState().trackId).toBe("song1"); // wrapped back to song1
+    e.__decayPasses(2); // cool to the SAME opening baseline as the fresh engine
+    await settle();
+    const wrappedState = ctl(e);
+
+    // The control state that gates the advance MUST match the fresh opening — no leaked
+    // tierFading / transitionInFlight / stuck tier from the wrap.
+    expect(wrappedState).toEqual(freshState);
+  });
+
+  it("WRAP STALL repro: completing song1 -> song2 -> back to song1 leaves song1 advancing again", async () => {
+    // Playtest bug (Rai): the game has TWO songs; completing a song cycles the skin
+    // (song1 -> song2 -> wraps back to song1, infinite loop). After the wrap BACK to
+    // song1 the progression STALLS on song1's intro — it never advances to the next
+    // section, even though a FRESH song1 start advances fine.
+    //
+    // The host (GameShell) wires onSongComplete -> switchTrack to the OTHER song. That
+    // call lands SYNCHRONOUSLY inside complete(), which runs inside advanceSegment's
+    // terminal branch — so the swap is re-entrant w.r.t. the in-flight advance. The
+    // repro mirrors that wiring exactly (a 2-song manifest, the skin cycle in the
+    // callback) and drives both songs to completion, then asserts song1 can advance.
+    const TWO_SONG = {
+      version: "test-wrap",
+      songs: [
+        nTierManifest("song1", 4).songs[0]!,
+        nTierManifest("song2", 4).songs[0]!,
+      ],
+    };
+    const e = await freshEngineWith(TWO_SONG);
+
+    // Mirror GameShell's skin cycle: each completion swaps to the OTHER song's track.
+    const trackFor = (id: string) => ({ id, base: `/audio/${id}` });
+    let next = "song2";
+    e.onSongComplete = () => {
+      const target = next;
+      next = target === "song1" ? "song2" : "song1";
+      void e.switchTrack(trackFor(target));
+    };
+
+    // Drive a whole song to completion: earn an advance off every segment, the last of
+    // which fires onSongComplete -> switchTrack. Returns once the trackId has changed.
+    const completeSong = async (from: string) => {
+      for (let k = 0; k < 40; k++) {
+        await earnAdvance(e);
+        await settle(); // let the re-entrant switchTrack's intro load resolve
+        if (e.getAudioState().trackId !== from) return;
+      }
+      throw new Error(`song ${from} never completed/swapped`);
+    };
+
+    // song1 -> song2 (first completion + swap).
+    expect(e.getAudioState().trackId).toBe("song1");
+    await completeSong("song1");
+    expect(e.getAudioState().trackId).toBe("song2");
+
+    // song2 -> wrap BACK to song1 (second completion + swap).
+    await completeSong("song2");
+    expect(e.getAudioState().trackId).toBe("song1");
+    expect(e.getAudioState().segmentIndex).toBe(0); // re-seated at song1's intro
+
+    // THE BUG: on the wrapped song1, an earned advance must still move the index off
+    // the intro. A fresh song1 advances here; the wrapped song1 must too.
+    const before = e.getAudioState().segmentIndex;
+    await earnAdvance(e);
+    expect(e.getAudioState().transitionInFlight).toBe(false); // not stuck mid-advance
+    expect(e.getAudioState().segmentIndex).toBeGreaterThan(before); // progressed past intro
+  });
 });
 
 // ── N-tier generalization (the whole point of the N-tier work) ───────────────────

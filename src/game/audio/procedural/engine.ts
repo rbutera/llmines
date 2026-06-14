@@ -747,6 +747,7 @@ export class InteractiveAudioEngine {
     maxSegmentReached: number;
     segmentCount: number;
     transitionInFlight: boolean;
+    tierFading: boolean;
     heat: number;
     tier: Tier;
     armedTier: Tier;
@@ -794,6 +795,7 @@ export class InteractiveAudioEngine {
       maxSegmentReached: this.maxSegmentReached,
       segmentCount: this.segments.length,
       transitionInFlight: this.transitionInFlight,
+      tierFading: this.tierFading,
       heat: this.heat,
       tier: this.tier,
       armedTier: this.armedTier,
@@ -2083,6 +2085,16 @@ export class InteractiveAudioEngine {
     const gen = ++this.loadGen;
     this.transitionToken++;
     this.transitionInFlight = false;
+    // Reset the progression LATCHES synchronously, the same hygiene resetForNewGame does.
+    // The outgoing song can be mid tier-crossfade (tierFading=true) or top-held
+    // (topHeldSinceBoundary=true) at the instant a terminal advance fires onSongComplete
+    // -> switchTrack. switchTrack otherwise relies on the post-`await` enterSegment to
+    // clear tierFading, leaving it set across the whole async load window; tierFading
+    // gates evaluateTier, so any boundary in that window (or a leaked latch on entry)
+    // would freeze the new song's tier build and stall it on the intro. Clearing them
+    // here makes the swap a clean progression reset regardless of the outgoing state.
+    this.tierFading = false;
+    this.topHeldSinceBoundary = false;
     this.clearScheduled();
 
     // The old (outgoing) per-segment SFX pools. The switch OWNS retiring this bank: it
