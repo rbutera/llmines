@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   type JWK,
   exportPKCS8,
@@ -7,6 +8,7 @@ import {
 } from "jose";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  CONVEX_JWKS,
   CONVEX_TOKEN_AUDIENCE,
   CONVEX_TOKEN_ISSUER,
   CONVEX_TOKEN_KID,
@@ -73,6 +75,24 @@ describe("mintConvexToken", () => {
     const { payload } = await jwtVerify(token, key);
     expect(payload.name).toBe("Player");
     expect(payload.name).toBeTruthy();
+  });
+
+  it("the data: URI JWKS in convex/auth.config.ts matches CONVEX_JWKS (no drift)", () => {
+    // convex/auth.config.ts is bundled separately by `convex deploy` and cannot
+    // import from src/, so it embeds the key as a base64 data: URI literal. This
+    // guard asserts it decodes to exactly the shared CONVEX_JWKS the /api/auth/jwks
+    // route serves, so the two key sources can never silently diverge.
+    const src = readFileSync(
+      new URL("../../convex/auth.config.ts", import.meta.url),
+      "utf8",
+    );
+    const m = /data:application\/json;base64,([A-Za-z0-9+/=]+)/.exec(src);
+    const b64 = m?.[1];
+    expect(b64, "data: URI not found in auth.config.ts").toBeTruthy();
+    const decoded = JSON.parse(
+      Buffer.from(b64!, "base64").toString("utf8"),
+    ) as unknown;
+    expect(decoded).toEqual(CONVEX_JWKS);
   });
 
   it("throws when the signing key is not configured", async () => {
