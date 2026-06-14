@@ -56,6 +56,38 @@ export const GRAVITY_INTERVAL_MS = 700;
 /** Soft-drop gravity interval (ms) while soft-drop is engaged. */
 export const SOFT_DROP_INTERVAL_MS = 60;
 
+// --- Natural-gravity easing (per-piece acceleration) -----------------------
+//
+// A freshly placed piece's NATURAL fall accelerates the longer it has been
+// falling: slow at first (deliberate placement), ramping to meaningfully faster
+// the deeper it gets — real-gravity / Lumines momentum instead of a flat tick.
+// The effective per-row interval decays smoothly from a START value toward a
+// FLOOR with time-constant TAU:
+//
+//   interval(fallMs) = FLOOR + (START - FLOOR) * exp(-fallMs / TAU)
+//
+// The ramp RESETS per piece (each new spawn starts at START again) and applies
+// to NATURAL gravity ONLY — soft-drop ({@link SOFT_DROP_INTERVAL_MS}) and
+// hard-drop stay crisp and distinct, untouched by the easing. The accumulated
+// fall time only grows while a piece is actually falling under natural gravity
+// (never during the spawn hold or while soft-drop is engaged).
+//
+// `GRAVITY_INTERVAL_MS` (700ms) remains the nominal/legacy cadence and the
+// test-mode constant; the eased curve straddles it — a touch slower up top,
+// well below it once a piece has been falling a while.
+
+/** First-row interval for a fresh piece — a touch slower than the legacy 700ms,
+ * so initial placement feels deliberate. */
+export const GRAVITY_EASE_START_MS = 760;
+/** Floor the eased interval decays toward (fastest natural fall, ~2.7x the
+ * start speed). Stays comfortably above {@link SOFT_DROP_INTERVAL_MS} so a
+ * sustained soft-drop is still visibly, distinctly faster than max gravity. */
+export const GRAVITY_EASE_FLOOR_MS = 280;
+/** Decay time-constant (ms). At ~2600ms the curve has shed ~63% of the
+ * start→floor gap; tuned so a piece reaches near-floor cadence around the time
+ * it has fallen the depth of the well. */
+export const GRAVITY_EASE_TAU_MS = 2600;
+
 /**
  * New-block hold window (ms): a freshly spawned piece holds at the top for one
  * beat before gravity resumes, so placement is deliberate and a carried-over

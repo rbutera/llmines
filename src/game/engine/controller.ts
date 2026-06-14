@@ -6,7 +6,9 @@ import {
   computeMarked,
   createGame,
   floodFill,
-  GRAVITY_INTERVAL_MS,
+  GRAVITY_EASE_START_MS,
+  GRAVITY_EASE_FLOOR_MS,
+  GRAVITY_EASE_TAU_MS,
   randomSeed,
   gravityStep,
   hardDrop,
@@ -263,6 +265,17 @@ export class GameController {
    */
   private sweepColumnsConsumed = 0;
   private gravityAccumMs = 0;
+  /**
+   * Per-piece NATURAL-fall clock (ms). How long the CURRENT piece has been
+   * descending under natural gravity — RESET to 0 on every spawn/lock (so each
+   * new piece starts slow again) and only ever incremented in the natural-
+   * gravity branch of {@link advanceGravity}. The spawn hold and soft-drop do
+   * NOT advance it. Feeds {@link naturalGravityIntervalMs}, which shrinks the
+   * effective per-row interval from {@link GRAVITY_EASE_START_MS} toward
+   * {@link GRAVITY_EASE_FLOOR_MS} as this grows — the easing/acceleration. Test
+   * mode never runs the gravity loop, so this stays 0 there.
+   */
+  private pieceFallMs = 0;
   private started = false;
   /**
    * Render-only: true while a soft drop is actively engaged for the current
@@ -284,8 +297,9 @@ export class GameController {
   /**
    * Hold-to-sustain soft drop (production-only). True while the soft-drop key is
    * HELD down (engaged by a fresh press, disengaged on key-up / lock / spawn).
-   * While engaged AND the spawn-hold has lapsed, gravity advances at the faster
-   * {@link SOFT_DROP_INTERVAL_MS} cadence instead of {@link GRAVITY_INTERVAL_MS},
+   * While engaged AND the spawn-hold has lapsed, gravity advances at the faster,
+   * flat {@link SOFT_DROP_INTERVAL_MS} cadence instead of the eased natural
+   * gravity ({@link naturalGravityIntervalMs}),
    * so a held key produces CONTINUOUS slow fall (faster than gravity, slower than
    * a hard drop) rather than one row per press. Each sustained step still routes
    * through the pure `softDrop` core op, so scoring + determinism are unchanged.
@@ -437,6 +451,7 @@ export class GameController {
     // which dealt an identical run every time. An explicit seed still pins one.
     this.state = createGame(opts.seed ?? randomSeed());
     this.gravityAccumMs = 0;
+    this.pieceFallMs = 0;
     this.lastClockNow = 0;
     this.sweepColumnsConsumed = 0;
     this.activeBpm = 0;
@@ -622,28 +637,73 @@ export class GameController {
     if (isHeld(this.state)) {
       this.state = tickHold(this.state, dtMs);
       this.gravityAccumMs = 0;
+      // The piece is still staging at the top: its natural-fall clock has not
+      // started. Pin it to 0 so acceleration begins fresh (slow) the instant the
+      // hold lapses, regardless of how long the player held/dragged the spawn.
+      this.pieceFallMs = 0;
       return;
     }
 
     // Hold-to-sustain soft drop: while the soft-drop key is held (and the spawn-
-    // hold has lapsed), descend at the faster SOFT_DROP_INTERVAL_MS cadence so the
-    // piece falls CONTINUOUSLY at soft-drop speed instead of one row per press.
-    // Otherwise use normal gravity. Each soft-drop step is scored via softDropStep
-    // (the pure softDrop core op), matching a tapped soft drop.
-    const interval = this.softDropSustained
-      ? SOFT_DROP_INTERVAL_MS
-      : GRAVITY_INTERVAL_MS;
+    // hold has lapsed), descend at the faster, FLAT SOFT_DROP_INTERVAL_MS cadence
+    // so the piece falls CONTINUOUSLY at soft-drop speed instead of one row per
+    // press. Soft-drop is deliberately crisp and unaffected by the easing — it
+    // does NOT advance the per-piece natural-fall clock, so releasing the key
+    // resumes the eased natural curve from exactly where it left off. Each
+    // soft-drop step is scored via softDropStep (the pure softDrop core op),
+    // matching a tapped soft drop.
+    if (this.softDropSustained) {
+      this.gravityAccumMs += dtMs;
+      while (this.gravityAccumMs >= SOFT_DROP_INTERVAL_MS) {
+        this.gravityAccumMs -= SOFT_DROP_INTERVAL_MS;
+        this.sustainedSoftDropTick();
+        if (this.state.gameOver) break;
+      }
+      return;
+    }
 
+    // Natural gravity: ACCELERATES per piece. The deeper this piece has fallen
+    // (pieceFallMs = the summed length of the rows it has already dropped), the
+    // SHORTER the next row's effective interval — slow at first, ramping to
+    // meaningfully faster, clamped to a floor. The curve advances in ROW-quantised
+    // steps: each emitted row both consumes its interval from the accumulator AND
+    // adds that interval to pieceFallMs, so a fresh piece's FIRST row is the full
+    // slow START interval and every subsequent row is faster. The fall clock only
+    // advances here (never during hold / soft-drop) and resets on each spawn.
     this.gravityAccumMs += dtMs;
+    let interval = this.naturalGravityIntervalMs();
     while (this.gravityAccumMs >= interval) {
       this.gravityAccumMs -= interval;
-      if (this.softDropSustained) {
-        this.sustainedSoftDropTick();
-      } else {
-        this.gravityTickAndSpawn();
-      }
+      // The row about to drop took `interval` ms; bank it so the NEXT row samples
+      // a deeper (faster) point on the curve.
+      this.pieceFallMs += interval;
+      this.gravityTickAndSpawn();
       if (this.state.gameOver) break;
+      // gravityTickAndSpawn resets pieceFallMs to 0 on lock (new piece -> slow
+      // again); re-sample so the next emitted row uses the current piece's curve.
+      interval = this.naturalGravityIntervalMs();
     }
+  }
+
+  /**
+   * The effective NATURAL per-row gravity interval (ms) for the current piece,
+   * given how long it has been falling ({@link pieceFallMs}). Decays smoothly
+   * from {@link GRAVITY_EASE_START_MS} toward {@link GRAVITY_EASE_FLOOR_MS} with
+   * time-constant {@link GRAVITY_EASE_TAU_MS}:
+   *
+   *   FLOOR + (START - FLOOR) * exp(-fallMs / TAU)
+   *
+   * Monotonically decreasing in `pieceFallMs` and clamped to `>= FLOOR`, so a
+   * piece descends FASTER the longer it falls and never quicker than the floor
+   * (which stays well above the soft-drop cadence, keeping soft-drop distinct).
+   * Pure read; no side effects.
+   */
+  private naturalGravityIntervalMs(): number {
+    const eased =
+      GRAVITY_EASE_FLOOR_MS +
+      (GRAVITY_EASE_START_MS - GRAVITY_EASE_FLOOR_MS) *
+        Math.exp(-this.pieceFallMs / GRAVITY_EASE_TAU_MS);
+    return Math.max(GRAVITY_EASE_FLOOR_MS, eased);
   }
 
   /**
@@ -664,6 +724,8 @@ export class GameController {
     this.state = state;
     if (locked) {
       this.gravityAccumMs = 0;
+      // Reset the per-piece fall clock so the next piece accelerates from slow.
+      this.pieceFallMs = 0;
       // Clear sustained mode on a natural lock too, for symmetry with the
       // soft-drop lock path (the next piece's spawn-hold must be honoured).
       this.softDropSustained = false;
@@ -767,6 +829,8 @@ export class GameController {
     this.state = state;
     if (locked && !this.testMode) {
       this.gravityAccumMs = 0;
+      // Reset the per-piece fall clock so the next piece accelerates from slow.
+      this.pieceFallMs = 0;
       this.softDropEngaged = false;
       // Clear sustained mode on lock so the NEXT piece's spawn-hold is honoured:
       // the player must press soft-drop again to fast-fall it, matching the
@@ -806,6 +870,8 @@ export class GameController {
     this.state = hardDrop(this.state);
     if (!this.testMode) {
       this.gravityAccumMs = 0;
+      // Reset the per-piece fall clock so the next piece accelerates from slow.
+      this.pieceFallMs = 0;
       // A top-out lock (A5/D4) must NOT auto-spawn — the game is over.
       if (!this.state.gameOver) this.state = spawnFromQueue(this.state);
     }
@@ -861,7 +927,12 @@ export class GameController {
   }
 
   private renderState(): RenderState {
-    const interval = GRAVITY_INTERVAL_MS;
+    // The smooth-fall offset interpolates toward the NEXT natural gravity row, so
+    // it must use the SAME eased interval the gravity loop is currently ticking
+    // at (not the flat legacy constant) — otherwise the visual interpolation
+    // desyncs from the accelerating descent. Soft-drop uses its own flat cadence,
+    // but the render heat/smear path keys off softDropPulses, not this offset.
+    const interval = this.naturalGravityIntervalMs();
     // The fall interpolation represents motion toward the NEXT gravity row. A
     // piece that cannot descend (resting on the floor or the stack) or that is
     // held at spawn has no such motion, so its offset must be 0 — otherwise the
