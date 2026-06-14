@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  ConvexProvider,
+  ConvexProviderWithAuth,
   ConvexReactClient,
   useMutation,
   useQuery,
@@ -17,24 +17,20 @@ import { validateUsername } from "../../../convex/usernames";
 import { api } from "../../../convex/_generated/api";
 import { AuthContext, ScoresContext } from "./context";
 import type { AuthApi, Identity, ScoresApi, UsernameCheck } from "./types";
+import { useNextAuthConvexAuth } from "./useNextAuthConvexAuth";
 
 // Constructed at most once; null when no deployment is configured (e.g. an
 // offline build). Lazy so TEST_MODE / no-env paths never touch a live backend.
 //
-// Google sign-in (skins-ux-auth): the SERVER-SIDE OAuthSignin defect is fixed by
-// the wrangler.jsonc compatibility_date bump (2025-09-23) so NextAuth v4's
-// openid-client can run Google discovery over the Worker's node http client. Two
-// steps remain EXTERNAL (not code, flagged for Rai) before a real sign-in
-// completes end to end:
-//   1. Google console: register `https://llmines.e8n.dev/api/auth/callback/google`
-//      as an authorized redirect URI on the OAuth client (else `redirect_uri_
-//      mismatch`).
-//   2. Convex: set `CONVEX_AUTH_ISSUER_DOMAIN` on the deployment to the deployed
-//      origin (`npx convex env set ...`) so `ctx.auth.getUserIdentity()` is
-//      populated and `submitScore` is authenticated — otherwise Convex trusts
-//      the `https://example.com` default and rejects the JWT (defect 3, to verify
-//      AFTER sign-in works). No `trustHost`/`NEXTAUTH_URL` is needed: origin
-//      derivation already works (the providers endpoint returns correct URLs).
+// Google sign-in (nextauth-v5-migration): Auth.js v5's fetch-based core
+// (oauth4webapi + jose) runs the Google handshake natively on the Cloudflare
+// Workers runtime — fixing the v4 `OAuthSignin` defect. Convex is wired via
+// `ConvexProviderWithAuth` + the `useNextAuthConvexAuth` adapter, which fetches
+// a server-minted RS256 JWT from `/api/convex-token`; Convex validates it
+// (Custom JWT mode, see convex/auth.config.ts) so `ctx.auth.getUserIdentity()`
+// resolves and `submitScore`/`personalBest` are authenticated. Remaining steps
+// are EXTERNAL (ops, not code): register the Google redirect URI and set the
+// Worker/Convex env vars.
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 const convexClient = convexUrl ? new ConvexReactClient(convexUrl) : null;
 
@@ -49,12 +45,24 @@ export function RealAccountProvider({
     // (sign-in + leaderboard require a real deployment / the real pass).
     return <DisabledAccountProvider>{children}</DisabledAccountProvider>;
   }
+  // SessionProvider is OUTSIDE ConvexProviderWithAuth so the useAuth adapter
+  // (useNextAuthConvexAuth -> useSession) can read the session.
   return (
-    <ConvexProvider client={convexClient}>
-      <SessionProvider>
+    <SessionProvider>
+      <ConvexAuthedProvider>
         <RealInner>{children}</RealInner>
-      </SessionProvider>
-    </ConvexProvider>
+      </ConvexAuthedProvider>
+    </SessionProvider>
+  );
+}
+
+/** Convex client wired to the NextAuth-backed token adapter. */
+function ConvexAuthedProvider({ children }: { children: React.ReactNode }) {
+  if (!convexClient) return <>{children}</>;
+  return (
+    <ConvexProviderWithAuth client={convexClient} useAuth={useNextAuthConvexAuth}>
+      {children}
+    </ConvexProviderWithAuth>
   );
 }
 
@@ -70,7 +78,7 @@ function RealInner({ children }: { children: React.ReactNode }) {
   const user = useMemo<Identity | null>(() => {
     const u = session?.user;
     if (!u) return null;
-    const subject = (u as { id?: string }).id ?? u.email ?? u.name ?? "unknown";
+    const subject = u.id ?? u.email ?? u.name ?? "unknown";
     return {
       subject,
       email: me?.email ?? u.email ?? null,
