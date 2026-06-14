@@ -117,16 +117,31 @@ export function spawnFromQueue(state: GameState): GameState {
 }
 
 /**
- * Can a freshly spawned piece ENTER the visible field (audit A5/D4)? A piece
- * stages above the field at {@link SPAWN_ROW} (= -2) and always "places" there
- * (its cells are above row 0). The real top-out condition is whether it can reach
- * an in-field row: test `canPlace` at the FIRST in-field row it would occupy —
- * the 2x2 at row 0 (cells in rows 0-1 of the spawn columns). If those cells are
- * blocked, the piece can never enter -> game over ("blocks pile to the top",
- * README §3b item 1).
+ * Can a freshly spawned piece enter the field at a SPECIFIC column? A piece stages
+ * above the field at {@link SPAWN_ROW} and "enters" by reaching the first in-field
+ * row (the 2x2 at row 0 = cells in rows 0-1 of `col`/`col+1`). True iff those entry
+ * cells are free.
  */
-function canEnterField(grid: Grid, cells: Piece): boolean {
-  return canPlace(grid, cells, { row: 0, col: SPAWN_COL });
+function canEnterFieldAt(grid: Grid, cells: Piece, col: number): boolean {
+  return canPlace(grid, cells, { row: 0, col });
+}
+
+/**
+ * Can a freshly spawned piece enter the field at ANY horizontal position (audit
+ * A5/D4)? Because a staged piece can be moved left/right freely while it sits above
+ * the field, the TRUE top-out condition is not "the spawn column is blocked" (that
+ * would be an instant, unfair game-over the moment the centre column fills) but
+ * "NO column anywhere can accept the piece" — i.e. the board is full across the top.
+ * While at least one column is open the player is given grace to slide the staged
+ * piece over to it (see {@link gravityStep}'s re-hold); only when every column is
+ * blocked does the game top out ("blocks pile to the top", README §3b item 1).
+ */
+function canEnterAnyColumn(grid: Grid, cells: Piece): boolean {
+  const maxCol = grid[0]!.length - 1; // a 2-wide piece's left col spans 0..width-2
+  for (let col = 0; col <= maxCol; col++) {
+    if (canEnterFieldAt(grid, cells, col)) return true;
+  }
+  return false;
 }
 
 /** Coordinate (`row*COLS+col`) of the cell at `cellIndex` for a piece at `pos`. */
@@ -145,9 +160,11 @@ export function spawnGeneratedPiece(
   gp: GeneratedPiece,
 ): GameState {
   const pos: PiecePos = { row: SPAWN_ROW, col: SPAWN_COL };
-  // Game over only when the piece cannot ENTER the field (its in-field entry
-  // cells are blocked) — NOT merely because it stages above the field (A5/D4).
-  if (!canEnterField(state.grid, gp.cells)) {
+  // Game over only when the piece cannot enter the field at ANY column (the board is
+  // full across the top) — NOT merely because the centre spawn column is blocked. A
+  // staged piece can be slid to an open column (see gravityStep's re-hold grace), so
+  // a blocked spawn column alone must never be an instant game-over (A5/D4).
+  if (!canEnterAnyColumn(state.grid, gp.cells)) {
     return {
       ...state,
       active: null,
@@ -186,9 +203,9 @@ export function canPlace(grid: Grid, cells: Piece, pos: PiecePos): boolean {
  */
 export function spawnPiece(state: GameState, cells: Piece): GameState {
   const pos: PiecePos = { row: SPAWN_ROW, col: SPAWN_COL };
-  // Game over only when the piece cannot ENTER the field (A5/D4), not when it
-  // stages above it.
-  if (!canEnterField(state.grid, cells)) {
+  // Game over only when the piece cannot enter the field at ANY column (the board is
+  // full across the top) — not when the centre spawn column alone is blocked (A5/D4).
+  if (!canEnterAnyColumn(state.grid, cells)) {
     return {
       ...state,
       active: null,
@@ -309,13 +326,15 @@ export function lockPiece(
 ): GameState {
   if (!state.active) return state;
   const grid = cloneGrid(state.grid);
-  // Top-out on a mid-air lock (A5/D4): if the piece locks with ANY cell still
-  // above row 0 (in the staging rows) it cannot fit inside the field — that IS
-  // the "blocks pile to the top" condition (e.g. a staged piece shoved sideways
-  // over a full-height column then unable to descend). The in-field cells still
-  // merge (so the visible pile is faithful), but the game ends rather than
-  // silently discarding the above-field cells with play continuing.
-  const locksAboveField = pieceCells(state.active).some(({ row }) => row < 0);
+  // Top-out on a mid-air lock (A5/D4): the game ends only when the piece locks
+  // ENTIRELY above the field (NO cell reached row 0) — i.e. it was stuck over a
+  // full-height column and {@link gravityStep} found no open column to re-hold for, so
+  // the board is full across the top. A piece whose BOTTOM row reached the field is a
+  // legitimate placement: its in-field cells merge and any above-field cell is dropped
+  // (the well filled to the very top there), and play continues — that is NOT a
+  // top-out by itself, so the player isn't killed for topping off one column while
+  // others are open.
+  const locksAboveField = !pieceCells(state.active).some(({ row }) => row >= 0);
   for (const { row, col, color } of pieceCells(state.active)) {
     if (inBounds(row, col) && color !== null) grid[row]![col] = color;
   }
@@ -402,6 +421,21 @@ export function gravityStep(
         ...state,
         active: { cells: state.active.cells, pos, special: state.active.special },
       },
+      locked: false,
+    };
+  }
+  // The piece cannot descend. If it is still ENTIRELY above the visible field (no
+  // cell has reached row 0 — it is stuck over a full-height column) do NOT lock it
+  // into a top-out yet: as long as SOME column could still accept it, re-arm the
+  // spawn hold so the player keeps getting time to slide it left/right to an open
+  // column (Rai's requested grace — a blocked spawn column must not be instant death).
+  // Only when EVERY column is blocked (the board is full across the top) does it lock
+  // and top the game out. A piece whose bottom row has entered the field locks
+  // normally below.
+  const entirelyAboveField = !pieceCells(state.active).some(({ row }) => row >= 0);
+  if (entirelyAboveField && canEnterAnyColumn(state.grid, state.active.cells)) {
+    return {
+      state: { ...state, hold: { active: true, remainingMs: HOLD_MS } },
       locked: false,
     };
   }

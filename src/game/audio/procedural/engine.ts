@@ -97,6 +97,14 @@ const SFX_RETRIGGER_EPSILON = 0.002;
 const SFX_ACTION_VELOCITY = 0.85;
 /** Fixed-hot velocity for a chain's clear-stage hit (bigger than any plain clear). */
 const SFX_CHAIN_VELOCITY = 0.95;
+/**
+ * SFX SUB-BUS gain (0..1): a single knob that attenuates ALL sfx (tone synth +
+ * recorded one-shots) WITHOUT touching the music. Both sfx sources route through
+ * this bus, which feeds the shared master, so the master volume slider still scales
+ * everything together while sfx sit lower in the mix. Lowered per playtest — the sfx
+ * were too loud/harsh against the music-led mix. Easy to retune (Rai's ear-check).
+ */
+const SFX_BUS_GAIN = 0.4;
 
 /**
  * Clear-stage velocity from the clear size: a bigger clear sounds hotter (D4).
@@ -464,6 +472,12 @@ export class InteractiveAudioEngine {
   private bpm = FALLBACK_BPM;
 
   private master?: Tone.Gain;
+  /**
+   * SFX sub-bus: tone synth + recorded one-shots route through here (at
+   * {@link SFX_BUS_GAIN}) into the master, so sfx can be attenuated independently of
+   * the music. Created in unlock() right after the master; disposed on teardown.
+   */
+  private sfxBus?: Tone.Gain;
 
   /** Teardown for the document-level first-interaction resume primer. */
   private removeResumePrimer?: () => void;
@@ -816,6 +830,9 @@ export class InteractiveAudioEngine {
       await resumed;
       await Tone.start();
       this.master = new Tone.Gain(this.volume).toDestination();
+      // SFX sub-bus (created BEFORE the synth so it routes through it): all sfx feed
+      // this attenuated bus → master, so sfx sit lower without dimming the music.
+      this.sfxBus = new Tone.Gain(SFX_BUS_GAIN).connect(this.master);
       // Build the tone synth INSIDE this gesture (autoplay-safe). It is also lazily
       // built on first tone use (ensureToneSynth) as a belt-and-braces fallback.
       this.ensureToneSynth();
@@ -1630,7 +1647,9 @@ export class InteractiveAudioEngine {
       } catch {
         // older Tone / degraded synth — defaults are fine, keep the synth
       }
-      synth.connect(master);
+      // route through the sfx sub-bus so tone sfx are attenuated with the rest of
+      // the sfx (falls back to master if the bus isn't up yet — belt-and-braces).
+      synth.connect(this.sfxBus ?? master);
       this.toneSynth = synth;
     } catch {
       this.toneSynth = undefined; // degrade to silence
@@ -1909,7 +1928,8 @@ export class InteractiveAudioEngine {
     }
     for (const p of loaded) {
       if (p) {
-        p.connect(master);
+        // recorded sfx route through the sfx sub-bus (attenuated), not the music master.
+        p.connect(this.sfxBus ?? master);
         pool.voices.push(p);
       }
     }
@@ -2384,6 +2404,11 @@ export class InteractiveAudioEngine {
     this.toneSynth = undefined;
     this.toneSynthTried = false;
     try {
+      this.sfxBus?.dispose();
+    } catch {
+      // ignore
+    }
+    try {
       this.master?.dispose();
     } catch {
       // ignore
@@ -2393,6 +2418,7 @@ export class InteractiveAudioEngine {
     this.song = undefined;
     this.manifest = undefined;
     this.master = undefined;
+    this.sfxBus = undefined;
     this.bedReady = false;
     this.segmentIndex = 0;
     this.maxSegmentReached = 0;

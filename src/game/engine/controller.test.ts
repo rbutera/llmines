@@ -317,14 +317,15 @@ describe("seed exposure (A4/D6): render-state + public-state carry the seed", ()
 });
 
 describe("top-out game over (A5/D4): no auto-spawn after a topping-out lock", () => {
-  it("a lock that fills the spawn columns ends the game and does not auto-spawn", () => {
+  it("a spawn into a board full across the top ends the game and does not auto-spawn", () => {
     const c = new GameController({ testMode: true });
-    // Pre-fill the spawn columns (7-8) right up to row 0 so the NEXT spawn cannot
-    // enter the field. testSpawn locks any active piece first, then attempts to
-    // place the new one — which must top out.
-    for (let r = 0; r < ROWS; r++) {
-      c.testSetCell(r, 7, 1);
-      c.testSetCell(r, 8, 1);
+    // Fill the top two rows across EVERY column so no incoming 2x2 can enter anywhere
+    // (a single blocked spawn column is NOT a top-out now — the piece stages and the
+    // player can slide it; only a board full across the top tops out). testSpawn locks
+    // any active piece first, then attempts to place the new one — which must top out.
+    for (let col = 0; col < COLS; col++) {
+      c.testSetCell(0, col, 1);
+      c.testSetCell(1, col, 1);
     }
     c.testSpawn([
       [0, 0],
