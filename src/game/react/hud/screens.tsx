@@ -20,6 +20,7 @@ import { Corners, fmt, Gauge, type PieceCellShade, Reticle } from "./atoms";
 export function StartView({
   onStart,
   onControls,
+  onTutorial,
   onSign,
   onLeaderboard,
   signedIn,
@@ -29,6 +30,7 @@ export function StartView({
 }: {
   onStart: () => void;
   onControls: () => void;
+  onTutorial: () => void;
   onSign: () => void;
   onLeaderboard: () => void;
   signedIn: boolean;
@@ -105,6 +107,15 @@ export function StartView({
           autoFocus
         >
           ▶ ENGAGE
+        </button>
+        <button
+          type="button"
+          data-testid="how-to-play"
+          className="btn"
+          style={{ padding: "16px 26px", fontSize: 13 }}
+          onClick={onTutorial}
+        >
+          HOW TO PLAY
         </button>
         <button
           type="button"
