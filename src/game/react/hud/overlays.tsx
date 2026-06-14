@@ -4,7 +4,8 @@
  * background tab can never leave the panel stuck invisible.
  */
 
-import { Cheatsheet, Corners, fmt } from "./atoms";
+import { useEffect, useRef } from "react";
+import { Cheatsheet, Corners, fmt, Keys, Piece } from "./atoms";
 import { SettingsBlock } from "./SettingsBlock";
 
 /**
@@ -125,6 +126,182 @@ export function ControlsOverlay({ onClose }: { onClose: () => void }) {
           onClick={onClose}
         >
           ▸ CLOSE
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A small numbered step heading inside the tutorial. */
+function StepHead({ n, title }: { n: number; title: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <span
+        aria-hidden
+        className="glow-text cap-tight"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 22,
+          height: 22,
+          flex: "0 0 auto",
+          fontSize: 12,
+          fontWeight: 800,
+          border: "1px solid var(--line)",
+          borderRadius: 4,
+          boxShadow: "0 0 8px var(--accent)",
+        }}
+      >
+        {n}
+      </span>
+      <span className="cap-tight glow-text" style={{ fontSize: 14 }}>
+        {title}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * HOW TO PLAY tutorial (on-demand from Start). A skimmable, visual rundown of the
+ * objective, the timeline-sweep clear rule, chain gems, the bonuses, and the
+ * scoring — closeable by scrim, the CLOSE button, or Esc. Lives ONLY on the
+ * Start screen (it never adds chrome to the playing HUD). Keyboard: the panel is
+ * a labelled modal dialog, focus lands on CLOSE, and the Start-phase key handler
+ * routes Esc to `onClose`.
+ */
+export function TutorialOverlay({ onClose }: { onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  // Move focus into the dialog on open so keyboard + screen-reader users land
+  // inside it (and Esc/Tab behave predictably). Restored to the opener by the
+  // Start screen when the overlay unmounts.
+  useEffect(() => {
+    closeRef.current?.focus();
+  }, []);
+
+  return (
+    <div
+      className="overlay"
+      data-testid="tutorial-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="tutorial-title"
+      onClick={(e) => {
+        if ((e.target as HTMLElement).classList.contains("overlay")) onClose();
+      }}
+    >
+      <div className="bevel modal" style={{ width: "min(560px, 92%)" }}>
+        <Corners size={14} inset={7} />
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <div
+            id="tutorial-title"
+            className="glow-text cap"
+            style={{ fontSize: 26, fontWeight: 800 }}
+          >
+            HOW TO PLAY
+          </div>
+          <div className="hint" style={{ marginTop: 4 }}>
+            clear blocks in time with the music
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gap: 18 }}>
+          {/* OBJECTIVE */}
+          <section style={{ display: "grid", gap: 7 }}>
+            <StepHead n={1} title="Stack two colours" />
+            <p className="hint" style={{ margin: 0, lineHeight: 1.5 }}>
+              Pieces fall as 2×2 blocks of two colours. Move, rotate and drop them
+              to line up same-colour cells.
+            </p>
+            <div style={{ display: "flex", gap: 14, marginTop: 2 }}>
+              <Piece cells={["lite", "dark", "dark", "lite"]} />
+              <Piece cells={["dark", "dark", "lite", "lite"]} />
+            </div>
+          </section>
+
+          {/* SQUARES + SWEEP */}
+          <section style={{ display: "grid", gap: 7 }}>
+            <StepHead n={2} title="Form squares, ride the sweep" />
+            <p className="hint" style={{ margin: 0, lineHeight: 1.5 }}>
+              Any 2×2 (or bigger) area of a single colour becomes a square. A
+              timeline bar sweeps across the field on the beat and clears every
+              completed square it passes. Bigger single-sweep clears score far
+              more.
+            </p>
+          </section>
+
+          {/* GEMS / FLOOD */}
+          <section style={{ display: "grid", gap: 7 }}>
+            <StepHead n={3} title="Chain gems flood-clear" />
+            <p className="hint" style={{ margin: 0, lineHeight: 1.5 }}>
+              Some pieces carry a glowing{" "}
+              <span style={{ color: "var(--gold)", fontWeight: 700 }}>
+                chain gem
+              </span>
+              . When the sweep hits it, it floods through every connected
+              same-colour block — a chain reaction worth a big multiplier.
+            </p>
+            <div style={{ marginTop: 2 }}>
+              <Piece cells={["lite", "dark", "lite", "dark"]} chain={0} />
+            </div>
+          </section>
+
+          {/* BONUSES + SCORING */}
+          <section style={{ display: "grid", gap: 7 }}>
+            <StepHead n={4} title="Bonuses & scoring" />
+            <ul
+              className="hint"
+              style={{
+                margin: 0,
+                paddingLeft: 18,
+                lineHeight: 1.6,
+                listStyle: "square",
+              }}
+            >
+              <li>
+                Single-sweep clears scale fast — clear more squares at once for a
+                streak multiplier.
+              </li>
+              <li>
+                <strong>All-clear:</strong> wipe the whole field for a big bonus.
+              </li>
+              <li>
+                <strong>Single colour:</strong> reduce the board to one colour for
+                a bonus.
+              </li>
+            </ul>
+          </section>
+
+          {/* CONTROLS */}
+          <section style={{ display: "grid", gap: 9 }}>
+            <StepHead n={5} title="Controls" />
+            <Cheatsheet />
+            <div
+              className="hint"
+              style={{ display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <span>also</span>
+              <Keys list={["h", "j", "k", "l"]} />
+              <span>or</span>
+              <Keys list={["e", "s", "d", "f"]} />
+            </div>
+          </section>
+        </div>
+
+        <button
+          ref={closeRef}
+          type="button"
+          data-testid="tutorial-close"
+          className="btn btn-primary"
+          style={{
+            width: "100%",
+            padding: "13px 0",
+            fontSize: 14,
+            marginTop: 24,
+          }}
+          onClick={onClose}
+        >
+          ▸ GOT IT
         </button>
       </div>
     </div>

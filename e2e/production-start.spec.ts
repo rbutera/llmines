@@ -142,6 +142,50 @@ test("chrome: no skin toggle / N key / bottom bar / title button; the score is v
   ).toEqual([]);
 });
 
+test("How to Play tutorial opens from Start and is keyboard-dismissible", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (err) => pageErrors.push(err.message));
+
+  await page.goto("/");
+
+  // The tutorial button is on the Start menu and the overlay is initially closed.
+  const open = page.getByTestId("how-to-play");
+  await expect(open).toBeVisible();
+  await expect(page.getByTestId("tutorial-overlay")).toHaveCount(0);
+
+  // Open it: a labelled modal dialog with the objective + controls content.
+  await open.click();
+  const overlay = page.getByTestId("tutorial-overlay");
+  await expect(overlay).toBeVisible();
+  await expect(overlay).toHaveAttribute("role", "dialog");
+  await expect(overlay).toHaveAttribute("aria-modal", "true");
+  await expect(overlay.getByText("HOW TO PLAY")).toBeVisible();
+  await expect(overlay.getByText(/timeline bar sweeps/i)).toBeVisible();
+  await expect(overlay.getByText(/chain gem/i).first()).toBeVisible();
+
+  // Focus lands on the close button (keyboard users start inside the dialog).
+  await expect(page.getByTestId("tutorial-close")).toBeFocused();
+
+  // Escape closes it without starting the game (still on the Start screen).
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("tutorial-overlay")).toHaveCount(0);
+  await expect(page.getByTestId("start-button")).toBeVisible();
+  expect(await page.evaluate(() => window.__luminesProbe?.hasActive ?? false)).toBe(false);
+
+  // Re-open and close via the GOT IT button.
+  await open.click();
+  await expect(page.getByTestId("tutorial-overlay")).toBeVisible();
+  await page.getByTestId("tutorial-close").click();
+  await expect(page.getByTestId("tutorial-overlay")).toHaveCount(0);
+
+  expect(
+    pageErrors,
+    `page errors during the tutorial check: ${pageErrors.join(" | ")}`,
+  ).toEqual([]);
+});
+
 test("Escape pauses the running game (the sweep stops advancing)", async ({
   page,
 }) => {

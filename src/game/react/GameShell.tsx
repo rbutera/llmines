@@ -22,7 +22,12 @@ import { hudHueForSkin } from "../theme/tokens";
 import { GameCanvas } from "./GameCanvas";
 import { VideoBackdrop } from "./VideoBackdrop";
 import { ScoreFx } from "./ScoreFx";
-import { GameOverView, PauseOverlay, ControlsOverlay } from "./hud/overlays";
+import {
+  GameOverView,
+  PauseOverlay,
+  ControlsOverlay,
+  TutorialOverlay,
+} from "./hud/overlays";
 import { PlayHud, StartView } from "./hud/screens";
 import { LeaderboardOverlay, UsernameSelect } from "./hud/account-screens";
 
@@ -44,6 +49,7 @@ export function GameShell() {
   const [phase, setPhase] = useState<Phase>("start");
   const [paused, setPaused] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [score, setScore] = useState(0);
   const [hud, setHud] = useState<{
@@ -355,8 +361,13 @@ export function GameShell() {
   useEffect(() => {
     if (phase !== "start") return;
     const onKey = (e: KeyboardEvent) => {
-      if (controlsOpen) {
-        if (e.key === "Escape") setControlsOpen(false);
+      // An open Start overlay (Controls / How-to-play) owns the keyboard: Esc
+      // closes it; nothing else engages the game behind it.
+      if (controlsOpen || tutorialOpen) {
+        if (e.key === "Escape") {
+          setControlsOpen(false);
+          setTutorialOpen(false);
+        }
         return;
       }
       if (e.key === "Enter" || e.key === " ") {
@@ -371,7 +382,7 @@ export function GameShell() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, controlsOpen]);
+  }, [phase, controlsOpen, tutorialOpen]);
 
   // Load the persisted music volume once on mount.
   useEffect(() => {
@@ -447,6 +458,7 @@ export function GameShell() {
     setScore(0);
     setPaused(false);
     setControlsOpen(false);
+    setTutorialOpen(false);
     gameOverSubmittedRef.current = false;
     lastScoreRef.current = 0;
     lastChainIdRef.current = 0;
@@ -574,6 +586,7 @@ export function GameShell() {
             <StartView
               onStart={handleStart}
               onControls={() => setControlsOpen(true)}
+              onTutorial={() => setTutorialOpen(true)}
               onSign={user ? signOut : signIn}
               onLeaderboard={() => setLeaderboardOpen(true)}
               signedIn={!!user}
@@ -617,6 +630,11 @@ export function GameShell() {
       {/* CONTROLS OVERLAY (on-demand from Start). */}
       {controlsOpen && phase === "start" && (
         <ControlsOverlay onClose={() => setControlsOpen(false)} />
+      )}
+
+      {/* HOW-TO-PLAY TUTORIAL (on-demand from Start). */}
+      {tutorialOpen && phase === "start" && (
+        <TutorialOverlay onClose={() => setTutorialOpen(false)} />
       )}
 
       {/* GAME OVER. */}
