@@ -32,7 +32,11 @@ export default {
       // change them in BOTH places (and the deployment env) together.
       applicationID: "convex",
       issuer: "https://llmines.e8n.dev",
-      jwks: JWKS_DATA_URI,
+      // Use the DOCUMENTED HTTPS JWKS route (Convex officially supports https jwks
+      // URLs; the data: URI form is undocumented and can fail validation silently).
+      // The route serves the identical key (CONVEX_JWKS) as JWKS_DATA_URI below, so
+      // there is no drift (the data-URI const is retained as the drift-guard anchor).
+      jwks: "https://llmines.e8n.dev/api/auth/jwks",
       algorithm: "RS256" as const,
     },
   ],
