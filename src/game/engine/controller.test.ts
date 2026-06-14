@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   COLS,
+  GRAVITY_EASE_FLOOR_MS,
+  GRAVITY_EASE_START_MS,
+  GRAVITY_EASE_TAU_MS,
   GRAVITY_INTERVAL_MS,
   HOLD_MS,
   ROWS,
@@ -11,6 +14,21 @@ import { GameController, type RenderState } from "./controller";
 
 /** Frames (at 100ms each) needed to lapse the spawn-hold. */
 const HOLD_FRAMES = HOLD_MS / 100;
+
+/**
+ * The eased per-row natural-gravity interval for a piece that has been falling
+ * `fallMs` — mirrors the controller's `naturalGravityIntervalMs` so timing
+ * assertions track the same curve (decays START -> FLOOR with TAU). Used to
+ * assert acceleration: later rows take strictly less time than earlier ones.
+ */
+function easedInterval(fallMs: number): number {
+  return Math.max(
+    GRAVITY_EASE_FLOOR_MS,
+    GRAVITY_EASE_FLOOR_MS +
+      (GRAVITY_EASE_START_MS - GRAVITY_EASE_FLOOR_MS) *
+        Math.exp(-fallMs / GRAVITY_EASE_TAU_MS),
+  );
+}
 
 /**
  * Build a production controller wired to a FakeClock and a stubbed rAF, plus a
@@ -84,10 +102,15 @@ describe("fallProgress gating (bottom-row settle)", () => {
     expect(rs.active).not.toBeNull();
     expect(rs.active!.pos.row).toBe(-2); // still staged above the field (A5/D4)
     expect(rs.hold.active).toBe(false);
-    // Smooth descent: a fractional offset toward the next row.
+    // Smooth descent: a fractional offset toward the next row, interpolated
+    // against the EASED FIRST-row interval. No row has dropped yet, so the curve
+    // samples at fallMs=0 (the slow START interval), a touch slower than the
+    // legacy flat 700ms cadence, so the offset is slightly smaller.
     expect(rs.fallProgress).toBeGreaterThan(0);
     expect(rs.fallProgress).toBeLessThanOrEqual(1);
-    expect(rs.fallProgress).toBeCloseTo(100 / GRAVITY_INTERVAL_MS, 5);
+    expect(rs.fallProgress).toBeCloseTo(100 / easedInterval(0), 5);
+    // Strictly below the flat-700 offset, confirming the start-slow easing.
+    expect(rs.fallProgress).toBeLessThan(100 / GRAVITY_INTERVAL_MS);
     c.stop();
   });
 
@@ -95,11 +118,12 @@ describe("fallProgress gating (bottom-row settle)", () => {
     const { c, step } = productionWithClock(1);
     startAndRelease(c, step);
     // The piece stages at row -2 now, so it descends ROWS rows to the floor
-    // (pos.row = ROWS-2) in ROWS gravity ticks. 72 post-hold frames -> 7200ms =
-    // 10 ticks (the piece reaches the floor) with ~200ms left over — short of the
-    // 11th tick that would lock + respawn. The resting gate must read fallProgress
-    // 0 so the leftover accumulation cannot draw the piece below the canvas.
-    for (let i = 0; i < 72; i++) step(100);
+    // (pos.row = ROWS-2). Under the eased (accelerating) natural gravity that full
+    // descent takes ~5.0s, not the flat 7s, so ~50 post-hold frames -> ~5000ms
+    // lands it ON the floor and resting (it sits at the floor for ~2 frames before
+    // the lock+respawn). The resting gate must read fallProgress 0 so the leftover
+    // accumulation cannot draw the piece below the canvas.
+    for (let i = 0; i < 50; i++) step(100);
 
     const rs = c.getRenderState();
     expect(rs.active).not.toBeNull();
@@ -333,5 +357,147 @@ describe("top-out game over (A5/D4): no auto-spawn after a topping-out lock", ()
     ]);
     expect(c.testState().gameOver).toBe(true);
     expect(c.testRawState().active).toBe(null);
+  });
+});
+
+/**
+ * Drive a freshly-released production piece under NATURAL gravity at fine 10ms
+ * frames and record the cumulative time (ms) of each one-row descent. Stops once
+ * `maxRows` rows have been emitted or the piece locks (row jumps back up). The
+ * returned deltas[i] = time between row i and row i+1 = the eased per-row
+ * interval at that depth.
+ */
+function recordRowDrops(maxRows: number): number[] {
+  const { c, step } = productionWithClock(1);
+  c.start();
+  step(100); // seed the clock baseline (dt = 0)
+  // Lapse the spawn hold at fine resolution so the natural-fall clock AND the
+  // gravity accumulator are both cleanly 0 the instant the hold releases (the
+  // held branch pins both to 0 every frame), giving an uncontaminated first-row
+  // measurement. A coarse 100ms lapse could bank up to ~100ms of fall first.
+  while (c.getRenderState().hold.active) step(10);
+  const times: number[] = [];
+  let prevRow = c.getRenderState().active!.pos.row;
+  let t = 0;
+  // Generous frame budget: at 10ms/frame even the slow first rows resolve fast.
+  for (let f = 0; f < 2000 && times.length < maxRows; f++) {
+    step(10);
+    t += 10;
+    const row = c.getRenderState().active!.pos.row;
+    if (row > prevRow) {
+      times.push(t);
+      prevRow = row;
+    } else if (row < prevRow) {
+      break; // locked + respawned -> stop before the curve resets
+    }
+  }
+  c.stop();
+  // Convert absolute crossing times into per-row deltas. The fall clock AND the
+  // gravity accumulator are both 0 at release, so times[0] IS the first row's
+  // interval (delta from t=0); subsequent deltas are crossing-to-crossing.
+  const deltas: number[] = [];
+  let prev = 0;
+  for (const cross of times) {
+    deltas.push(cross - prev);
+    prev = cross;
+  }
+  return deltas;
+}
+
+describe("natural-gravity easing (per-piece acceleration)", () => {
+  it("a piece left to natural gravity descends FASTER later than earlier", () => {
+    // Collect the per-row intervals across the well. Each successive row should
+    // take strictly less time than the one before (monotonic acceleration), and
+    // the last row should be meaningfully faster than the first.
+    const deltas = recordRowDrops(8);
+    expect(deltas.length).toBeGreaterThanOrEqual(6);
+    for (let i = 1; i < deltas.length; i++) {
+      // Strictly shrinking (allow a 10ms frame-quantisation slack so float dt
+      // jitter never produces a spurious equal/greater neighbour pair).
+      expect(deltas[i]!).toBeLessThan(deltas[i - 1]! + 1);
+      expect(deltas[i]!).toBeLessThanOrEqual(deltas[i - 1]!);
+    }
+    // The acceleration is real, not cosmetic: the later rows are clearly faster.
+    expect(deltas[deltas.length - 1]!).toBeLessThan(deltas[0]! - 100);
+    // First row tracks the eased START interval (slow), the curve has not floored.
+    expect(deltas[0]!).toBeGreaterThan(GRAVITY_INTERVAL_MS); // slower than legacy
+    expect(deltas[0]!).toBeGreaterThan(GRAVITY_EASE_FLOOR_MS + 200);
+  });
+
+  it("the acceleration RESETS per piece (a new spawn starts slow again)", () => {
+    const { c, step } = productionWithClock(1);
+    startAndRelease(c, step);
+    // Let piece #1 fall a long way under natural gravity so its fall clock ramps
+    // the interval well down toward the floor (fine 10ms frames, ~4s of fall).
+    let prevRow = c.getRenderState().active!.pos.row;
+    let lastRowChangeT = 0;
+    let t = 0;
+    let piece1FastRow = Number.POSITIVE_INFINITY;
+    for (let f = 0; f < 600; f++) {
+      step(10);
+      t += 10;
+      const row = c.getRenderState().active!.pos.row;
+      if (row > prevRow) {
+        piece1FastRow = t - lastRowChangeT; // a late, ramped-down interval
+        lastRowChangeT = t;
+        prevRow = row;
+      } else if (row < prevRow) {
+        break; // locked/respawned (shouldn't happen within 600 frames here)
+      }
+    }
+    // Now hard-drop to force a lock + fresh spawn, resetting the fall clock.
+    c.pressHardDrop();
+    // Lapse the new piece's spawn hold at fine resolution so we can time its very
+    // first natural row drop from a clean (zeroed) accumulator.
+    while (c.getRenderState().hold.active) step(10);
+    prevRow = c.getRenderState().active!.pos.row;
+    let piece2FirstRow = 0;
+    let t2 = 0;
+    for (let f = 0; f < 2000; f++) {
+      step(10);
+      t2 += 10;
+      const row = c.getRenderState().active!.pos.row;
+      if (row > prevRow) {
+        piece2FirstRow = t2;
+        break;
+      }
+    }
+    c.stop();
+    // Piece #1 had ramped to a FAST late interval (well under the start); piece #2
+    // starts SLOW again — proof the per-piece curve reset on the new spawn.
+    expect(piece1FastRow).toBeLessThan(GRAVITY_INTERVAL_MS);
+    expect(piece2FirstRow).toBeGreaterThan(GRAVITY_INTERVAL_MS);
+    expect(piece2FirstRow).toBeGreaterThan(piece1FastRow + 100);
+  });
+
+  it("sustained soft drop is UNAFFECTED by the easing (crisp, flat, fast)", () => {
+    const { c, step } = productionWithClock(1);
+    startAndRelease(c, step);
+    // Engage sustained soft drop; it must descend at the flat SOFT_DROP cadence,
+    // far faster than even the floored natural gravity, and NOT accelerate.
+    c.pressSoftDrop();
+    const rowAfterPress = c.getRenderState().active!.pos.row;
+    // A handful of 10ms frames at the 60ms soft-drop cadence drop several rows
+    // FAST — far more than natural gravity's ~760ms first row would in the same
+    // span (which would still be on its first row). This is the distinct, crisp
+    // soft-drop feel surviving the easing change.
+    for (let i = 0; i < 20; i++) step(10); // 200ms of held soft drop
+    const rowAfterHold = c.getRenderState().active!.pos.row;
+    expect(rowAfterHold - rowAfterPress).toBeGreaterThanOrEqual(2);
+    c.releaseSoftDrop();
+    c.stop();
+  });
+
+  it("hard drop is UNAFFECTED by the easing (instant slam to the floor)", () => {
+    const { c, step } = productionWithClock(1);
+    startAndRelease(c, step);
+    // One hard-drop press lands the piece on the floor and locks it immediately,
+    // regardless of how long it had (not) been falling — no easing involvement.
+    c.pressHardDrop();
+    const s = c.getRenderState();
+    // The piece settled on the bottom rows of the spawn columns (7-8).
+    expect(s.grid[ROWS - 1]![7]).not.toBeNull();
+    expect(s.grid[ROWS - 2]![7]).not.toBeNull();
+    c.stop();
   });
 });
