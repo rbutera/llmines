@@ -15,7 +15,7 @@ export default defineConfig({
   testDir: "./e2e",
   // production-start guard + the v2.7 audio-structure probe proof both need the
   // REAL production bundle (audio enabled, no TEST_MODE).
-  testMatch: /(production-start|audio-structure)\.spec\.ts/,
+  testMatch: /(production-start|audio-structure|wrap-stall)\.spec\.ts/,
   // Serial: the audio-structure specs run long in-page clear loops that would
   // starve the rAF-driven sweep assertions in production-start if run in parallel
   // against the single shared prod server.
