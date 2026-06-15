@@ -185,22 +185,22 @@ export function ThreeRenderer({
         boxShadow: `0 0 24px -18px ${palette.gem}66`,
       }}
     >
-      {/* Settings panel + toggle — DEV-ONLY (`?dev=1`). Hidden for normal players
-          so the production chrome stays clean; when shown, the panel is hidden
-          until the button toggles it so it never blocks play. */}
+      {/* Leva store panel — ALWAYS mounted so leva does not auto-inject its OWN
+          default (open) panel from the `useControls`/`useVisualSettings` hooks.
+          It stays HIDDEN for normal players; the dev toggle (`?dev=1`) is the only
+          way to open it, so the production chrome stays clean and nothing blocks play. */}
+      <Leva hidden={!devPanelEnabled || !panelOpen} collapsed={false} />
+      {/* Settings toggle — DEV-ONLY (`?dev=1`). Absent for normal players. */}
       {devPanelEnabled && (
-        <>
-          <Leva hidden={!panelOpen} collapsed={false} />
-          <button
-            type="button"
-            data-testid="settings-toggle"
-            onClick={() => setPanelOpen((v) => !v)}
-            aria-pressed={panelOpen}
-            className="absolute top-2 right-2 z-20 rounded-md border border-white/15 bg-black/40 px-2 py-1 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60"
-          >
-            {panelOpen ? "Hide settings" : "Settings"}
-          </button>
-        </>
+        <button
+          type="button"
+          data-testid="settings-toggle"
+          onClick={() => setPanelOpen((v) => !v)}
+          aria-pressed={panelOpen}
+          className="absolute top-2 right-2 z-20 rounded-md border border-white/15 bg-black/40 px-2 py-1 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60"
+        >
+          {panelOpen ? "Hide settings" : "Settings"}
+        </button>
       )}
 
       <Canvas
