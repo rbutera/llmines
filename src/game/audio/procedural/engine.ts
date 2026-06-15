@@ -1284,14 +1284,52 @@ export class InteractiveAudioEngine {
   }
 
   /**
-   * The next loop-wrap boundary on the transport-0 / player-wrap grid: the smallest
-   * multiple of `interval` strictly after now. Safe fallback to `now + interval`.
+   * The next loop-wrap boundary, returned as an integer-TICK transport time guaranteed to
+   * be strictly AFTER the transport's current tick — computed and clamped in the TICK
+   * domain, not seconds.
+   *
+   * THE WRAP-STALL FIX. Tone's Transport fires a scheduled event ONLY when its discrete
+   * tick processor lands on the EXACT integer tick the event was converted to
+   * (`Timeline.forEachAtTime` fires on `EQ(event.tick, currentTick)`; a SKIPPED or already-
+   * PAST tick is never caught up — see Transport `_processTick` / Clock `_loop`'s
+   * `forEachTickBetween`). `scheduleOnce(cb, seconds)` converts the seconds to ticks at the
+   * CURRENT bpm. The old code computed the boundary as a seconds-multiple `k * interval`
+   * (interval = the segment's bar-window in seconds, derived from the song's ORIGINAL bpm)
+   * and compared it against `transport.seconds`. That is correct ONLY while the live bpm is
+   * the one that produced `interval`. After a {@link switchTrack} → {@link applyTempo}
+   * changes the live bpm MID-TRANSPORT, the seconds↔ticks mapping shifts: `k * interval`
+   * seconds converted to ticks lands BEHIND the transport's current tick (observed: a
+   * boundary computed at tick 12288 while the transport was already at tick 12301). Tone
+   * silently drops that past-tick event, so the swapped-in song's loop-tick + tier-tick
+   * never fire and its intro never builds or advances — the song1→song2→song1 wrap stall.
+   *
+   * Working in ticks and clamping to `> currentTick` makes the boundary always a tick the
+   * transport WILL still process, regardless of bpm changes. We keep the seconds-derived
+   * multiple as the musical target (phase-aligned to the transport-0 grid the players loop
+   * on — their loopStart/loopEnd are untouched; this governs only WHEN the engine re-
+   * evaluates), then snap it to a whole tick and bump it past the current tick if the bpm
+   * shift pulled it into the past. Returns a `"<ticks>i"` transport-time string so
+   * scheduleOnce uses the exact tick with no lossy seconds round-trip. Safe fallback to
+   * now+interval seconds if any tick conversion fails.
    */
-  private nextWrapBoundary(interval: number): number {
+  private nextWrapBoundary(interval: number): number | string {
     try {
-      const now = ToneRT!.getTransport().seconds;
+      const transport = ToneRT!.getTransport();
+      const now = transport.seconds;
       const k = Math.floor(now / interval + 1e-9) + 1;
-      return k * interval;
+      const seconds = k * interval;
+      // Musical target → ticks, snapped to a whole tick the processor can land on.
+      let tick = Math.round(ToneRT!.Time(seconds).toTicks());
+      // Clamp into the FUTURE in the TICK domain: the bpm shift can map the seconds target
+      // to a tick at/behind the live transport tick, which Tone would drop. Step it forward
+      // by whole loop-intervals (kept phase-aligned) until it is strictly after now.
+      const curTick = Math.ceil(transport.ticks);
+      const intervalTicks = Math.max(
+        1,
+        Math.round(ToneRT!.Time(interval).toTicks()),
+      );
+      while (tick <= curTick) tick += intervalTicks;
+      return `${tick}i`;
     } catch {
       return this.toneNow() + interval;
     }
@@ -1805,6 +1843,25 @@ export class InteractiveAudioEngine {
    */
   __injectClears(count = 1): void {
     for (let i = 0; i < Math.max(0, count); i++) this.onClear(2, 0);
+  }
+
+  /**
+   * TEST-ONLY: read raw transport state, for the REAL-TRANSPORT wrap-stall probe (which
+   * verifies the engine's OWN scheduled boundaries keep firing after a bpm-changing
+   * switchTrack — the synchronous __stepBoundary path can't catch a dead scheduled tick).
+   * Exposed only via the `?audiodev=1` engine handle.
+   */
+  __transportInfo(): { seconds: number; state: string; scheduledCount: number } {
+    try {
+      const t = ToneRT!.getTransport();
+      return {
+        seconds: t.seconds,
+        state: String(t.state),
+        scheduledCount: this.scheduledEvents.length,
+      };
+    } catch {
+      return { seconds: -1, state: "err", scheduledCount: -1 };
+    }
   }
 
   /**
