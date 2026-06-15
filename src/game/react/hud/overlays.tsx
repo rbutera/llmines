@@ -408,12 +408,14 @@ export function GameOverView({
             ★ NEW PERSONAL BEST ★
           </div>
         )}
-        {/* Saved confirmation (signed in + username chosen). */}
+        {/* Saved confirmation (signed in + username chosen). aria-live so a
+            screen-reader user is told the run was saved. */}
         {eligible && saved && (
           <div
             data-testid="score-saved"
             className="hint"
             style={{ marginTop: 8 }}
+            aria-live="polite"
           >
             ✓ saved{best != null ? ` · your best · ${fmt(best)}` : ""}
           </div>

@@ -61,7 +61,9 @@ export function UsernameSelect({ onDone }: { onDone: () => void }) {
     <div
       className="overlay"
       data-testid="username-select"
-      aria-label="Choose your username"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="username-select-title"
     >
       <div className="bevel modal" style={{ width: "min(440px, 88%)" }}>
         <Corners size={14} inset={7} />
@@ -70,6 +72,7 @@ export function UsernameSelect({ onDone }: { onDone: () => void }) {
             ◈ IDENTIFY PILOT ◈
           </div>
           <div
+            id="username-select-title"
             className="glow-text cap"
             style={{ fontSize: 30, fontWeight: 800 }}
           >
