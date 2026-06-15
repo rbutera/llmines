@@ -117,15 +117,19 @@ describe("fallProgress gating (bottom-row settle)", () => {
   it("reports zero fall offset once the piece rests on the bottom row", () => {
     const { c, step } = productionWithClock(1);
     startAndRelease(c, step);
-    // The piece stages at row -2 now, so it descends ROWS rows to the floor
-    // (pos.row = ROWS-2). Under the eased (accelerating) natural gravity that full
-    // descent takes ~5.0s, not the flat 7s, so ~50 post-hold frames -> ~5000ms
-    // lands it ON the floor and resting (it sits at the floor for ~2 frames before
-    // the lock+respawn). The resting gate must read fallProgress 0 so the leftover
-    // accumulation cannot draw the piece below the canvas.
-    for (let i = 0; i < 50; i++) step(100);
+    // The piece stages at row -2 and descends ROWS rows to the floor (pos.row =
+    // ROWS-2). The exact wall-clock time to reach the floor depends on the eased
+    // (accelerating) natural-gravity curve, so rather than a magic frame count
+    // (which the curve tuning shifts) we drive fine frames until the piece is
+    // RESTING on the bottom row, then assert the resting gate — robust to the
+    // curve constants. We stop the instant it reaches the floor row, before the
+    // lock+respawn (which would put a fresh piece back at the spawn row).
+    let rs = c.getRenderState();
+    for (let i = 0; i < 2000 && rs.active!.pos.row < ROWS - 2; i++) {
+      step(10);
+      rs = c.getRenderState();
+    }
 
-    const rs = c.getRenderState();
     expect(rs.active).not.toBeNull();
     expect(rs.active!.pos.row).toBe(ROWS - 2); // bottom cells on the last row
     expect(rs.fallProgress).toBe(0); // resting -> no downward overshoot

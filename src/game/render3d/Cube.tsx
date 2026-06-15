@@ -310,23 +310,23 @@ export function Cube({
       <mesh geometry={geom}>
         {bright ? (
           <>
-            {/* [0] +x right — illuminating near-white side face */}
+            {/* [0] +x right — illuminating bright side face (palette-driven) */}
             <meshStandardMaterial
               ref={rightRef}
               attach="material-0"
-              color="#eaf6ff"
-              emissive="#eaf6ff"
+              color={palette.brightFace}
+              emissive={palette.brightFace}
               emissiveIntensity={settings.brightFaceIntensity}
               toneMapped={false}
               metalness={0.2}
               roughness={0.3}
             />
-            {/* [1] -x left — illuminating near-white side face */}
+            {/* [1] -x left — illuminating bright side face (palette-driven) */}
             <meshStandardMaterial
               ref={leftRef}
               attach="material-1"
-              color="#eaf6ff"
-              emissive="#eaf6ff"
+              color={palette.brightFace}
+              emissive={palette.brightFace}
               emissiveIntensity={settings.brightFaceIntensity}
               toneMapped={false}
               metalness={0.2}
@@ -335,7 +335,7 @@ export function Cube({
             {/* [2] +y top — glassy/transparent */}
             <meshStandardMaterial
               attach="material-2"
-              color="#cdeafe"
+              color={palette.brightGlass}
               transparent
               opacity={glassOpacity}
               depthWrite={false}
@@ -345,7 +345,7 @@ export function Cube({
             {/* [3] -y bottom — glassy/transparent */}
             <meshStandardMaterial
               attach="material-3"
-              color="#cdeafe"
+              color={palette.brightGlass}
               transparent
               opacity={glassOpacity}
               depthWrite={false}
@@ -355,7 +355,7 @@ export function Cube({
             {/* [4] +z front — glassy/transparent */}
             <meshStandardMaterial
               attach="material-4"
-              color="#d6f0ff"
+              color={palette.brightGlass}
               transparent
               opacity={glassOpacity}
               depthWrite={false}
@@ -365,7 +365,7 @@ export function Cube({
             {/* [5] -z back — glassy/transparent */}
             <meshStandardMaterial
               attach="material-5"
-              color="#cdeafe"
+              color={palette.brightGlass}
               transparent
               opacity={glassOpacity}
               depthWrite={false}
@@ -436,7 +436,7 @@ export function Cube({
         )}
         {/* Glowing edge frame — hero element. White on bright (blooms), dim
             accent on dark. Child of the mesh so it follows the shear. */}
-        <Edges color={bright ? "#ffffff" : palette.darkEdge} />
+        <Edges color={bright ? palette.brightEdge : palette.darkEdge} />
       </mesh>
 
       {/* Bright inner shape — skin 1 = glowing ORB (sphere); skin 2 = faceted
@@ -447,8 +447,8 @@ export function Cube({
           <sphereGeometry args={[coreR, 20, 20]} />
           <meshStandardMaterial
             ref={coreRef}
-            color="#f4fbff"
-            emissive="#f4fbff"
+            color={palette.brightCore}
+            emissive={palette.brightCore}
             emissiveIntensity={settings.innerLightIntensity}
             toneMapped={false}
           />
@@ -459,8 +459,8 @@ export function Cube({
           <octahedronGeometry args={[size * 0.42, 0]} />
           <meshStandardMaterial
             ref={coreRef}
-            color="#f4fbff"
-            emissive="#f4fbff"
+            color={palette.brightCore}
+            emissive={palette.brightCore}
             emissiveIntensity={settings.innerLightIntensity}
             toneMapped={false}
             metalness={0.45}

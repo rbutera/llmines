@@ -1,6 +1,7 @@
 "use client";
 
 import { PREVIEW_DEPTH, type GeneratedPiece } from "../core";
+import type { BoardPalette } from "../skins/skins";
 import type { VisualSettings } from "./settings";
 import { Cube } from "./Cube";
 import { BOARD_H, BOARD_W, CELL } from "./layout";
@@ -56,12 +57,16 @@ export function PreviewDock({
   queue,
   settings,
   skinId,
+  palette,
 }: {
   queue: GeneratedPiece[];
   settings: VisualSettings;
   /** Active skin id — so the preview's cell shapes match the board's per-skin
       motif (sphere/X for skin1, diamond/ring for skin2). */
   skinId?: string;
+  /** Active skin's board palette — so the preview's bright/dark cell colours
+      match the board (e.g. skin 2 green/red), not the default neon palette. */
+  palette?: BoardPalette;
 }) {
   // Show the next PREVIEW_DEPTH pieces (the queue head spawns next).
   const shown = queue.slice(0, PREVIEW_DEPTH);
@@ -94,6 +99,9 @@ export function PreviewDock({
                   // Match the board's per-skin cell shape so the preview reads as
                   // the same world (sphere/X for skin1, diamond/ring for skin2).
                   skinId={skinId}
+                  // Match the board's per-skin cell COLOURS (e.g. skin 2 green/
+                  // red) so the preview never falls back to the neon palette.
+                  palette={palette}
                   // No beat breathe / heat on previews — keep them calm reference.
                   noBeat
                   // Flat 2D: previews are plain squares, no per-column shear/tilt.
