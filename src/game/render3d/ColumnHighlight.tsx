@@ -5,34 +5,41 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { COLS } from "../core";
 import type { RenderState } from "../engine/controller";
-import { BOARD_H, CELL, cellX } from "./layout";
+import { BOARD_H, CELL, GAP, cellX } from "./layout";
 
 /**
- * CURRENT-COLUMN HIGHLIGHT (render-only position indicator). Lightens the full
- * column(s) the active 2x2 piece currently occupies, so the player can read where
- * the piece will land at a glance — a soft vertical wash behind the stack, one
- * strip per occupied column (the 2x2 spans two columns => two strips).
+ * CURRENT-COLUMN INDICATOR (render-only). Brightens the two VERTICAL GRID LINES
+ * that BORDER the active 2x2 piece's footprint — the line on the LEFT of the
+ * leftmost occupied column and the line on the RIGHT of the rightmost — so the
+ * player can read where the piece will land at a glance.
  *
- * Purely cosmetic. Driven each frame from the live controller snapshot (the same
- * `snapRef` Scene3D animates the active piece from), so it tracks the piece with
- * zero React churn and updates as the piece moves L/R. Off when there is no
- * active piece or the game is over.
+ * Deliberately NOT a column wash: an earlier full-cell wash sat behind the stack
+ * and crushed the contrast of dark blocks in that column (they vanished). These
+ * are thin strips sitting exactly ON the cell-border grid lines (between blocks,
+ * never behind a block body), so block contrast is untouched — it just makes the
+ * bounding grid lines a bit brighter than the rest, exactly like the static grid
+ * lines but lit.
  *
- * Two pooled additive plane strips (no per-frame allocation): we only ever need
- * two (a 2x2 footprint), parked off-screen when idle. A gentle, slow breathe on
- * the brightness keeps it alive without strobing (a11y: a smooth low-amplitude
- * cosine, never a flash). The strips sit just behind the cubes so the blocks
- * still read on top of the wash.
+ * Two pooled strips (a 2x2 footprint has exactly two bounding lines), parked
+ * off-screen when idle. Driven each frame from the live controller snapshot (no
+ * React churn); eased so the lines glide as the piece moves L/R. Off when there
+ * is no active piece or the game is over.
  */
 
-const STRIP_COUNT = 2; // a 2x2 piece spans exactly two columns
+const STRIP_COUNT = 2; // left + right bounding grid line
+/** Strip thickness as a fraction of a cell — a touch fatter than a 1px grid line. */
+const LINE_W = CELL * 0.08;
+/** Peak opacity of a lit bounding line. */
+const LINE_PEAK = 0.85;
+/** z of the grid lines (see CellGrid) — sit a hair in front so we overlay them. */
+const GRID_Z = -(CELL - GAP) - 0.04 + 0.01;
 
 export function ColumnHighlight({
   snapRef,
-  /** 0..1 peak opacity of the wash. Subtle by default. */
-  opacity = 0.16,
-  /** Wash tint (additive). A cool near-white reads as "lit" on any skin. */
-  color = "#bcd2ff",
+  /** Overall brightness scale (1 = default). */
+  opacity = 1,
+  /** Grid-line colour to BRIGHTEN (the skin's grid/edge colour). */
+  color = "#3a2a5e",
 }: {
   snapRef: React.RefObject<RenderState | null>;
   opacity?: number;
@@ -40,10 +47,15 @@ export function ColumnHighlight({
 }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
-  const baseColor = useMemo(() => new THREE.Color(color), [color]);
+  // The lit line colour: the grid colour lerped toward white so it reads as the
+  // SAME line, just brighter (not a foreign-colour glow).
+  const litColor = useMemo(
+    () => new THREE.Color(color).lerp(new THREE.Color("#ffffff"), 0.5),
+    [color],
+  );
   const slotColor = useMemo(() => new THREE.Color(), []);
-  // Per-column live brightness (eased toward target) so a column lights/dims
-  // smoothly as the piece arrives/leaves, never snapping.
+  // Per-strip eased brightness so a line lights/dims smoothly as the piece
+  // arrives/leaves, never snapping.
   const level = useRef<number[]>([0, 0]);
 
   useFrame((s, dt) => {
@@ -52,25 +64,26 @@ export function ColumnHighlight({
     const clampedDt = Math.min(dt, 0.05);
     const rs = snapRef.current;
     const active = rs && !rs.gameOver ? rs.active : null;
-    // The two columns the piece occupies (or none).
-    const cols: number[] = active
-      ? [active.pos.col, active.pos.col + 1]
-      : [];
-    // Gentle breathe (slow cosine, low amplitude) so the wash is alive but calm.
-    const breathe = 0.85 + 0.15 * Math.cos(s.clock.elapsedTime * 2.4);
+    // x of the two bounding grid lines: left edge of the leftmost occupied column
+    // and right edge of the rightmost. cellX(col) is the column centre.
+    const c = active?.pos.col;
+    const edges: number[] =
+      c != null && c >= 0 && c + 1 < COLS
+        ? [cellX(c) - CELL / 2, cellX(c + 1) + CELL / 2]
+        : [];
+    // Very subtle breathe so the lit lines feel alive but calm (no strobe).
+    const breathe = 0.92 + 0.08 * Math.cos(s.clock.elapsedTime * 2.2);
 
     for (let i = 0; i < STRIP_COUNT; i++) {
-      const col = cols[i];
-      const onBoard = col != null && col >= 0 && col < COLS;
-      const target = onBoard ? 1 : 0;
-      // Ease the per-strip level toward its target (fast attack, smooth release).
+      const x = edges[i];
+      const on = x != null;
+      const target = on ? 1 : 0;
       const cur = level.current[i]!;
-      const k = Math.min(1, clampedDt * 9);
+      const k = Math.min(1, clampedDt * 10);
       const next = cur + (target - cur) * k;
       level.current[i] = next;
 
-      if (next <= 0.002 || !onBoard) {
-        // Idle / off-board: park off-screen so it draws nothing.
+      if (next <= 0.002 || !on) {
         dummy.position.set(0, 0, -9999);
         dummy.scale.setScalar(0.0001);
         dummy.updateMatrix();
@@ -79,16 +92,15 @@ export function ColumnHighlight({
         continue;
       }
 
-      // A full-height strip sitting one cell wide, centred on the column, just
-      // behind the cubes (negative z) so the blocks render on top of the wash.
-      dummy.position.set(cellX(col), 0, -(CELL - 0.06) - 0.02);
-      dummy.scale.set(CELL, BOARD_H, 1);
+      // A thin full-height strip ON the bounding grid line.
+      dummy.position.set(x, 0, GRID_Z);
+      dummy.scale.set(LINE_W, BOARD_H, 1);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
-      const b = next * breathe * opacity;
+      const b = next * breathe * LINE_PEAK * opacity;
       mesh.setColorAt(
         i,
-        slotColor.setRGB(baseColor.r * b, baseColor.g * b, baseColor.b * b),
+        slotColor.setRGB(litColor.r * b, litColor.g * b, litColor.b * b),
       );
     }
     mesh.instanceMatrix.needsUpdate = true;

@@ -639,16 +639,12 @@ export function Scene3D({
 
       <CellGrid opacity={settings.gridOpacity} color={palette?.darkEdge} />
 
-      {/* CURRENT-COLUMN HIGHLIGHT: a soft full-height wash behind the two columns
-          the active piece occupies (a landing indicator). Driven from the live
-          snapshot in its own useFrame; off when no active piece / game over. Sits
-          behind the cubes so the blocks render on top. */}
+      {/* CURRENT-COLUMN INDICATOR: brightens the two VERTICAL GRID LINES bordering
+          the active piece's columns (a landing indicator) — NOT a column wash (that
+          crushed dark-block contrast). Brightens the skin's grid colour; driven from
+          the live snapshot; off when no active piece / game over. */}
       {settings.columnHighlightEnabled && (
-        <ColumnHighlight
-          snapRef={snapRef}
-          opacity={settings.columnHighlightOpacity}
-          color={palette?.gem}
-        />
+        <ColumnHighlight snapRef={snapRef} color={palette?.darkEdge} />
       )}
 
       {/* Settled stack. Calm/inert by default; cells the sweep is about to clear
