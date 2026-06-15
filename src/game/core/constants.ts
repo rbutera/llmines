@@ -77,16 +77,19 @@ export const SOFT_DROP_INTERVAL_MS = 60;
 // well below it once a piece has been falling a while.
 
 /** First-row interval for a fresh piece — a touch slower than the legacy 700ms,
- * so initial placement feels deliberate. */
+ * so initial placement feels deliberate. Kept near 760 so the initial
+ * placement window is unchanged even as the rest of the curve accelerates. */
 export const GRAVITY_EASE_START_MS = 760;
-/** Floor the eased interval decays toward (fastest natural fall, ~2.7x the
- * start speed). Stays comfortably above {@link SOFT_DROP_INTERVAL_MS} so a
- * sustained soft-drop is still visibly, distinctly faster than max gravity. */
-export const GRAVITY_EASE_FLOOR_MS = 280;
-/** Decay time-constant (ms). At ~2600ms the curve has shed ~63% of the
- * start→floor gap; tuned so a piece reaches near-floor cadence around the time
- * it has fallen the depth of the well. */
-export const GRAVITY_EASE_TAU_MS = 2600;
+/** Floor the eased interval decays toward (fastest natural fall, ~4.1x the
+ * start speed). Lowered (was 280) for a more pronounced acceleration and a
+ * faster terminal fall. Stays comfortably above {@link SOFT_DROP_INTERVAL_MS}
+ * (~3x) so a sustained soft-drop is still visibly, distinctly faster than max
+ * gravity. */
+export const GRAVITY_EASE_FLOOR_MS = 185;
+/** Decay time-constant (ms). Shortened (was 2600) so the curve sheds ~63% of
+ * the start→floor gap in ~1600ms — the piece reaches near-floor cadence sooner,
+ * making the speed-up more pronounced earlier in the fall. */
+export const GRAVITY_EASE_TAU_MS = 1600;
 
 /**
  * New-block hold window (ms): a freshly spawned piece holds at the top for one

@@ -97,4 +97,21 @@ describe("palette cohesion", () => {
     expect(SKIN_NEON.board.darkCoreEmissive).toBe("#7c3aed");
     expect(SKIN_NEON.board.background).toBe("#0a0a12");
   });
+  it("the neon skin keeps the near-white BRIGHT cell (unchanged by the recolour)", () => {
+    // Skin 1 must stay the round-2 white crystal even though the bright colour is
+    // now palette-driven (so the bright-cell recolour is skin-2-only).
+    expect(SKIN_NEON.board.brightFace).toBe("#eaf6ff");
+    expect(SKIN_NEON.board.brightCore).toBe("#f4fbff");
+    expect(SKIN_NEON.board.brightGlass).toBe("#cdeafe");
+    expect(SKIN_NEON.board.brightEdge).toBe("#ffffff");
+  });
+  it("the pipeline skin is a RED + GREEN scheme (bright green, dark red)", () => {
+    // Bright cell (block colour 0) = vivid green; dark cell (colour 1) = vivid red.
+    expect(SKIN_PIPELINE.board.brightFace).toBe("#5dff8f");
+    expect(SKIN_PIPELINE.board.brightCore).toBe("#a8ffc4");
+    expect(SKIN_PIPELINE.board.darkEmissive).toBe("#e02430");
+    expect(SKIN_PIPELINE.board.darkCoreEmissive).toBe("#ff4d4d");
+    // The bright (green) and dark (red) cells are clearly distinct colours.
+    expect(SKIN_PIPELINE.board.brightFace).not.toBe(SKIN_PIPELINE.board.darkFace);
+  });
 });

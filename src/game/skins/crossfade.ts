@@ -47,6 +47,10 @@ export function lerpHex(a: string, b: string, t: number): string {
 export function lerpBoard(a: BoardPalette, b: BoardPalette, t: number): BoardPalette {
   return {
     background: lerpHex(a.background, b.background, t),
+    brightFace: lerpHex(a.brightFace, b.brightFace, t),
+    brightCore: lerpHex(a.brightCore, b.brightCore, t),
+    brightGlass: lerpHex(a.brightGlass, b.brightGlass, t),
+    brightEdge: lerpHex(a.brightEdge, b.brightEdge, t),
     darkFace: lerpHex(a.darkFace, b.darkFace, t),
     darkEmissive: lerpHex(a.darkEmissive, b.darkEmissive, t),
     darkCore: lerpHex(a.darkCore, b.darkCore, t),

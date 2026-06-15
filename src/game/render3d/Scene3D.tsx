@@ -720,7 +720,12 @@ export function Scene3D({
 
       {/* In-canvas next-piece preview dock (top-left gutter). */}
       {settings.previewEnabled && (
-        <PreviewDock queue={queue} settings={settings} skinId={skinId} />
+        <PreviewDock
+          queue={queue}
+          settings={settings}
+          skinId={skinId}
+          palette={palette}
+        />
       )}
     </group>
   );

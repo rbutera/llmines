@@ -31,6 +31,18 @@ import { makeTrack, type TrackBundle, TRACK_SONG1 } from "../audio/procedural/en
 export interface BoardPalette {
   /** Canvas clear colour (the well's background). */
   background: string;
+  /**
+   * Bright-cell (block colour 0) side-face + glass tint. Skin 1 keeps this
+   * near-white (the round-2 baked-in look); a skin can recolour the BRIGHT cell
+   * (e.g. skin 2 = green) by setting these. The renderer reads them so the
+   * bright cell is no longer hard-coded white. */
+  brightFace: string;
+  /** Bright-cell inner-shape (orb / diamond) base + emissive colour. */
+  brightCore: string;
+  /** Bright-cell glass-face tint (top/bottom/front/back translucent faces). */
+  brightGlass: string;
+  /** Bright-cell glowing edge-frame colour. */
+  brightEdge: string;
   /** Dark-cell side-face base colour. */
   darkFace: string;
   /** Dark-cell emissive (the dominant board glow). */
@@ -88,6 +100,12 @@ export const SKIN_NEON: Skin = {
   tempo: 109.957,
   board: {
     background: "#0a0a12",
+    // Bright cell = the round-2 near-white crystal (unchanged from the baked-in
+    // hard-coded values, now sourced from the palette).
+    brightFace: "#eaf6ff",
+    brightCore: "#f4fbff",
+    brightGlass: "#cdeafe",
+    brightEdge: "#ffffff",
     darkFace: "#1a0e33",
     darkEmissive: "#3b1d6e",
     darkCore: "#2a1147",
@@ -105,10 +123,12 @@ export const SKIN_NEON: Skin = {
 };
 
 /**
- * Skin 2 — "Pipeline": a cohesive lime/emerald scheme. The palette is built the
- * same way the neon one is (dark cells glow the accent, the canvas is a near-
- * black tuned slightly toward the accent's hue, the gem is the brightest accent)
- * so it reads as cohesive — a different WORLD, not a clash.
+ * Skin 2 — "Pipeline": a RED + GREEN scheme. The BRIGHT cell (block colour 0) is
+ * a vivid GREEN crystal; the DARK cell (block colour 1) is a vivid RED. Both are
+ * tuned to read clearly distinct on the dark video backdrop with strong contrast
+ * (the red is kept bright/saturated rather than near-black so dark blocks don't
+ * lose contrast). The canvas is a near-black nudged toward red, the edges/cores
+ * carry the cell's own hue, and the gem stays a high-contrast accent.
  */
 export const SKIN_PIPELINE: Skin = {
   id: "pipeline",
@@ -117,20 +137,27 @@ export const SKIN_PIPELINE: Skin = {
   // song2 "Verde el Pipeline" manifest tempo (public/audio/manifest.json).
   tempo: 126.05,
   board: {
-    background: "#06120c",
-    darkFace: "#0c2a1a",
-    darkEmissive: "#1d6e45",
-    darkCore: "#11472a",
-    darkCoreEmissive: "#22c55e",
-    darkBack: "#082414",
-    darkEdge: "#4a9e6b",
-    gem: "#a3ff5c",
+    background: "#120607",
+    // BRIGHT cell = vivid green crystal (face / inner shape / glass / edge).
+    brightFace: "#5dff8f",
+    brightCore: "#a8ffc4",
+    brightGlass: "#7dffaa",
+    brightEdge: "#caffd9",
+    // DARK cell = vivid red (kept bright + saturated so it holds contrast on the
+    // dark backdrop, addressing the earlier "dark blocks lose contrast" flag).
+    darkFace: "#7a1418",
+    darkEmissive: "#e02430",
+    darkCore: "#5e0f12",
+    darkCoreEmissive: "#ff4d4d",
+    darkBack: "#3d090b",
+    darkEdge: "#ff6b6b",
+    gem: "#ffd24d",
   },
   chrome: {
-    base: "#060f09",
-    accent: "#22c55e",
-    accentBright: "#a3ff5c",
-    accentDeep: "#15803d",
+    base: "#120607",
+    accent: "#e02430",
+    accentBright: "#5dff8f",
+    accentDeep: "#9e1119",
   },
 };
 
