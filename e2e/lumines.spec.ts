@@ -107,26 +107,33 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
   let s = await getState(page);
   expect(s.grid.length).toBe(10);
   expect(s.grid[0]!.length).toBe(16);
-  // piece visible at cols 7-8, rows 0-1
-  expect(s.grid[0]![7]).toBe(0);
-  expect(s.grid[0]![8]).toBe(0);
-  expect(s.grid[1]![7]).toBe(0);
+  // A freshly spawned piece STAGES ABOVE the field (SPAWN_ROW = -2, so the 2x2
+  // occupies rows -2/-1) and is held for one beat before gravity resumes. The
+  // grid view only composites IN-FIELD cells (rows 0-9), so right after spawn the
+  // staged piece does not appear anywhere in grid rows 0-9.
+  expect(s.grid[0]![7]).toBe(null);
+  expect(s.grid[1]![7]).toBe(null);
   // freshly spawned: held at the top (new-block hold)
   expect(s.hold.active).toBe(true);
 
-  // first tick lapses the hold in place — no descent yet
+  // first tick lapses the hold in place — no descent yet, still staged above the
+  // field, so nothing shows in the grid view.
   await api(page, "tick");
   s = await getState(page);
   expect(s.hold.active).toBe(false);
-  expect(s.grid[0]![7]).toBe(0);
-  expect(s.grid[2]![7]).toBe(null);
+  expect(s.grid[0]![7]).toBe(null);
 
-  // subsequent ticks descend at normal gravity
+  // tick 2: descends to row -1 (cells rows -1/0) — the top-centre cell enters the
+  // field at row 0. tick 3: descends to row 0 (cells rows 0/1) — fully in-field,
+  // entering at the top centre (cols 7-8).
+  await api(page, "tick");
   await api(page, "tick");
   s = await getState(page);
+  expect(s.grid[0]![7]).toBe(0);
+  expect(s.grid[0]![8]).toBe(0);
   expect(s.grid[1]![7]).toBe(0);
-  expect(s.grid[2]![7]).toBe(0);
-  expect(s.grid[0]![7]).toBe(null);
+  expect(s.grid[1]![8]).toBe(0);
+  expect(s.grid[2]![7]).toBe(null);
 
   // tick to the floor and beyond — must NOT auto-spawn a new piece
   for (let i = 0; i < 20; i++) await api(page, "tick");
@@ -139,24 +146,43 @@ test("spawn places at top-centre; tick advances; tick never auto-spawns", async 
 });
 
 test("keyboard moves and rotates the active piece", async ({ page }) => {
+  // Pieces stage ABOVE the field (rows -2/-1) and are held for one beat, so they
+  // are not in the grid view (rows 0-9) until they descend. Move/rotate still
+  // apply to the staged piece; we assert the result by driving the piece down
+  // into the field (one tick lapses the hold, then two ticks bring rows -2 -> 0)
+  // and reading the composited grid. `descend()` does exactly that.
+  const descend = async () => {
+    await api(page, "tick"); // lapse the new-block hold (no descent)
+    await api(page, "tick"); // row -2 -> -1 (enters field at row 0)
+    await api(page, "tick"); // row -1 -> 0  (fully in-field, rows 0/1)
+  };
+
   await page.getByTestId("start-button").click();
+
+  // Move RIGHT one column while staged -> the piece enters at cols 8-9.
   await api(page, "spawn", [
     [0, 1],
     [0, 1],
   ] as Piece);
-
   await page.keyboard.press("l"); // move right -> cols 8-9
+  await descend();
   let s = await getState(page);
   expect(s.grid[0]![8]).toBe(0);
   expect(s.grid[0]![9]).toBe(1);
+  expect(s.grid[1]![8]).toBe(0);
+  expect(s.grid[1]![9]).toBe(1);
 
-  await page.keyboard.press("h"); // back to cols 7-8
-  s = await getState(page);
-  expect(s.grid[0]![7]).toBe(0);
-  expect(s.grid[0]![8]).toBe(1);
-
-  // rotate CW: [[0,1],[0,1]] -> [[0,0],[1,1]]
-  await page.keyboard.press("k");
+  // Move right then back left (net cols 7-8) and rotate CW, all while staged.
+  // Spawning again locks the previous piece; place it at a column it cannot
+  // collide with on entry. rotate CW: [[0,1],[0,1]] -> [[0,0],[1,1]].
+  await api(page, "spawn", [
+    [0, 1],
+    [0, 1],
+  ] as Piece);
+  await page.keyboard.press("l"); // right -> cols 8-9
+  await page.keyboard.press("h"); // back -> cols 7-8
+  await page.keyboard.press("k"); // rotate CW -> [[0,0],[1,1]]
+  await descend();
   s = await getState(page);
   expect(s.grid[0]![7]).toBe(0);
   expect(s.grid[0]![8]).toBe(0);
