@@ -39,15 +39,15 @@ describe("convex users (real functions, in-memory)", () => {
       name: "Mark Jacobs",
       email: "mark@example.com",
     });
-    expect(await mark.query(api.users.suggestUsername, {})).toBe("Mark Jacobs");
+    expect(await mark.query(api.users.suggestUsername, {})).toBe("MarkJacobs");
   });
 
   test("suggestUsername numbers a collision", async () => {
     const t = convexTest(schema, modules);
-    // First Mark claims the name.
+    // First Mark claims the firstName+lastName callsign.
     await t
       .withIdentity({ subject: "g|m1", name: "Mark Jacobs", email: "m1@x.com" })
-      .mutation(api.users.chooseUsername, { username: "Mark Jacobs" });
+      .mutation(api.users.chooseUsername, { username: "MarkJacobs" });
 
     // A second, different Mark gets a numbered suggestion.
     const mark2 = t.withIdentity({
@@ -56,7 +56,7 @@ describe("convex users (real functions, in-memory)", () => {
       email: "m2@x.com",
     });
     expect(await mark2.query(api.users.suggestUsername, {})).toBe(
-      "Mark Jacobs 2",
+      "MarkJacobs2",
     );
   });
 

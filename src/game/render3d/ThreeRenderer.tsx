@@ -128,6 +128,15 @@ export function ThreeRenderer({
   const settings = useVisualSettings();
   const [panelOpen, setPanelOpen] = useState(false);
 
+  // The Settings button + Leva dev panel are GATED behind the `?dev=1` page query
+  // param so normal players never see dev chrome (the visual settings themselves
+  // still load from storage and drive the scene — only the toggle/panel UI is
+  // hidden). Read once from the URL; SSR-safe (false on the server). When absent,
+  // neither the button nor the panel mounts, keeping the production chrome clean.
+  const devPanelEnabled =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("dev") === "1";
+
   // DEV toggle — force every spawned piece to carry a gem so the chain-clear
   // cascade is observable on demand (the natural rate is too sparse to reliably
   // see). This is the ONE control that intentionally touches the core (via the
@@ -176,16 +185,23 @@ export function ThreeRenderer({
         boxShadow: `0 0 24px -18px ${palette.gem}66`,
       }}
     >
-      {/* Settings panel — hidden until toggled so it never blocks play. */}
-      <Leva hidden={!panelOpen} collapsed={false} />
-      <button
-        type="button"
-        onClick={() => setPanelOpen((v) => !v)}
-        aria-pressed={panelOpen}
-        className="absolute top-2 right-2 z-20 rounded-md border border-white/15 bg-black/40 px-2 py-1 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60"
-      >
-        {panelOpen ? "Hide settings" : "Settings"}
-      </button>
+      {/* Settings panel + toggle — DEV-ONLY (`?dev=1`). Hidden for normal players
+          so the production chrome stays clean; when shown, the panel is hidden
+          until the button toggles it so it never blocks play. */}
+      {devPanelEnabled && (
+        <>
+          <Leva hidden={!panelOpen} collapsed={false} />
+          <button
+            type="button"
+            data-testid="settings-toggle"
+            onClick={() => setPanelOpen((v) => !v)}
+            aria-pressed={panelOpen}
+            className="absolute top-2 right-2 z-20 rounded-md border border-white/15 bg-black/40 px-2 py-1 text-xs font-medium text-white/80 backdrop-blur transition hover:bg-black/60"
+          >
+            {panelOpen ? "Hide settings" : "Settings"}
+          </button>
+        </>
+      )}
 
       <Canvas
         dpr={[1, 2]}

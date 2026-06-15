@@ -3,6 +3,7 @@ import { mutation, query } from "./_generated/server";
 import {
   baseSuggestion,
   normalizeUsername,
+  SUGGESTION_NUMBER_SEP,
   suggestUsernameFor,
   usernameKey,
   validateUsername,
@@ -73,7 +74,8 @@ export const suggestUsername = query({
       cache.set(key, hit != null);
     };
     await probe(usernameKey(root));
-    for (let n = 2; n <= 50; n++) await probe(usernameKey(`${root} ${n}`));
+    for (let n = 2; n <= 50; n++)
+      await probe(usernameKey(`${root}${SUGGESTION_NUMBER_SEP}${n}`));
 
     return suggestUsernameFor(
       identity.name ?? null,

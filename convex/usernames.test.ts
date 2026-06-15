@@ -82,17 +82,22 @@ describe("validateUsername", () => {
 });
 
 describe("baseSuggestion (from Google display name)", () => {
-  it("uses the display name verbatim when clean", () => {
-    expect(baseSuggestion("Mark Jacobs")).toBe("Mark Jacobs");
+  it("joins firstName + lastName with no space", () => {
+    expect(baseSuggestion("Mark Jacobs")).toBe("MarkJacobs");
+    expect(baseSuggestion("Rai Butera")).toBe("RaiButera");
   });
 
-  it("collapses whitespace", () => {
-    expect(baseSuggestion("  Mark   Jacobs  ")).toBe("Mark Jacobs");
+  it("keeps a single-token name as-is", () => {
+    expect(baseSuggestion("Alice")).toBe("Alice");
   });
 
-  it("strips emoji / disallowed chars but keeps the name", () => {
-    expect(baseSuggestion("Mark 🚀 Jacobs")).toBe("Mark Jacobs");
-    expect(baseSuggestion("Mark <Jacobs>")).toBe("Mark Jacobs");
+  it("collapses whitespace then joins", () => {
+    expect(baseSuggestion("  Mark   Jacobs  ")).toBe("MarkJacobs");
+  });
+
+  it("strips emoji / disallowed chars but keeps the joined name", () => {
+    expect(baseSuggestion("Mark 🚀 Jacobs")).toBe("MarkJacobs");
+    expect(baseSuggestion("Mark <Jacobs>")).toBe("MarkJacobs");
   });
 
   it("clamps to the max length", () => {
@@ -115,37 +120,37 @@ describe("suggestAvailableUsername (collision numbering)", () => {
   };
 
   it("returns the base when free", () => {
-    expect(suggestAvailableUsername("Mark Jacobs", () => false)).toBe(
-      "Mark Jacobs",
+    expect(suggestAvailableUsername("MarkJacobs", () => false)).toBe(
+      "MarkJacobs",
     );
   });
 
-  it("appends 2 when the base is taken", () => {
-    expect(
-      suggestAvailableUsername("Mark Jacobs", takenSet("Mark Jacobs")),
-    ).toBe("Mark Jacobs 2");
+  it("appends 2 (no space) when the base is taken", () => {
+    expect(suggestAvailableUsername("MarkJacobs", takenSet("MarkJacobs"))).toBe(
+      "MarkJacobs2",
+    );
   });
 
   it("walks up the numbers until free", () => {
     expect(
       suggestAvailableUsername(
-        "Mark Jacobs",
-        takenSet("Mark Jacobs", "Mark Jacobs 2", "Mark Jacobs 3"),
+        "MarkJacobs",
+        takenSet("MarkJacobs", "MarkJacobs2", "MarkJacobs3"),
       ),
-    ).toBe("Mark Jacobs 4");
+    ).toBe("MarkJacobs4");
   });
 
   it("is case-insensitive about what counts as taken", () => {
-    expect(
-      suggestAvailableUsername("Mark Jacobs", takenSet("mark jacobs")),
-    ).toBe("Mark Jacobs 2");
+    expect(suggestAvailableUsername("MarkJacobs", takenSet("markjacobs"))).toBe(
+      "MarkJacobs2",
+    );
   });
 
   it("keeps the numbered result within the length cap", () => {
     const root = "x".repeat(USERNAME_MAX);
     const out = suggestAvailableUsername(root, takenSet(root));
     expect(out.length).toBeLessThanOrEqual(USERNAME_MAX);
-    expect(out.endsWith(" 2")).toBe(true);
+    expect(out.endsWith("2")).toBe(true);
   });
 
   it("defaults an empty base to Player", () => {
@@ -154,14 +159,15 @@ describe("suggestAvailableUsername (collision numbering)", () => {
 });
 
 describe("suggestUsernameFor (end to end)", () => {
-  it("suggests the clean display name when free", () => {
-    expect(suggestUsernameFor("Mark Jacobs", () => false)).toBe("Mark Jacobs");
+  it("suggests firstName+lastName from the display name when free", () => {
+    expect(suggestUsernameFor("Mark Jacobs", () => false)).toBe("MarkJacobs");
+    expect(suggestUsernameFor("Rai Butera", () => false)).toBe("RaiButera");
   });
 
-  it("numbers a taken display name", () => {
-    const taken = new Set(["mark jacobs"]);
+  it("numbers a taken display name (no space)", () => {
+    const taken = new Set(["markjacobs"]);
     expect(suggestUsernameFor("Mark Jacobs", (k) => taken.has(k))).toBe(
-      "Mark Jacobs 2",
+      "MarkJacobs2",
     );
   });
 
@@ -170,5 +176,35 @@ describe("suggestUsernameFor (end to end)", () => {
       const suggestion = suggestUsernameFor(name, () => false);
       expect(validateUsername(suggestion)).toBeNull();
     }
+  });
+});
+
+describe("username default = firstName+lastName, collision-numbered", () => {
+  it("defaults to firstName+lastName with no space", () => {
+    expect(suggestUsernameFor("Rai Butera", () => false)).toBe("RaiButera");
+    expect(suggestUsernameFor("Mark Jacobs", () => false)).toBe("MarkJacobs");
+  });
+
+  it("appends 2, 3, ... as the name is taken", () => {
+    const taken = new Set<string>();
+    const isTaken = (k: string) => taken.has(k);
+
+    const first = suggestUsernameFor("Rai Butera", isTaken);
+    expect(first).toBe("RaiButera");
+    taken.add(usernameKey(first));
+
+    const second = suggestUsernameFor("Rai Butera", isTaken);
+    expect(second).toBe("RaiButera2");
+    taken.add(usernameKey(second));
+
+    const third = suggestUsernameFor("Rai Butera", isTaken);
+    expect(third).toBe("RaiButera3");
+  });
+
+  it("keeps single-token and middle-name display names usable", () => {
+    expect(suggestUsernameFor("Alice", () => false)).toBe("Alice");
+    expect(suggestUsernameFor("Mary Jane Watson", () => false)).toBe(
+      "MaryJaneWatson",
+    );
   });
 });

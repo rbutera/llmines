@@ -14,7 +14,7 @@ import { AudioEventDeriver } from "../audio/procedural/events";
 import { GameController, type RenderState } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
-import { installTestApi } from "../test-api/install";
+import { downloadReplay, installTestApi } from "../test-api/install";
 import { loadSettings, saveSettings } from "../render3d/settings";
 import { DEFAULT_SKIN, SKINS } from "../skins/skins";
 import { useSkinSwitch } from "../skins/useSkinSwitch";
@@ -296,6 +296,11 @@ export function GameShell() {
   useEffect(() => {
     if (phase !== "playing" || !controller) return;
     const onKey = (e: KeyboardEvent) => {
+      // Don't hijack typing: when a text field is focused (e.g. the username
+      // step, which can appear mid-play after a sign-in), let the keystrokes
+      // reach the input instead of mapping letters/space to game actions.
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
       // Escape: when the controls overlay is open it takes priority (close it);
       // otherwise toggle pause (sweep + gravity halt, resumable).
       if (e.key === "Escape") {
@@ -603,6 +608,18 @@ export function GameShell() {
         </>
       )}
 
+      {/* HUD ACCOUNT CHIP: a compact, unobtrusive identity indicator shown while
+          playing (the Start screen has its own rich sign-in row, and Game Over
+          carries its own save affordance). Signed in → username chip; signed out
+          → a small "Sign in" affordance. Top-left corner, above the score chip. */}
+      {phase === "playing" && (
+        <HudAccountChip
+          username={user?.username ?? null}
+          signedIn={!!user}
+          onSignIn={signIn}
+        />
+      )}
+
       {/* IN-PLAY HUD: data on glass over the fullscreen board. */}
       {phase === "playing" && controller && (
         <PlayHud
@@ -648,8 +665,14 @@ export function GameShell() {
           score={score}
           best={personalBest}
           signedIn={!!user}
+          needsUsername={needsUsername}
           onAgain={handleRestart}
           onLeaderboard={() => setLeaderboardOpen(true)}
+          onSignIn={signIn}
+          onSaveScore={() => void submitScore(score)}
+          onDownloadReplay={() => {
+            if (controller) downloadReplay(controller.getReplay());
+          }}
         />
       )}
 
@@ -701,6 +724,83 @@ function ControlsContract() {
       }}
     >
       ← → move · ↑ rotate · ↓ drop · space slam · esc pause
+    </div>
+  );
+}
+
+/**
+ * Compact HUD identity chip. Signed in → the player's username (the
+ * leaderboard-visible name) with a small avatar glyph; signed out → a quiet
+ * "Sign in" affordance. Top-left corner, sized + dimmed so it never competes
+ * with the score readout or the cockpit glass (and never adds a landmark).
+ */
+function HudAccountChip({
+  username,
+  signedIn,
+  onSignIn,
+}: {
+  username: string | null;
+  signedIn: boolean;
+  onSignIn: () => void;
+}) {
+  const base: React.CSSProperties = {
+    position: "absolute",
+    top: 8,
+    left: 12,
+    zIndex: 8,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "5px 10px",
+    borderRadius: 8,
+    fontSize: 11,
+    letterSpacing: "0.06em",
+    background: "oklch(0.16 0.03 var(--hue) / 0.55)",
+    border: "1px solid oklch(0.6 0.12 var(--hue) / 0.3)",
+    backdropFilter: "blur(3px)",
+  };
+
+  if (!signedIn) {
+    return (
+      <button
+        type="button"
+        data-testid="hud-signin"
+        onClick={onSignIn}
+        className="cap-tight"
+        style={{ ...base, color: "var(--ink-faint)", cursor: "pointer" }}
+      >
+        ◢ SIGN IN
+      </button>
+    );
+  }
+
+  const name = username ?? "PLAYER";
+  return (
+    <div data-testid="hud-account" className="cap-tight" style={base}>
+      <span
+        aria-hidden
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 18,
+          height: 18,
+          borderRadius: "50%",
+          fontWeight: 800,
+          fontSize: 10,
+          color: "#fff",
+          background:
+            "linear-gradient(135deg, oklch(0.6 0.2 var(--hue)), oklch(0.7 0.18 var(--hue)))",
+        }}
+      >
+        {name.charAt(0).toUpperCase()}
+      </span>
+      <span
+        data-testid="hud-username"
+        style={{ color: "var(--ink)", fontWeight: 700 }}
+      >
+        {name}
+      </span>
     </div>
   );
 }

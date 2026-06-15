@@ -26,16 +26,16 @@ describe("mock store: identity + username", () => {
     });
   });
 
-  it("suggests the Google display name as the username", () => {
+  it("suggests firstName+lastName from the Google display name", () => {
     signIn("g|mark", "Mark Jacobs");
-    expect(mockStore.suggestedUsername()).toBe("Mark Jacobs");
+    expect(mockStore.suggestedUsername()).toBe("MarkJacobs");
   });
 
   it("numbers the suggestion when the name is taken by someone else", () => {
     signIn("g|m1", "Mark Jacobs");
-    mockStore.chooseUsername("Mark Jacobs");
+    mockStore.chooseUsername("MarkJacobs");
     signIn("g|m2", "Mark Jacobs");
-    expect(mockStore.suggestedUsername()).toBe("Mark Jacobs 2");
+    expect(mockStore.suggestedUsername()).toBe("MarkJacobs2");
   });
 
   it("chooseUsername persists + clears needsUsername", () => {
