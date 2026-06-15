@@ -40,6 +40,15 @@ export default defineConfig({
     url: `http://localhost:${PORT}`,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
-    env: { NEXT_DIST_DIR: DIST },
+    // A DUMMY AUTH_SECRET so Auth.js v5 initialises in the local prod build (the
+    // real one is a Worker secret, absent here). Without it `/api/auth/session`
+    // 500s with MissingSecret once the account path is active (it is now that
+    // NEXT_PUBLIC_CONVEX_URL is baked from .env), which the "no console errors"
+    // probe would flag. No real auth happens in these tests; signed-out
+    // `/api/auth/session` just returns null with the secret present.
+    env: {
+      NEXT_DIST_DIR: DIST,
+      AUTH_SECRET: "e2e-dummy-secret-not-used-for-real-authentication-0123456789",
+    },
   },
 });
