@@ -3,6 +3,7 @@ import { mutation, query } from "./_generated/server";
 import {
   baseSuggestion,
   normalizeUsername,
+  numberedCandidate,
   suggestUsernameFor,
   usernameKey,
   validateUsername,
@@ -60,20 +61,28 @@ export const suggestUsername = query({
     if (existing) return existing.username;
 
     // `suggestUsernameFor` wants a SYNC taken-key predicate, but uniqueness
-    // lives behind an async index. Pre-warm a cache for every key the algorithm
-    // could ask for: the base and base 2..N. (The sync pass then returns the
-    // first free one.) Numbering deeper than this is implausible for one name.
+    // lives behind an async index. Pre-warm a cache by probing the EXACT
+    // candidates the algorithm forms (root, then numberedCandidate(root, 2..),
+    // which share `numberedCandidate` with suggestAvailableUsername so the keys
+    // can never drift), stopping at the FIRST free one — which is precisely what
+    // the sync pass returns. A safety bound caps a pathological run.
     const root = baseSuggestion(identity.name ?? null);
     const cache = new Map<string, boolean>();
-    const probe = async (key: string) => {
+    const probe = async (candidate: string): Promise<boolean> => {
+      const key = usernameKey(candidate);
       const hit = await ctx.db
         .query("users")
         .withIndex("by_username_key", (q) => q.eq("usernameKey", key))
         .unique();
-      cache.set(key, hit != null);
+      const taken = hit != null;
+      cache.set(key, taken);
+      return taken;
     };
-    await probe(usernameKey(root));
-    for (let n = 2; n <= 50; n++) await probe(usernameKey(`${root} ${n}`));
+    if (await probe(root)) {
+      for (let n = 2; n <= 1000; n++) {
+        if (!(await probe(numberedCandidate(root, n)))) break;
+      }
+    }
 
     return suggestUsernameFor(
       identity.name ?? null,

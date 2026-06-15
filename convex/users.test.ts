@@ -39,15 +39,15 @@ describe("convex users (real functions, in-memory)", () => {
       name: "Mark Jacobs",
       email: "mark@example.com",
     });
-    expect(await mark.query(api.users.suggestUsername, {})).toBe("Mark Jacobs");
+    expect(await mark.query(api.users.suggestUsername, {})).toBe("MarkJacobs");
   });
 
   test("suggestUsername numbers a collision", async () => {
     const t = convexTest(schema, modules);
-    // First Mark claims the name.
+    // First Mark claims the firstName+lastName callsign.
     await t
       .withIdentity({ subject: "g|m1", name: "Mark Jacobs", email: "m1@x.com" })
-      .mutation(api.users.chooseUsername, { username: "Mark Jacobs" });
+      .mutation(api.users.chooseUsername, { username: "MarkJacobs" });
 
     // A second, different Mark gets a numbered suggestion.
     const mark2 = t.withIdentity({
@@ -56,8 +56,33 @@ describe("convex users (real functions, in-memory)", () => {
       email: "m2@x.com",
     });
     expect(await mark2.query(api.users.suggestUsername, {})).toBe(
-      "Mark Jacobs 2",
+      "MarkJacobs2",
     );
+  });
+
+  test("suggestUsername numbers a collision for a MAX-LENGTH name (root trimmed for the suffix)", async () => {
+    const t = convexTest(schema, modules);
+    // "Alexandraaaa Konstantinop" -> joined "AlexandraaaaKonstantinop" = 24 chars
+    // (USERNAME_MAX). The base itself + its trimmed "...2" candidate must both be
+    // probed by the pre-warm so the second user is NOT handed an already-taken
+    // name (the bug that arises when the cache probes the untrimmed key).
+    const name = "Alexandraaaa Konstantinop";
+    const base = "AlexandraaaaKonstantinop"; // 24 chars
+    const numbered = "AlexandraaaaKonstantino2"; // root trimmed to 23 + "2"
+
+    await t
+      .withIdentity({ subject: "g|a1", name, email: "a1@x.com" })
+      .mutation(api.users.chooseUsername, { username: base });
+
+    const second = t.withIdentity({ subject: "g|a2", name, email: "a2@x.com" });
+    const suggestion = await second.query(api.users.suggestUsername, {});
+    expect(suggestion).toBe(numbered);
+    // And it must actually be available (the whole point of the pre-warm fix).
+    expect(
+      await second.query(api.users.isUsernameAvailable, {
+        username: suggestion!,
+      }),
+    ).toMatchObject({ available: true });
   });
 
   test("chooseUsername persists ONLY email + username (no extra PII)", async () => {

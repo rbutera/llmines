@@ -4,7 +4,7 @@
  * background tab can never leave the panel stuck invisible.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Cheatsheet, Corners, fmt, Keys, Piece } from "./atoms";
 import { SettingsBlock } from "./SettingsBlock";
 
@@ -310,23 +310,61 @@ export function TutorialOverlay({ onClose }: { onClose: () => void }) {
 
 /**
  * Game-over overlay. Carries the `game-over` + `restart` test contract testids
- * and the authoritative `score` text. Saving the score is handled upstream
- * (GameShell submits via useScores on the gameover transition).
+ * and the authoritative `score` text.
+ *
+ * Score saving (account seam):
+ * - SIGNED OUT  → a prominent "Log in with Google to save your score" button
+ *   (calls `onSignIn`). Nothing is written.
+ * - SIGNED IN + username chosen → the run is auto-submitted ONCE via
+ *   `onSaveScore` (idempotent, best-only-rises) and a "Saved! · your best: N"
+ *   state shows, with a link to the leaderboard.
+ * - SIGNED IN but `needsUsername` → the username step (mounted by GameShell)
+ *   takes priority; once a name is chosen this view auto-submits and attributes
+ *   the score. We hold off submitting until a username exists.
+ *
+ * GameShell also submits on the game-over transition when already signed in;
+ * `onSaveScore` is idempotent, so the two paths never double-count.
  */
 export function GameOverView({
   score,
   best,
   signedIn,
+  needsUsername,
   onAgain,
   onLeaderboard,
+  onSignIn,
+  onSaveScore,
+  onDownloadReplay,
 }: {
   score: number;
   best: number | null;
   signedIn: boolean;
+  /** Signed in but no username yet — defer save until the name is chosen. */
+  needsUsername: boolean;
   onAgain: () => void;
   onLeaderboard: () => void;
+  /** Begin Google sign-in (so this run can be saved). */
+  onSignIn: () => void;
+  /** Persist this run's score (idempotent). Called once when eligible. */
+  onSaveScore: () => void;
+  /** Download this run's replay JSON. */
+  onDownloadReplay: () => void;
 }) {
-  const isBest = signedIn && best != null && score >= best;
+  // Eligible to save = signed in AND a username has been chosen. Submit once per
+  // mounted game-over (covers both "signed in at game over" and "signed in
+  // afterwards via the button"); the save itself is idempotent upstream.
+  const eligible = signedIn && !needsUsername;
+  const savedRef = useRef(false);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    if (eligible && !savedRef.current) {
+      savedRef.current = true;
+      onSaveScore();
+      setSaved(true);
+    }
+  }, [eligible, onSaveScore]);
+
+  const isBest = eligible && best != null && score >= best;
   return (
     <div
       className="overlay"
@@ -370,22 +408,75 @@ export function GameOverView({
             ★ NEW PERSONAL BEST ★
           </div>
         )}
-        {!isBest && signedIn && best != null && (
-          <div className="hint" style={{ marginTop: 8 }}>
-            best · {fmt(best)}
+        {/* Saved confirmation (signed in + username chosen). aria-live so a
+            screen-reader user is told the run was saved. */}
+        {eligible && saved && (
+          <div
+            data-testid="score-saved"
+            className="hint"
+            style={{ marginTop: 8 }}
+            aria-live="polite"
+          >
+            ✓ saved{best != null ? ` · your best · ${fmt(best)}` : ""}
           </div>
         )}
+        {/* Signed in, but the username step is still pending (held upstream). */}
+        {signedIn && needsUsername && (
+          <div className="hint" style={{ marginTop: 8 }}>
+            choose a username to save your score
+          </div>
+        )}
+        {/* Signed out: prompt to log in so the run can be saved. */}
         {!signedIn && (
           <div className="hint" style={{ marginTop: 8 }}>
-            sign in to save your score
+            log in to save your score
           </div>
         )}
+
+        {/* Primary save affordance for signed-out players. */}
+        {!signedIn && (
+          <button
+            type="button"
+            data-testid="gameover-signin"
+            className="btn btn-primary"
+            style={{
+              marginTop: 18,
+              padding: "13px 26px",
+              fontSize: 14,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+            onClick={onSignIn}
+          >
+            <span
+              aria-hidden
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 18,
+                height: 18,
+                borderRadius: "50%",
+                background: "#fff",
+                color: "#4285F4",
+                fontWeight: 800,
+                fontSize: 11,
+              }}
+            >
+              G
+            </span>
+            LOG IN WITH GOOGLE TO SAVE YOUR SCORE
+          </button>
+        )}
+
         <div
           style={{
             display: "flex",
             gap: 12,
             justifyContent: "center",
             marginTop: 34,
+            flexWrap: "wrap",
           }}
         >
           <button
@@ -406,6 +497,15 @@ export function GameOverView({
             onClick={onLeaderboard}
           >
             ◫ RANKS
+          </button>
+          <button
+            type="button"
+            data-testid="gameover-download-replay"
+            className="btn"
+            style={{ padding: "15px 28px", fontSize: 13 }}
+            onClick={onDownloadReplay}
+          >
+            ⬇ REPLAY
           </button>
         </div>
       </div>

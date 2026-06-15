@@ -14,7 +14,7 @@ import { AudioEventDeriver } from "../audio/procedural/events";
 import { GameController, type RenderState } from "../engine/controller";
 import { keyToAction } from "../engine/keymap";
 import { TEST_MODE } from "../test-api/flag";
-import { installTestApi } from "../test-api/install";
+import { downloadReplay, installTestApi } from "../test-api/install";
 import { loadSettings, saveSettings } from "../render3d/settings";
 import { DEFAULT_SKIN, SKINS } from "../skins/skins";
 import { useSkinSwitch } from "../skins/useSkinSwitch";
@@ -33,6 +33,18 @@ import { PlayHud, StartView } from "./hud/screens";
 import { LeaderboardOverlay, UsernameSelect } from "./hud/account-screens";
 
 type Phase = "start" | "playing" | "gameover";
+
+/** True when a keyboard event targets an editable field (text input, textarea,
+ * or a contentEditable element) — so the gameplay keymap must not hijack it. */
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  return (
+    el.tagName === "INPUT" ||
+    el.tagName === "TEXTAREA" ||
+    el.isContentEditable === true
+  );
+}
 
 /**
  * Top-level client component: owns the single GameController, the phase machine
@@ -130,15 +142,31 @@ export function GameShell() {
   const advanceSkinRef = useRef(skinSwitch.advanceSkin);
   advanceSkinRef.current = skinSwitch.advanceSkin;
 
-  // Account seam: submit the final score on game over (signed-in only). Held in
-  // refs so the mount-once subscription always sees the current values.
+  // Account seam: submit the final score on game over. Held in refs so the
+  // mount-once subscription always sees the current values.
   const { user, needsUsername, signIn, signOut } = useAuth();
   const { submitScore, personalBest, leaderboard } = useScores();
   const submitRef = useRef(submitScore);
   submitRef.current = submitScore;
   const userRef = useRef(user);
   userRef.current = user;
+  // Whether the signed-in user still needs to choose a username — when true we
+  // DEFER the score save (the run is attributed only once a username exists).
+  const needsUsernameRef = useRef(needsUsername);
+  needsUsernameRef.current = needsUsername;
   const gameOverSubmittedRef = useRef(false);
+
+  // Save the final score AT MOST ONCE per run, and only when fully eligible
+  // (signed in AND a username chosen). The single owner of the submit so the
+  // game-over transition and the GameOverView "save when eligible" path can't
+  // double-mutate. Idempotent at the store too (best-only-rises), but this keeps
+  // the contract crisp + avoids a redundant network write.
+  const saveFinalScoreOnce = useCallback((finalScore: number) => {
+    if (gameOverSubmittedRef.current) return;
+    if (!userRef.current || needsUsernameRef.current) return;
+    gameOverSubmittedRef.current = true;
+    void submitRef.current(finalScore);
+  }, []);
 
   // Create the controller on the client; wire subscription + test interface.
   useEffect(() => {
@@ -241,10 +269,9 @@ export function GameShell() {
       }
 
       if (rs.gameOver) {
-        if (!gameOverSubmittedRef.current) {
-          gameOverSubmittedRef.current = true;
-          if (userRef.current) void submitRef.current(rs.score);
-        }
+        // Save the run (no-op unless signed in + username chosen; deferred to
+        // the GameOverView path otherwise). At most once per run.
+        saveFinalScoreOnce(rs.score);
         if (phaseRef.current === "playing") {
           // Reset the music progression back to the song's opening so the NEXT game
           // starts fresh (segment 0, floor tiers), not wherever this game ended.
@@ -296,6 +323,10 @@ export function GameShell() {
   useEffect(() => {
     if (phase !== "playing" || !controller) return;
     const onKey = (e: KeyboardEvent) => {
+      // Don't hijack typing: when a text field is focused (e.g. the username
+      // step, which can appear mid-play after a sign-in), let the keystrokes
+      // reach the input instead of mapping letters/space to game actions.
+      if (isEditableTarget(e.target)) return;
       // Escape: when the controls overlay is open it takes priority (close it);
       // otherwise toggle pause (sweep + gravity halt, resumable).
       if (e.key === "Escape") {
@@ -324,6 +355,7 @@ export function GameShell() {
       controller.input(action);
     };
     const onKeyUp = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
       if (keyToAction(e) === "softDrop") controller.releaseSoftDrop();
     };
     window.addEventListener("keydown", onKey);
@@ -505,13 +537,11 @@ export function GameShell() {
     // Reset the music progression to the song's opening for the next game.
     audioEngineRef.current?.resetForNewGame();
     setPhase("gameover");
-    // Submit once if the run wasn't already submitted (e.g. ended via END RUN
-    // rather than a stack-overflow game over).
-    if (!gameOverSubmittedRef.current) {
-      gameOverSubmittedRef.current = true;
-      if (userRef.current) void submitRef.current(score);
-    }
-  }, [controller, score]);
+    // Save once if eligible (signed in + username chosen); deferred to the
+    // GameOverView path otherwise. Covers the END RUN exit, not just a
+    // stack-overflow game over.
+    saveFinalScoreOnce(score);
+  }, [controller, score, saveFinalScoreOnce]);
 
   // The single-hue cockpit tint, fed by the active skin. Set on the `.screen`
   // root so the OKLCH token block in hud.css recomputes per skin.
@@ -603,6 +633,18 @@ export function GameShell() {
         </>
       )}
 
+      {/* HUD ACCOUNT CHIP: a compact, unobtrusive identity indicator shown while
+          playing (the Start screen has its own rich sign-in row, and Game Over
+          carries its own save affordance). Signed in → username chip; signed out
+          → a small "Sign in" affordance. Top-left corner, above the score chip. */}
+      {phase === "playing" && (
+        <HudAccountChip
+          username={user?.username ?? null}
+          signedIn={!!user}
+          onSignIn={signIn}
+        />
+      )}
+
       {/* IN-PLAY HUD: data on glass over the fullscreen board. */}
       {phase === "playing" && controller && (
         <PlayHud
@@ -648,8 +690,14 @@ export function GameShell() {
           score={score}
           best={personalBest}
           signedIn={!!user}
+          needsUsername={needsUsername}
           onAgain={handleRestart}
           onLeaderboard={() => setLeaderboardOpen(true)}
+          onSignIn={signIn}
+          onSaveScore={() => saveFinalScoreOnce(score)}
+          onDownloadReplay={() => {
+            if (controller) downloadReplay(controller.getReplay());
+          }}
         />
       )}
 
@@ -701,6 +749,83 @@ function ControlsContract() {
       }}
     >
       ← → move · ↑ rotate · ↓ drop · space slam · esc pause
+    </div>
+  );
+}
+
+/**
+ * Compact HUD identity chip. Signed in → the player's username (the
+ * leaderboard-visible name) with a small avatar glyph; signed out → a quiet
+ * "Sign in" affordance. Top-left corner, sized + dimmed so it never competes
+ * with the score readout or the cockpit glass (and never adds a landmark).
+ */
+function HudAccountChip({
+  username,
+  signedIn,
+  onSignIn,
+}: {
+  username: string | null;
+  signedIn: boolean;
+  onSignIn: () => void;
+}) {
+  const base: React.CSSProperties = {
+    position: "absolute",
+    top: 8,
+    left: 12,
+    zIndex: 8,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "5px 10px",
+    borderRadius: 8,
+    fontSize: 11,
+    letterSpacing: "0.06em",
+    background: "oklch(0.16 0.03 var(--hue) / 0.55)",
+    border: "1px solid oklch(0.6 0.12 var(--hue) / 0.3)",
+    backdropFilter: "blur(3px)",
+  };
+
+  if (!signedIn) {
+    return (
+      <button
+        type="button"
+        data-testid="hud-signin"
+        onClick={onSignIn}
+        className="cap-tight"
+        style={{ ...base, color: "var(--ink-faint)", cursor: "pointer" }}
+      >
+        ◢ SIGN IN
+      </button>
+    );
+  }
+
+  const name = username ?? "PLAYER";
+  return (
+    <div data-testid="hud-account" className="cap-tight" style={base}>
+      <span
+        aria-hidden
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 18,
+          height: 18,
+          borderRadius: "50%",
+          fontWeight: 800,
+          fontSize: 10,
+          color: "#fff",
+          background:
+            "linear-gradient(135deg, oklch(0.6 0.2 var(--hue)), oklch(0.7 0.18 var(--hue)))",
+        }}
+      >
+        {name.charAt(0).toUpperCase()}
+      </span>
+      <span
+        data-testid="hud-username"
+        style={{ color: "var(--ink)", fontWeight: 700 }}
+      >
+        {name}
+      </span>
     </div>
   );
 }
