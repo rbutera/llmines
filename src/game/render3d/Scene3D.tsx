@@ -13,7 +13,6 @@ import { Cube } from "./Cube";
 import type { BoardPalette } from "../skins/skins";
 import { CellGrid } from "./CellGrid";
 import { SweepBar } from "./SweepBar";
-import { BackgroundField } from "./BackgroundField";
 import { Bursts, type BurstHandle } from "./Bursts";
 import { ChainWavefront, type ChainWavefrontHandle } from "./ChainWavefront";
 import { ColumnHighlight } from "./ColumnHighlight";
@@ -621,14 +620,12 @@ export function Scene3D({
       <directionalLight position={[6, 10, 12]} intensity={1.2} />
       <directionalLight position={[-8, -4, 6]} intensity={0.35} />
 
-      {/* Reactive evolving background (behind everything). */}
-      {settings.bgEnabled && (
-        <BackgroundField
-          beatPhaseRef={beatPhaseRef}
-          skinIndexRef={skinIndexRef}
-          intensity={settings.bgIntensity}
-        />
-      )}
+      {/* LEGACY shader background REMOVED: the full-screen VideoBackdrop replaced it
+          (Lumines-Arise look). It was the only full-board OPAQUE element in the scene,
+          and `bgEnabled` is a PERSISTED setting — a stale localStorage `bgEnabled:true`
+          rendered the opaque shader OVER the video, making the board look non-transparent.
+          The video is the background now; never render BackgroundField so no stored
+          setting can re-opaque the playfield. (The `bgEnabled` setting is now inert.) */}
 
       {/* NO well backplate — a translucent Three mesh gets its alpha clobbered to
           OPAQUE by the bloom EffectComposer (the play area went solid, occluding the
