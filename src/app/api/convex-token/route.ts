@@ -17,6 +17,13 @@ export async function POST() {
   const user = session?.user;
   const subject = user?.id;
 
+  // TEMP DIAGNOSTIC (remove after auth bridge confirmed): surfaces in `wrangler
+  // tail` whether auth() resolved the session + whether user.id (the Convex sub)
+  // is present, to pinpoint why getUserIdentity is null.
+  console.log(
+    `[convex-token] session=${!!session} user=${!!user} hasId=${!!subject} sub=${subject ? String(subject).slice(0, 6) + "…" : "none"}`,
+  );
+
   if (!subject) {
     return new NextResponse(null, {
       status: 401,
@@ -24,13 +31,27 @@ export async function POST() {
     });
   }
 
-  const token = await mintConvexToken({
-    subject,
-    // name/email are required claims; fall back so the token is always valid
-    // even for the (rare) Google account missing a name/email.
-    name: user.name ?? "Player",
-    email: user.email ?? "",
-  });
+  let token: string;
+  try {
+    token = await mintConvexToken({
+      subject,
+      // name/email are required claims; fall back so the token is always valid
+      // even for the (rare) Google account missing a name/email.
+      name: user.name ?? "Player",
+      email: user.email ?? "",
+    });
+  } catch (e) {
+    // TEMP DIAGNOSTIC: surface the mint error type (no key material) so we can
+    // see WHY signing fails on the Workers runtime (missing env vs PEM parse).
+    const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    const keyPresent = !!process.env.CONVEX_TOKEN_PRIVATE_KEY;
+    const keyLen = process.env.CONVEX_TOKEN_PRIVATE_KEY?.length ?? 0;
+    console.log(`[convex-token] MINT FAILED keyPresent=${keyPresent} keyLen=${keyLen} ${detail}`);
+    return new NextResponse(
+      JSON.stringify({ error: detail, keyPresent, keyLen }),
+      { status: 500, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
+    );
+  }
 
   return new NextResponse(JSON.stringify({ token }), {
     status: 200,

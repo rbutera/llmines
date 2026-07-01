@@ -19,17 +19,38 @@ import {
  */
 let cachedKey: Promise<CryptoKey> | null = null;
 
+/**
+ * Read the PKCS8 PEM signing key. On Cloudflare/OpenNext, Worker SECRETS live on
+ * the Cloudflare context `env` binding; `process.env` is a shim that does NOT
+ * reliably expose a MULTI-LINE secret (the PEM) — a single-line secret like
+ * AUTH_SECRET comes through, but the multi-line PEM is dropped (keyPresent=false).
+ * So prefer `getCloudflareContext().env`, falling back to `process.env` for local
+ * dev / Node tests (where the Cloudflare context is absent).
+ */
+async function readPrivateKeyPem(): Promise<string | undefined> {
+  try {
+    const { getCloudflareContext } = await import("@opennextjs/cloudflare");
+    const env = getCloudflareContext().env as Record<string, string | undefined>;
+    if (env?.CONVEX_TOKEN_PRIVATE_KEY) return env.CONVEX_TOKEN_PRIVATE_KEY;
+  } catch {
+    // not in a Cloudflare request context (local/Node) — fall through.
+  }
+  return process.env.CONVEX_TOKEN_PRIVATE_KEY;
+}
+
 function getPrivateKey(): Promise<CryptoKey> {
   if (cachedKey) return cachedKey;
-  const pem = process.env.CONVEX_TOKEN_PRIVATE_KEY;
-  if (!pem) {
-    throw new Error(
-      "CONVEX_TOKEN_PRIVATE_KEY is not set; cannot mint a Convex token.",
-    );
-  }
   // importPKCS8 rejects -> the cached promise rejects; clear it so a later call
   // (e.g. after the secret is fixed) can retry rather than reusing the failure.
-  cachedKey = importPKCS8(pem, CONVEX_TOKEN_ALG).catch((err) => {
+  cachedKey = (async () => {
+    const pem = await readPrivateKeyPem();
+    if (!pem) {
+      throw new Error(
+        "CONVEX_TOKEN_PRIVATE_KEY is not set; cannot mint a Convex token.",
+      );
+    }
+    return importPKCS8(pem, CONVEX_TOKEN_ALG);
+  })().catch((err) => {
     cachedKey = null;
     throw err;
   });
