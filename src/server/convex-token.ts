@@ -58,12 +58,19 @@ function getPrivateKey(): Promise<CryptoKey> {
   // importPKCS8 rejects -> the cached promise rejects; clear it so a later call
   // (e.g. after the secret is fixed) can retry rather than reusing the failure.
   cachedKey = (async () => {
-    const pem = await readPrivateKeyPem();
-    if (!pem) {
+    const raw = await readPrivateKeyPem();
+    if (!raw) {
       throw new Error(
         "CONVEX_TOKEN_PRIVATE_KEY is not set; cannot mint a Convex token.",
       );
     }
+    // Stored as single-line base64 of the PKCS8 PEM. A raw multi-line PEM secret
+    // gets mangled/dropped by wrangler + the process.env shim (see readPrivateKeyPem),
+    // so we base64-encode it at rest. Decode here; tolerate a raw PEM too (local
+    // convenience / back-compat).
+    const pem = raw.includes("BEGIN")
+      ? raw
+      : Buffer.from(raw, "base64").toString("utf8");
     return importPKCS8(pem, CONVEX_TOKEN_ALG);
   })().catch((err) => {
     cachedKey = null;
