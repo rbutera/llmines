@@ -24,18 +24,33 @@ let cachedKey: Promise<CryptoKey> | null = null;
  * the Cloudflare context `env` binding; `process.env` is a shim that does NOT
  * reliably expose a MULTI-LINE secret (the PEM) — a single-line secret like
  * AUTH_SECRET comes through, but the multi-line PEM is dropped (keyPresent=false).
- * So prefer `getCloudflareContext().env`, falling back to `process.env` for local
- * dev / Node tests (where the Cloudflare context is absent).
+ *
+ * We read from the Cloudflare env binding via the ASYNC form of
+ * `getCloudflareContext`. The SYNC form throws when called at the top level or in
+ * a statically-evaluated context, and a previous version swallowed that throw
+ * silently — which dropped us to `process.env` (empty for the PEM) and made the
+ * mint fail with "not set". The async form is valid in more contexts; we log each
+ * path's outcome so a runtime failure is diagnosable from `wrangler tail`.
  */
 async function readPrivateKeyPem(): Promise<string | undefined> {
   try {
     const { getCloudflareContext } = await import("@opennextjs/cloudflare");
-    const env = getCloudflareContext().env as Record<string, string | undefined>;
-    if (env?.CONVEX_TOKEN_PRIVATE_KEY) return env.CONVEX_TOKEN_PRIVATE_KEY;
-  } catch {
-    // not in a Cloudflare request context (local/Node) — fall through.
+    const { env } = await getCloudflareContext({ async: true });
+    const v = (env as Record<string, string | undefined>)?.CONVEX_TOKEN_PRIVATE_KEY;
+    console.log(
+      `[convex-token] readKey gcc keyPresent=${!!v} keyLen=${v?.length ?? 0}`,
+    );
+    if (v) return v;
+  } catch (e) {
+    console.log(
+      `[convex-token] readKey gcc threw: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+    );
   }
-  return process.env.CONVEX_TOKEN_PRIVATE_KEY;
+  const pe = process.env.CONVEX_TOKEN_PRIVATE_KEY;
+  console.log(
+    `[convex-token] readKey processEnv keyPresent=${!!pe} keyLen=${pe?.length ?? 0}`,
+  );
+  return pe;
 }
 
 function getPrivateKey(): Promise<CryptoKey> {
