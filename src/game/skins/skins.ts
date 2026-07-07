@@ -55,6 +55,15 @@ export interface BoardPalette {
   darkBack: string;
   /** Dark-cell edge-frame colour (bright cells always frame white). */
   darkEdge: string;
+  /**
+   * The EMPTY-square grid line (the well lattice) + the current-column indicator.
+   * DECOUPLED from `darkEdge`: the grid line and the dark-cell edge used to share
+   * one token, which forced it to satisfy two opposing backgrounds at once (light
+   * vs the dark backdrop AND dark vs a near-white piece). Splitting them lets the
+   * grid keep its own quiet hue while the dark cell takes an unrelated block
+   * colour. Skin 1 keeps this purple so the grid reads unchanged.
+   */
+  gridLine: string;
   /** Gem accent on a dark block (the chain-special marker). */
   gem: string;
 }
@@ -106,12 +115,23 @@ export const SKIN_NEON: Skin = {
     brightCore: "#f4fbff",
     brightGlass: "#cdeafe",
     brightEdge: "#ffffff",
-    darkFace: "#1a0e33",
-    darkEmissive: "#3b1d6e",
-    darkCore: "#2a1147",
-    darkCoreEmissive: "#7c3aed",
-    darkBack: "#150a2e",
-    darkEdge: "#6b4a9e",
+    // Dark cell = AMBER / GOLD (2026-07-07). The round-2 purple dark cell was
+    // purple-on-purple against the violet backdrop AND against the purple grid,
+    // so it read as an outlined hole rather than a block. Rather than fight that
+    // with lightness tweaks (the reverted contrast approach), the block takes a
+    // complementary warm hue: gold pops hard against the neon violet, and it's
+    // clear of skin 2's red/green and of blue. The grid stays purple (`gridLine`
+    // below), so the well lattice is unchanged. Gem stays magenta-violet — a
+    // high-contrast accent on the gold block.
+    darkFace: "#8a5200",
+    darkEmissive: "#ffb300",
+    darkCore: "#a86400",
+    darkCoreEmissive: "#ffcc33",
+    darkBack: "#4a2c00",
+    darkEdge: "#ffd766",
+    // Grid line kept at the round-2 purple so the empty-square lattice reads
+    // exactly as before — only the block hue changed.
+    gridLine: "#6b4a9e",
     gem: "#c45cff",
   },
   chrome: {
@@ -151,6 +171,9 @@ export const SKIN_PIPELINE: Skin = {
     darkCoreEmissive: "#ff4d4d",
     darkBack: "#3d090b",
     darkEdge: "#ff6b6b",
+    // Pipeline's grid line keeps the same red it always drew (the dark-cell edge
+    // value pre-decouple), so this skin is visually unchanged by the split.
+    gridLine: "#ff6b6b",
     gem: "#ffd24d",
   },
   chrome: {

@@ -57,6 +57,7 @@ export function lerpBoard(a: BoardPalette, b: BoardPalette, t: number): BoardPal
     darkCoreEmissive: lerpHex(a.darkCoreEmissive, b.darkCoreEmissive, t),
     darkBack: lerpHex(a.darkBack, b.darkBack, t),
     darkEdge: lerpHex(a.darkEdge, b.darkEdge, t),
+    gridLine: lerpHex(a.gridLine, b.gridLine, t),
     gem: lerpHex(a.gem, b.gem, t),
   };
 }

@@ -634,14 +634,14 @@ export function Scene3D({
           dimming is the DOM scrim in VideoBackdrop, which composites with reliable
           alpha. (Lumines Arise: board floats on the video.) */}
 
-      <CellGrid opacity={settings.gridOpacity} color={palette?.darkEdge} />
+      <CellGrid opacity={settings.gridOpacity} color={palette?.gridLine} />
 
       {/* CURRENT-COLUMN INDICATOR: brightens the two VERTICAL GRID LINES bordering
           the active piece's columns (a landing indicator) — NOT a column wash (that
           crushed dark-block contrast). Brightens the skin's grid colour; driven from
           the live snapshot; off when no active piece / game over. */}
       {settings.columnHighlightEnabled && (
-        <ColumnHighlight snapRef={snapRef} color={palette?.darkEdge} />
+        <ColumnHighlight snapRef={snapRef} color={palette?.gridLine} />
       )}
 
       {/* Settled stack. Calm/inert by default; cells the sweep is about to clear

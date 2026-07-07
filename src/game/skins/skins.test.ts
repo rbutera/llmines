@@ -88,14 +88,22 @@ describe("palette cohesion", () => {
     );
     expect(SKIN_NEON.chrome.accent).not.toBe(SKIN_PIPELINE.chrome.accent);
   });
-  it("the neon skin matches the round-2 baked-in board palette", () => {
-    // Guards P0: switching back to neon must reproduce the exact dark-surround
-    // tuning the round-2 visual shipped (so the skin layer can never regress it).
-    expect(SKIN_NEON.board.darkFace).toBe("#1a0e33");
-    expect(SKIN_NEON.board.darkEmissive).toBe("#3b1d6e");
-    expect(SKIN_NEON.board.darkCore).toBe("#2a1147");
-    expect(SKIN_NEON.board.darkCoreEmissive).toBe("#7c3aed");
+  it("the neon dark cell is the amber/gold block (not purple)", () => {
+    // The dark cell was recoloured off purple (2026-07-07): purple-on-purple
+    // against the violet backdrop + purple grid read as an outlined hole. Gold is
+    // the complementary block hue. Guard the warm tones so a regression back to
+    // purple fails here.
+    expect(SKIN_NEON.board.darkEmissive).toBe("#ffb300");
+    expect(SKIN_NEON.board.darkCoreEmissive).toBe("#ffcc33");
+    expect(SKIN_NEON.board.darkEdge).toBe("#ffd766");
     expect(SKIN_NEON.board.background).toBe("#0a0a12");
+  });
+  it("the neon grid line stays purple, decoupled from the (gold) block edge", () => {
+    // Only the block hue changed; the empty-square lattice keeps the round-2
+    // purple. The two tokens must be genuinely different now (the whole point of
+    // the decouple), and the grid must not have drifted to the block colour.
+    expect(SKIN_NEON.board.gridLine).toBe("#6b4a9e");
+    expect(SKIN_NEON.board.gridLine).not.toBe(SKIN_NEON.board.darkEdge);
   });
   it("the neon skin keeps the near-white BRIGHT cell (unchanged by the recolour)", () => {
     // Skin 1 must stay the round-2 white crystal even though the bright colour is
