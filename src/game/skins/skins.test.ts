@@ -88,13 +88,17 @@ describe("palette cohesion", () => {
     );
     expect(SKIN_NEON.chrome.accent).not.toBe(SKIN_PIPELINE.chrome.accent);
   });
-  it("the neon skin matches the round-2 baked-in board palette", () => {
-    // Guards P0: switching back to neon must reproduce the exact dark-surround
-    // tuning the round-2 visual shipped (so the skin layer can never regress it).
-    expect(SKIN_NEON.board.darkFace).toBe("#1a0e33");
-    expect(SKIN_NEON.board.darkEmissive).toBe("#3b1d6e");
-    expect(SKIN_NEON.board.darkCore).toBe("#2a1147");
+  it("the neon skin uses the accessibility-lifted dark palette", () => {
+    // Guards the 2026-07-07 a11y fix: the neon dark-cell tones were lifted out of
+    // the purple-on-purple range (old #1a0e33/#3b1d6e/#6b4a9e read below the WCAG
+    // non-text 3:1 minimum vs the dark-violet backdrop). These are the lifted
+    // violets so the skin layer can never regress the empty-square / purple
+    // contrast back under 3:1.
+    expect(SKIN_NEON.board.darkFace).toBe("#3a2568");
+    expect(SKIN_NEON.board.darkEmissive).toBe("#7846d0");
+    expect(SKIN_NEON.board.darkCore).toBe("#432a72");
     expect(SKIN_NEON.board.darkCoreEmissive).toBe("#7c3aed");
+    expect(SKIN_NEON.board.darkEdge).toBe("#a98cf0");
     expect(SKIN_NEON.board.background).toBe("#0a0a12");
   });
   it("the neon skin keeps the near-white BRIGHT cell (unchanged by the recolour)", () => {

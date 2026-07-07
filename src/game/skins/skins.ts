@@ -106,12 +106,20 @@ export const SKIN_NEON: Skin = {
     brightCore: "#f4fbff",
     brightGlass: "#cdeafe",
     brightEdge: "#ffffff",
-    darkFace: "#1a0e33",
-    darkEmissive: "#3b1d6e",
-    darkCore: "#2a1147",
+    // Dark-cell tones LIFTED for accessibility (2026-07-07). The originals
+    // (#1a0e33 face / #3b1d6e emissive / #6b4a9e edge) were purple-on-purple
+    // against the dark-violet video backdrop: the empty-square grid line read at
+    // ~2.0:1 and the dark cell's own glow at ~1.5:1 vs the backdrop, both under
+    // the WCAG non-text 3:1 minimum ("empty squares and the purple are hard to
+    // see"). These raise the violet lightness so the empty grid line clears
+    // ~4.3:1 and the dark-cell glow ~3.3:1 (measured vs the scrimmed backdrop),
+    // while staying on the neon-violet vibe. The bright cell is unchanged.
+    darkFace: "#3a2568",
+    darkEmissive: "#7846d0",
+    darkCore: "#432a72",
     darkCoreEmissive: "#7c3aed",
-    darkBack: "#150a2e",
-    darkEdge: "#6b4a9e",
+    darkBack: "#2a1a4d",
+    darkEdge: "#a98cf0",
     gem: "#c45cff",
   },
   chrome: {

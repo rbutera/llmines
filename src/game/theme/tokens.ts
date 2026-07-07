@@ -2,7 +2,7 @@
  * Chrome theme tokens — the SINGLE source of truth for the DOM chrome palette.
  *
  * The game VIEWPORT (the Three.js board) is neon-purple-on-near-black: dark cells
- * are violet (`#3b1d6e` / `#7c3aed` emissive, `#6b4a9e` edges), bright cells are
+ * are violet (`#7846d0` / `#7c3aed` emissive, `#a98cf0` edges), bright cells are
  * near-white, the canvas background is `#0a0a12`, and the gem accent is bright
  * purple `#c45cff`. The surrounding chrome used to be teal (`#37e0c9`) + pink
  * (`#ff5fb0`), which made the frame look like a different product from the board.
