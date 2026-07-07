@@ -98,7 +98,7 @@ describe("palette cohesion", () => {
     expect(SKIN_NEON.board.darkEmissive).toBe("#7846d0");
     expect(SKIN_NEON.board.darkCore).toBe("#432a72");
     expect(SKIN_NEON.board.darkCoreEmissive).toBe("#7c3aed");
-    expect(SKIN_NEON.board.darkEdge).toBe("#a98cf0");
+    expect(SKIN_NEON.board.darkEdge).toBe("#9878d8");
     expect(SKIN_NEON.board.background).toBe("#0a0a12");
   });
   it("the neon skin keeps the near-white BRIGHT cell (unchanged by the recolour)", () => {
