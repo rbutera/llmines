@@ -112,23 +112,14 @@ export const SKIN_NEON: Skin = {
     // ~2.0:1 and the dark cell's own glow at ~1.5:1 vs the backdrop, both under
     // the WCAG non-text 3:1 minimum ("empty squares and the purple are hard to
     // see"). These raise the violet lightness so the empty grid line clears
-    // ~3.5:1 and the dark-cell glow ~3.3:1 (measured vs the scrimmed backdrop),
+    // ~4.3:1 and the dark-cell glow ~3.3:1 (measured vs the scrimmed backdrop),
     // while staying on the neon-violet vibe. The bright cell is unchanged.
-    //
-    // `darkEdge` is RECONCILED across two opposing backgrounds: it's the empty-
-    // grid line (needs to be LIGHT vs the dark backdrop) AND the dark cell's edge
-    // frame, which on the board can sit directly against the near-white BRIGHT
-    // cell (the "purple vs white" pair — needs to be DARK enough vs white). A
-    // brighter lilac (e.g. #a98cf0) aced the backdrop but dropped to ~2.5:1 vs
-    // the white piece. #9878d8 is the single value that clears BOTH: ~3.5:1 as
-    // the grid line vs the backdrop and ~3.2:1 as the edge vs the white cell.
-    // darkEmissive (#7846d0) already clears the white-piece pair at ~5.3:1.
     darkFace: "#3a2568",
     darkEmissive: "#7846d0",
     darkCore: "#432a72",
     darkCoreEmissive: "#7c3aed",
     darkBack: "#2a1a4d",
-    darkEdge: "#9878d8",
+    darkEdge: "#a98cf0",
     gem: "#c45cff",
   },
   chrome: {
